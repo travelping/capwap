@@ -1,0 +1,13 @@
+{application, capwap,
+ [
+  {description, ""},
+  {vsn, "1"},
+  {registered, []},
+  {applications, [
+                  kernel,
+                  stdlib,
+		  regine
+                 ]},
+  {mod, { capwap_app, []}},
+  {env, []}
+ ]}.
