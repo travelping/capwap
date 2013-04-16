@@ -1,0 +1,5 @@
+*.beam
+/ebin/*.app
+/dist/
+/test-log/
+*.*~
