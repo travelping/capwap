@@ -1,0 +1,3 @@
+application:start(regine).
+application:start(capwap).
+capwap_sup:start_listener(capwap_udp, {5246, []}).
