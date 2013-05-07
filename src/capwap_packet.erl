@@ -4,14 +4,6 @@
 
 -include("capwap_packet.hrl").
 
--record(capwap_header, {
-	  radio_id,
-	  wb_id,
-	  flags,
-	  radio_mac,
-	  wireless_spec_info
-}).
-
 decode(control, <<0:4, 0:4,
 		  HLen:5/integer, RID:5/integer, WBID:5/integer,
 		  T:1, 0:1, 0:1, W:1, M:1, K:1, _:3,
@@ -35,6 +27,9 @@ decode(control, <<0:4, 0:4,
 			    radio_mac = RadioMAC,
 			    wireless_spec_info = WirelessSpecInfo},
     {Header, decode_control_msg(PayLoad)}.
+
+encode(control, {Header, {MsgType, _, SeqNum, IEs}}) ->
+    encode(control, {Header, {MsgType, SeqNum, IEs}});
 
 encode(control, {#capwap_header{radio_id = RID,
 				wb_id = WBID,
@@ -98,7 +93,7 @@ decode_control_msg(<<Vendor:24/integer, MsgType:8/integer, SeqNum:8/integer,
 	      Length:16/integer, 0:8, IEs/binary>>)
   when size(IEs) == (Length - 3)->
     DecIEs = decode_elements(IEs, []),
-    {message_type({Vendor, MsgType}), SeqNum, DecIEs}.
+    {message_type({Vendor, MsgType}), MsgType band 1, SeqNum, DecIEs}.
 
 decode_elements(<<>>, Acc) ->
     lists:reverse(Acc);

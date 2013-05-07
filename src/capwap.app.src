@@ -9,5 +9,5 @@
 		  regine
                  ]},
   {mod, { capwap_app, []}},
-  {env, []}
+  {env, [{server_ip, {192,168,13,85}}]}
  ]}.

@@ -71,6 +71,12 @@ capwap_station_configuration_request() ->
 capwap_station_configuration_response() ->
     hexstr2bin("002002100000000006f81a674d70b3000000001a1d000b000021000400000000").
 
+capwap_echo_request() ->
+    hexstr2bin("002002100000000006f81a674d70b3000000000d05000300").
+
+capwap_echo_response() ->
+    hexstr2bin("00100200000000000000000e05000300").
+
 % hexstr2bin
 hexstr2bin(S) ->
     list_to_binary(hexstr2list(S)).
@@ -179,6 +185,18 @@ test_station_configuration_response(_Config) ->
     ?equal(Msg, capwap_packet:encode(control, R)),
     ok.
 
+test_echo_request(_Config) ->
+    Msg = capwap_echo_request(),
+    R = capwap_packet:decode(control, Msg),
+    ct:pal("R: ~p~n", [R]),
+    ?equal(Msg, capwap_packet:encode(control, R)),
+    ok.
+test_echo_response(_Config) ->
+    Msg = capwap_echo_response(),
+    R = capwap_packet:decode(control, Msg),
+    ct:pal("R: ~p~n", [R]),
+    ?equal(Msg, capwap_packet:encode(control, R)),
+    ok.
 
 all() ->
     [test_discovery_request,
@@ -192,7 +210,9 @@ all() ->
      test_wlan_configuration_request,
      test_wlan_configuration_response,
      test_station_configuration_request,
-     test_station_configuration_response
+     test_station_configuration_response,
+     test_echo_request,
+     test_echo_response
     ].
 
 init_per_suite(Config) ->

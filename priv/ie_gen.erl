@@ -582,6 +582,6 @@ main(_) ->
     ErlDecls = io_lib:format("%% This file is auto-generated. DO NOT EDIT~n~n~s~n~s~n~s.~n~s.~n",
 			     [MTypes, Enums, Funs, EncFuns]),
     io:format(ErlDecls),
-    file:write_file("include/capwap_packet.hrl", HrlRecs),
+    file:write_file("include/capwap_packet_gen.hrl", HrlRecs),
     file:write_file("src/capwap_packet_gen.hrl", ErlDecls).
 
