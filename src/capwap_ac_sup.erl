@@ -3,7 +3,7 @@
 -behaviour(supervisor).
 
 %% API
--export([start_link/0, new_wtp/4]).
+-export([start_link/0, new_wtp/1]).
 
 %% Supervisor callbacks
 -export([init/1]).
@@ -17,9 +17,9 @@
 start_link() ->
     supervisor:start_link({local, ?SERVER}, ?MODULE, []).
 
-new_wtp(Socket, IP, InPortNo, Packet) ->
-    io:format("Stating new WTP: ~p, ~p, ~p, ~p~n", [Socket, IP, InPortNo, Packet]),
-    R = supervisor:start_child(?SERVER, [Socket, IP, InPortNo, Packet]),
+new_wtp(Peer) ->
+    io:format("Stating new WTP: ~p~n", [Peer]),
+    R = supervisor:start_child(?SERVER, [Peer]),
     io:format("Result: ~p~n", [R]),
     R.
 

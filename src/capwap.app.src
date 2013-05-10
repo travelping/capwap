@@ -6,7 +6,8 @@
   {applications, [
                   kernel,
                   stdlib,
-		  regine
+		  regine,
+		  ssl
                  ]},
   {mod, { capwap_app, []}},
   {env, [{server_ip, {192,168,13,85}}]}

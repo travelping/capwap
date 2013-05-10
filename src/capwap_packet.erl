@@ -98,7 +98,6 @@ decode_control_msg(<<Vendor:24/integer, MsgType:8/integer, SeqNum:8/integer,
 decode_elements(<<>>, Acc) ->
     lists:reverse(Acc);
 decode_elements(<<Type:16/integer, Len:16/integer, Value:Len/bytes, Next/binary>>, Acc) ->
-    ct:pal("decode_element(~w, ~w)~n", [Type, Value]),
     IE = decode_element(Type, Value),
     decode_elements(Next, [IE|Acc]).
 
@@ -106,7 +105,6 @@ decode_mac_list(<<_Num:8/integer, Len:8/integer, MACs/binary>>) ->
     [X || <<X:Len/bytes>> <= MACs].
 
 decode_ipv4_list(IPs) ->
-    ct:pal("decode_ipv4_list: ~p~n", [IPs]),
     [X || <<X:4/bytes>> <= IPs].
 
 decode_ipv6_list(IPs) ->

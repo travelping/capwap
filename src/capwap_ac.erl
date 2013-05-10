@@ -3,13 +3,17 @@
 -behaviour(gen_fsm).
 
 %% API
--export([start_link/4, packet_in/2]).
+-export([start_link/1, accept/3]).
 
 %% gen_fsm callbacks
--export([init/1, idle/2, join/2, configure/2, run/2,
+-export([init/1, listen/2, idle/2, join/2, configure/2, run/2,
 	 handle_event/3,
 	 handle_sync_event/4, handle_info/3, terminate/3, code_change/4]).
 
+
+-export([handle_packet/3]).
+
+-include("capwap_debug.hrl").
 -include("capwap_packet.hrl").
 
 -define(SERVER, ?MODULE).
@@ -20,9 +24,8 @@
 -define(MaxRetransmit, 5).
 
 -record(state, {
+	  peer,
 	  socket,
-	  ip,
-	  port,
 	  last_response,
 	  last_request,
 	  retransmit_timer,
@@ -42,11 +45,25 @@
 %% @spec start_link() -> {ok, Pid} | ignore | {error, Error}
 %% @end
 %%--------------------------------------------------------------------
-start_link(Socket, IP, InPortNo, Packet) ->
-    gen_fsm:start_link({local, ?SERVER}, ?MODULE, [Socket, IP, InPortNo, Packet], [{debug, [trace]}]).
+start_link(Peer) ->
+    gen_fsm:start_link({local, ?SERVER}, ?MODULE, [Peer], [{debug, [trace]}]).
 
-packet_in(WTP, Packet) ->
-    gen_fsm:send_all_state_event(WTP, {packet_in, Packet}).
+handle_packet(_Address, _Port, Packet) ->
+    try	capwap_packet:decode(control, Packet) of
+	{Header, {discovery_request, 1, Seq, Elements}} ->
+	    Answer = answer_discover(Seq, Elements, Header),
+	    {reply, Answer};
+	{_Header, {join_request, 1, _Seq, _Elements}} ->
+	    accept;
+	_ ->
+	    {error, not_capwap}
+    catch
+	_:_ ->
+	    {error, not_capwap}
+    end.
+
+accept(WTP, Type, Socket) ->
+    gen_fsm:send_event(WTP, {accept, Type, Socket}).
 
 %%%===================================================================
 %%% gen_fsm callbacks
@@ -65,10 +82,9 @@ packet_in(WTP, Packet) ->
 %%                     {stop, StopReason}
 %% @end
 %%--------------------------------------------------------------------
-init([Socket, IP, InPortNo, Packet]) ->
-    capwap_wtp_reg:register({IP, InPortNo}),
-    packet_in(self(), Packet),
-    {ok, idle, #state{socket = Socket, ip = IP, port = InPortNo}, ?IDLE_TIMEOUT}.
+init([Peer]) ->
+    capwap_wtp_reg:register(Peer),
+    {ok, listen, #state{peer = Peer}, 5000}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -85,6 +101,26 @@ init([Socket, IP, InPortNo, Packet]) ->
 %%                   {stop, Reason, NewState}
 %% @end
 %%--------------------------------------------------------------------
+listen({accept, udp, Socket}, State) ->
+    capwap_udp:setopts(Socket, [{active, true}, {mode, binary}]),
+    ?DEBUG(?GREEN "udp_accept: ~p~n", [Socket]),
+    {next_state, idle, State#state{socket = {udp, Socket}}};
+
+listen({accept, dtls, Socket}, State) ->
+    ?DEBUG(?GREEN "ssl_accept on: ~p~n", [Socket]),
+    case ssl:ssl_accept(Socket, mk_ssl_opts()) of
+	{ok, SslSocket} ->
+	    ?DEBUG(?GREEN "ssl_accept: ~p~n", [SslSocket]),
+	    ssl:setopts(SslSocket, [{active, true}, {mode, binary}]),
+	    {next_state, idle, State#state{socket = {dtls, SslSocket}}};
+	Other ->
+	    ?DEBUG(?RED "ssl_accept failed: ~p~n", [Other]),
+	    {stop, normal, State}
+    end;
+
+listen(timeout, State) ->
+    {stop, normal, State}.
+
 idle(timeout, State) ->
     {stop, normal, State};
 
@@ -188,9 +224,9 @@ run({Msg, Seq, Elements, Header}, State) ->
 %%                   {stop, Reason, Reply, NewState}
 %% @end
 %%--------------------------------------------------------------------
-start(_Event, _From, State) ->
-    Reply = ok,
-    {reply, Reply, state_name, State}.
+%% start(_Event, _From, State) ->
+%%     Reply = ok,
+%%     {reply, Reply, state_name, State}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -205,40 +241,6 @@ start(_Event, _From, State) ->
 %%                   {stop, Reason, NewState}
 %% @end
 %%--------------------------------------------------------------------
--define(SEQ_LE(S1, S2), (S1 < S2 andalso (S2-S1) < 128) orelse (S1>S2 andalso (S1-S2) > 128)).
-
-handle_event({packet_in, Packet}, StateName, State = #state{
-					       last_response = LastResponse,
-					       last_request = LastRequest}) ->
-    try	capwap_packet:decode(control, Packet) of
-	{Header, {Msg, 1, Seq, Elements}} ->
-	    %% Request
-	    case LastResponse of
-		{Seq, _} ->
-		    resend_response(State),
-		    {next_state, StateName, State};
-		{LastSeq, _} when ?SEQ_LE(Seq, LastSeq) ->
-		    %% old request, silently ignore
-		    {next_state, StateName, State};
-		_ ->
-		    ?MODULE:StateName({Msg, Seq, Elements, Header}, State)
-	    end;
-	{Header, {Msg, 0, Seq, Elements}} ->
-	    %% Response
-	    case LastRequest of
-		{Seq, _} ->
-		    State1 = ack_request(State),
-		    ?MODULE:StateName({Msg, Seq, Elements, Header}, State1);
-		_ ->
-		    %% invalid Seq, out-of-order packet, silently ignore,
-		    {next_state, StateName, State}
-	    end
-    catch
-	Class:Error ->
-	    error_logger:error_report([{capwap_packet, decode}, {class, Class}, {error, Error}]),
-	    {next_state, StateName, State}
-    end;
-
 handle_event(_Event, StateName, State) ->
     {next_state, StateName, State}.
 
@@ -275,9 +277,20 @@ handle_sync_event(_Event, _From, StateName, State) ->
 %%                   {stop, Reason, NewState}
 %% @end
 %%--------------------------------------------------------------------
+-define(SEQ_LE(S1, S2), (S1 < S2 andalso (S2-S1) < 128) orelse (S1>S2 andalso (S1-S2) > 128)).
+
+handle_info({capwap_udp, Socket, Packet}, StateName, State = #state{socket = {_, Socket}}) ->
+    ?DEBUG(?GREEN "in State ~p got UDP: ~p~n", [StateName, Packet]),
+    handle_capwap_packet(Packet, StateName, State);
+
+handle_info({ssl, Socket, Packet}, StateName, State = #state{socket = {_, Socket}}) ->
+    ?DEBUG(?GREEN "in State ~p got DTLS: ~p~n", [StateName, Packet]),
+    handle_capwap_packet(Packet, StateName, State);
+
 handle_info({timeout, _, retransmit}, StateName, State) ->
     resend_request(StateName, State);
-handle_info(_Info, StateName, State) ->
+handle_info(Info, StateName, State) ->
+    ?DEBUG(?RED "in State ~p unexpected Info: ~p~n", [StateName, Info]),
     {next_state, StateName, State}.
 
 %%--------------------------------------------------------------------
@@ -291,7 +304,8 @@ handle_info(_Info, StateName, State) ->
 %% @spec terminate(Reason, StateName, State) -> void()
 %% @end
 %%--------------------------------------------------------------------
-terminate(_Reason, _StateName, _State) ->
+terminate(_Reason, _StateName, #state{socket = Socket}) ->
+    socket_close(Socket),
     ok.
 
 %%--------------------------------------------------------------------
@@ -310,12 +324,47 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 %%% Internal functions
 %%%===================================================================
 
+handle_capwap_packet(Packet, StateName, State = #state{
+					  last_response = LastResponse,
+					  last_request = LastRequest}) ->
+    try	capwap_packet:decode(control, Packet) of
+	{Header, {Msg, 1, Seq, Elements}} ->
+	    %% Request
+	    ?DEBUG(?BLUE "got capwap request: ~w~n", [Msg]),
+	    case LastResponse of
+		{Seq, _} ->
+		    resend_response(State),
+		    {next_state, StateName, State};
+		{LastSeq, _} when ?SEQ_LE(Seq, LastSeq) ->
+		    %% old request, silently ignore
+		    {next_state, StateName, State};
+		_ ->
+		    ?MODULE:StateName({Msg, Seq, Elements, Header}, State)
+	    end;
+	{Header, {Msg, 0, Seq, Elements}} ->
+	    %% Response
+	    ?DEBUG(?BLUE "got capwap response: ~w~n", [Msg]),
+	    case LastRequest of
+		{Seq, _} ->
+		    State1 = ack_request(State),
+		    ?MODULE:StateName({Msg, Seq, Elements, Header}, State1);
+		_ ->
+		    %% invalid Seq, out-of-order packet, silently ignore,
+		    {next_state, StateName, State}
+	    end
+    catch
+	Class:Error ->
+	    error_logger:error_report([{capwap_packet, decode}, {class, Class}, {error, Error}]),
+	    {next_state, StateName, State, ?IDLE_TIMEOUT}
+    end.
+
 ac_info() ->
     [#ac_descriptor{stations    = 0,
 		    limit       = 200,
 		    active_wtps = 0,
 		    max_wtps    = 2,
-		    security    = ['pre-shared'],
+%%		    security    = ['pre-shared'],
+		    security    = ['x509'],
 		    r_mac       = supported,
 		    dtls_policy = ['clear-text'],
 		    sub_elements = [{{0,4},<<"Hardware Ver. 1.0">>},
@@ -330,20 +379,21 @@ bump_seqno(State = #state{seqno = SeqNo}) ->
     State#state{seqno = (SeqNo + 1) rem 256}.
 
 send_response(Header, MsgType, Seq, MsgElems,
-	   State = #state{socket = Socket, ip = IP, port = Port}) ->
+	   State = #state{socket = Socket}) ->
+    ?DEBUG(?BLUE "send capwap response(~w): ~w~n", [Seq, MsgType]),
     BinMsg = capwap_packet:encode(control, {Header, {MsgType, Seq, MsgElems}}),
-    gen_udp:send(Socket, IP, Port, BinMsg),
+    ok = socket_send(Socket, BinMsg),
     State#state{last_response = {Seq, BinMsg}}.
 
-resend_response(#state{socket = Socket, ip = IP, port = Port,
-		       last_response = {_, BinMsg}}) ->
-    gen_udp:send(Socket, IP, Port, BinMsg).
+resend_response(#state{socket = Socket, last_response = {_, BinMsg}}) ->
+    ?DEBUG(?RED "resend capwap response~n", []),
+    ok = socket_send(Socket, BinMsg).
 
 send_request(Header, MsgType, ReqElements,
-	     State = #state{socket = Socket, ip = IP, port = Port,
-			    seqno = SeqNo}) ->
+	     State = #state{socket = Socket, seqno = SeqNo}) ->
+    ?DEBUG(?BLUE "send capwap request(~w): ~w~n", [SeqNo, MsgType]),
     BinMsg = capwap_packet:encode(control, {Header, {MsgType, SeqNo, ReqElements}}),
-    gen_udp:send(Socket, IP, Port, BinMsg),
+    ok = socket_send(Socket, BinMsg),
     State1 = State#state{last_request = {SeqNo, BinMsg},
 			 retransmit_timer = send_info_after(?RetransmitInterval, retransmit),
 			 retransmit_counter = ?MaxRetransmit
@@ -354,10 +404,11 @@ resend_request(StateName, State = #state{retransmit_counter = 0}) ->
     io:format("Finial Timeout in ~w, STOPPING~n", [StateName]),
     {stop, normal, State};
 resend_request(StateName,
-	       State = #state{socket = Socket, ip = IP, port = Port,
+	       State = #state{socket = Socket,
 			      last_request = {_, BinMsg},
 			      retransmit_counter = MaxRetransmit}) ->
-    gen_udp:send(Socket, IP, Port, BinMsg),
+    ?DEBUG(?RED "resend capwap request~n", []),
+    ok = socket_send(Socket, BinMsg),
     State1 = State#state{retransmit_timer = send_info_after(?RetransmitInterval, retransmit),
 			 retransmit_counter = MaxRetransmit - 1
 			},
@@ -411,4 +462,63 @@ process_ifopt([{addr,IP}|Rest], Acc) ->
     process_ifopt(Rest, [IE|Acc]);
 process_ifopt([_|Rest], Acc) ->
     process_ifopt(Rest, Acc).
+
+answer_discover(Seq, _Elements, #capwap_header{
+		       radio_id = RadioId, wb_id = WBID, flags = Flags}) ->
+    RespElems = ac_info(),
+    Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
+    capwap_packet:encode(control, {Header, {discovery_response, Seq, RespElems}}).
+
+user_lookup(srp, Username, _UserState) ->
+    ?DEBUG(?GREEN "srp: ~p~n", [Username]),
+    Salt = ssl:random_bytes(16),
+    UserPassHash = crypto:hash(sha, [Salt, crypto:hash(sha, [Username, <<$:>>, <<"secret">>])]),
+    {ok, {srp_1024, Salt, UserPassHash}};
+
+user_lookup(psk, Username, UserState) ->
+    ?DEBUG(?GREEN "psk: ~p~n", [Username]),
+    {ok, UserState}.
+
+socket_send({udp, Socket}, Data) ->
+    capwap_udp:send(Socket, Data);
+socket_send({dtls, Socket}, Data) ->
+    ssl:send(Socket, Data).
+
+socket_close({udp, Socket}) ->
+    capwap_udp:close(Socket);
+socket_close({dtls, Socket}) ->
+    ssl:close(Socket).
+
+mk_ssl_opts() ->
+    Dir = filename:join([code:lib_dir(capwap), "priv", "certs"]),
+    [{active, false},
+     {verify, 0},
+     {mode, binary},
+     {reuseaddr, true},
+
+     {versions, ['dtlsv1.2', dtlsv1]},
+     %%{cb_info, {ssl_udp_test, ssl_udp_test, udp_closed, udp_error}},
+     {cb_info, capwap_udp},
+     {verify_client_hello, true},
+
+     {ciphers,[{ecdhe_rsa, aes_128_cbc, sha},
+	       {dhe_rsa, aes_128_cbc, sha},
+	       {rsa, aes_128_cbc, sha},
+	       {ecdhe_rsa, aes_256_cbc, sha},
+	       {dhe_rsa, aes_256_cbc, sha},
+	       {rsa, aes_256_cbc, sha},
+	       {dhe_psk, aes_128_cbc,sha},
+	       {psk, aes_128_cbc,sha},
+	       {dhe_psk, aes_256_cbc,sha},
+	       {psk, aes_256_cbc,sha}]},
+
+     {psk_identity, "CAPWAP"},
+     {user_lookup_fun, {fun user_lookup/3, <<16#11>>}},
+     %% {ciphers,[{srp_dss, aes_256_cbc, sha}]},
+     %% {ciphers, [{srp_anon, aes_256_cbc, sha}]},
+
+     {cacertfile, filename:join([Dir, "cacerts.pem"])},
+     {certfile, filename:join([Dir, "server.pem"])},
+     {keyfile, filename:join([Dir, "server.key"])}
+    ].
 
