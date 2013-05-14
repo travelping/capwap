@@ -1,3 +1,6 @@
+-define('id-kp-capwapAC', {1,3,6,1,5,5,7,3,18}).
+-define('id-kp-capwapWTP', {1,3,6,1,5,5,7,3,19}).
+
 -record(capwap_header, {
 	  radio_id,
 	  wb_id,

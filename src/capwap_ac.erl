@@ -12,7 +12,7 @@
 
 
 -export([handle_packet/3]).
-
+-include_lib("public_key/include/OTP-PUB-KEY.hrl").
 -include("capwap_debug.hrl").
 -include("capwap_packet.hrl").
 
@@ -26,6 +26,7 @@
 -record(state, {
 	  peer,
 	  socket,
+	  session,
 	  last_response,
 	  last_request,
 	  retransmit_timer,
@@ -108,11 +109,13 @@ listen({accept, udp, Socket}, State) ->
 
 listen({accept, dtls, Socket}, State) ->
     ?DEBUG(?GREEN "ssl_accept on: ~p~n", [Socket]),
-    case ssl:ssl_accept(Socket, mk_ssl_opts()) of
+
+    {ok, Session} = start_session(Socket, State),
+    case ssl:ssl_accept(Socket, mk_ssl_opts(Session)) of
 	{ok, SslSocket} ->
 	    ?DEBUG(?GREEN "ssl_accept: ~p~n", [SslSocket]),
 	    ssl:setopts(SslSocket, [{active, true}, {mode, binary}]),
-	    {next_state, idle, State#state{socket = {dtls, SslSocket}}};
+	    {next_state, idle, State#state{socket = {dtls, SslSocket}, session = Session}};
 	Other ->
 	    ?DEBUG(?RED "ssl_accept failed: ~p~n", [Other]),
 	    {stop, normal, State}
@@ -363,8 +366,8 @@ ac_info() ->
 		    limit       = 200,
 		    active_wtps = 0,
 		    max_wtps    = 2,
-%%		    security    = ['pre-shared'],
-		    security    = ['x509'],
+		    security    = ['pre-shared'],
+%%		    security    = ['x509'],
 		    r_mac       = supported,
 		    dtls_policy = ['clear-text'],
 		    sub_elements = [{{0,4},<<"Hardware Ver. 1.0">>},
@@ -469,16 +472,6 @@ answer_discover(Seq, _Elements, #capwap_header{
     Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
     capwap_packet:encode(control, {Header, {discovery_response, Seq, RespElems}}).
 
-user_lookup(srp, Username, _UserState) ->
-    ?DEBUG(?GREEN "srp: ~p~n", [Username]),
-    Salt = ssl:random_bytes(16),
-    UserPassHash = crypto:hash(sha, [Salt, crypto:hash(sha, [Username, <<$:>>, <<"secret">>])]),
-    {ok, {srp_1024, Salt, UserPassHash}};
-
-user_lookup(psk, Username, UserState) ->
-    ?DEBUG(?GREEN "psk: ~p~n", [Username]),
-    {ok, UserState}.
-
 socket_send({udp, Socket}, Data) ->
     capwap_udp:send(Socket, Data);
 socket_send({dtls, Socket}, Data) ->
@@ -487,12 +480,80 @@ socket_send({dtls, Socket}, Data) ->
 socket_close({udp, Socket}) ->
     capwap_udp:close(Socket);
 socket_close({dtls, Socket}) ->
-    ssl:close(Socket).
+    ssl:close(Socket);
+socket_close(undefined) ->
+    ok;
+socket_close(Socket) ->
+    ?DEBUG(?RED "Got Close on: ~p~n", [Socket]),
+    ok.
 
-mk_ssl_opts() ->
+user_lookup(srp, Username, _UserState) ->
+    ?DEBUG(?GREEN "srp: ~p~n", [Username]),
+    Salt = ssl:random_bytes(16),
+    UserPassHash = crypto:hash(sha, [Salt, crypto:hash(sha, [Username, <<$:>>, <<"secret">>])]),
+    {ok, {srp_1024, Salt, UserPassHash}};
+
+user_lookup(psk, Username, Session) ->
+    ?DEBUG(?GREEN "user_lookup: Username: ~p~n", [Username]),
+    Opts = [{'Username', Username},
+	    {'Authentication-Method', {'TLS', 'Pre-Shared-Key'}}],
+    case ctld_session:authenticate(Session, Opts) of
+	success ->
+	    ?DEBUG(?GREEN "AuthResult: success~n"),
+	    case ctld_session:get(Session, 'TLS-Pre-Shared-Key') of
+		{ok, PSK} ->
+		    ?DEBUG(?GREEN "AuthResult: PSK: ~p~n", [PSK]),
+		    {ok, PSK};
+		_ ->
+		    ?DEBUG(?RED "AuthResult: NO PSK~n"),
+		    {error, "no PSK"}
+	    end;
+	Other ->
+	    ?DEBUG(?RED "AuthResult: ~p~n", [Other]),
+	    {error, Other}
+    end.
+
+verify_cert(_,{bad_cert, _} = Reason, _) ->
+    {fail, Reason};
+verify_cert(_,{extension, _}, UserState) ->
+    {unknown, UserState};
+verify_cert(_, valid, UserState) ->
+    {valid, UserState};
+verify_cert(#'OTPCertificate'{
+	       tbsCertificate =
+		   #'OTPTBSCertificate'{
+		 subject = {rdnSequence, SubjectList},
+		 extensions = Extensions
+		}}, valid_peer, UserState) ->
+    Subject = [erlang:hd(S)|| S <- SubjectList],
+    {value, #'AttributeTypeAndValue'{value = {utf8String, CommonName}}} =
+	lists:keysearch(?'id-at-commonName', #'AttributeTypeAndValue'.type, Subject),
+    #'Extension'{extnValue = ExtnValue} =
+	lists:keyfind(?'id-ce-extKeyUsage', #'Extension'.extnID, Extensions),
+
+    case lists:member(?'id-kp-capwapWTP', ExtnValue) of
+	true -> verify_cert_auth_cn(CommonName, UserState);
+	_    -> {fail, "not a valid WTP certificate"}
+    end.
+
+verify_cert_auth_cn(CommonName, Session) ->
+    Opts = [{'Username', CommonName},
+	    {'Authentication-Method', {'TLS', 'X509-Subject-CN'}}],
+    case ctld_session:authenticate(Session, Opts) of
+	success ->
+	    ?DEBUG(?GREEN "AuthResult: success~n"),
+	    {valid, Session};
+	{fail, Reason} ->
+	    ?DEBUG(?RED "AuthResult: fail, ~p~n", [Reason]),
+	    {fail, Reason};
+	Other ->
+	    ?DEBUG(?RED "AuthResult: ~p~n", [Other]),
+	    {fail, Other}
+    end.
+
+mk_ssl_opts(Session) ->
     Dir = filename:join([code:lib_dir(capwap), "priv", "certs"]),
     [{active, false},
-     {verify, 0},
      {mode, binary},
      {reuseaddr, true},
 
@@ -512,8 +573,12 @@ mk_ssl_opts() ->
 	       {dhe_psk, aes_256_cbc,sha},
 	       {psk, aes_256_cbc,sha}]},
 
+     {verify, verify_peer},
+     {verify_fun, {fun verify_cert/3, Session}},
+     {fail_if_no_peer_cert, true},
+
      {psk_identity, "CAPWAP"},
-     {user_lookup_fun, {fun user_lookup/3, <<16#11>>}},
+     {user_lookup_fun, {fun user_lookup/3, Session}},
      %% {ciphers,[{srp_dss, aes_256_cbc, sha}]},
      %% {ciphers, [{srp_anon, aes_256_cbc, sha}]},
 
@@ -522,3 +587,22 @@ mk_ssl_opts() ->
      {keyfile, filename:join([Dir, "server.key"])}
     ].
 
+ip2str(IP) ->
+    inet_parse:ntoa(IP).
+
+tunnel_medium({_,_,_,_}) ->
+    'IPv4';
+tunnel_medium({_,_,_,_,_,_,_,_}) ->
+    'IPv6'.
+
+start_session(Socket, _State) ->
+    {ok, RadiusOpts} = application:get_env(radius),
+    SessionData = session_info(Socket),
+    ctld_session_sup:new_session(?MODULE, self(), ctld_radius, RadiusOpts, SessionData).
+
+session_info(Socket) ->
+    {ok, {Address, _Port}} = capwap_udp:peername(Socket),
+    [{'Calling-Station', ip2str(Address)},
+     {'Tunnel-Type', 'CAPWAP'},
+     {'Tunnel-Medium-Type', tunnel_medium(Address)},
+     {'Tunnel-Client-Endpoint', ip2str(Address)}].
