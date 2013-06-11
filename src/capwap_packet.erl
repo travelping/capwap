@@ -4,11 +4,12 @@
 
 -include("capwap_packet.hrl").
 
-decode(control, <<0:4, 0:4,
+decode(Type, <<0:4, 0:4,
 		  HLen:5/integer, RID:5/integer, WBID:5/integer,
 		  T:1, 0:1, 0:1, W:1, M:1, K:1, _:3,
 		  _FragmentId:16/integer, _FragmentOffset:13/integer, _:3,
-		  Rest/binary>>) ->
+		  Rest/binary>>)
+  when Type == control; Type == data ->
     RestHeaderLen = (HLen - 2) * 4,
     <<RestHeader0:RestHeaderLen/bytes, PayLoad/binary>> = Rest,
     {RadioMAC, RestHeader1} = extract_header(M, RestHeader0),
@@ -26,7 +27,20 @@ decode(control, <<0:4, 0:4,
 			    flags = F1,
 			    radio_mac = RadioMAC,
 			    wireless_spec_info = WirelessSpecInfo},
-    {Header, decode_control_msg(PayLoad)}.
+    case {Type, K} of
+	{control, _} ->
+	    {Header, decode_control_msg(PayLoad)};
+	{data, 0} ->
+	    {Header, PayLoad};
+	{data, 1} ->
+	    case PayLoad of
+		<<MELength:16, ME:MELength/bytes, _/binary>> ->
+		    {Header, decode_elements(ME, [])};
+		_ ->
+		    %% FIXME: workarround for broken OpenCAPWAP encoding
+		    {Header, decode_elements(PayLoad, [])}
+	    end
+    end.
 
 encode(control, {Header, {MsgType, _, SeqNum, IEs}}) ->
     encode(control, {Header, {MsgType, SeqNum, IEs}});
@@ -51,7 +65,15 @@ encode(control, {#capwap_header{radio_id = RID,
       FragmentId:16, FragmentOffset:13, 0:3,
       RadioMACbin/binary, WirelessSpecInfoBin/binary,
       Vendor:24, MType:8, SeqNum:8, (byte_size(PayLoad) + 3):16, 0:8,
-      PayLoad/binary>>.
+      PayLoad/binary>>;
+
+encode(data, {Header = #capwap_header{flags = Flags}, PayLoad}) ->
+    case proplists:get_bool('keep-alive', Flags) of
+	true ->
+	    encode_data_keep_alive(Header, PayLoad);
+	_ ->
+	    encode_data_packet(Header, PayLoad)
+    end.
 
 %%%===================================================================
 %%% Internal functions
@@ -170,3 +192,38 @@ encode_vendor_subelements(IEs) ->
 
 encode_element(Type, Value) ->
     <<Type:16, (byte_size(Value)):16, Value/binary>>.
+
+encode_data_keep_alive(#capwap_header{wb_id = WBID,
+				      radio_mac = RadioMAC,
+				      wireless_spec_info = WirelessSpecInfo},
+		       MessageElements) ->
+    FragmentId = 0,
+    FragmentOffset = 0,
+    {W, WirelessSpecInfoBin} = encode_header(WirelessSpecInfo),
+    {M, RadioMACbin} = encode_header(RadioMAC),
+    PayLoad = << <<(encode_element(X))/binary>> || X <- MessageElements>>,
+    HLen = (8 + byte_size(RadioMACbin) + byte_size(WirelessSpecInfoBin)) div 4,
+    <<0:4, 0:4, HLen:5, 0:5, WBID:5,
+      0:1, 0:1, 0:1, W:1, M:1, 1:1, 0:3,
+      FragmentId:16, FragmentOffset:13, 0:3,
+      RadioMACbin/binary, WirelessSpecInfoBin/binary,
+%%      (byte_size(PayLoad) + 3):16,
+      PayLoad/binary>>.
+
+encode_data_packet(#capwap_header{radio_id = RID,
+				  wb_id = WBID,
+				  flags = Flags,
+				  radio_mac = RadioMAC,
+				  wireless_spec_info = WirelessSpecInfo},
+		   PayLoad) ->
+    FragmentId = 0,
+    FragmentOffset = 0,
+    T = encode_transport(proplists:get_value(frame, Flags, native)),
+    {W, WirelessSpecInfoBin} = encode_header(WirelessSpecInfo),
+    {M, RadioMACbin} = encode_header(RadioMAC),
+    HLen = (8 + byte_size(RadioMACbin) + byte_size(WirelessSpecInfoBin)) div 4,
+    <<0:4, 0:4, HLen:5, RID:5, WBID:5,
+      T:1, 0:1, 0:1, W:1, M:1, 0:1, 0:3,
+      FragmentId:16, FragmentOffset:13, 0:3,
+      RadioMACbin/binary, WirelessSpecInfoBin/binary,
+      PayLoad/binary>>.

@@ -3,15 +3,16 @@
 -behaviour(gen_fsm).
 
 %% API
--export([start_link/1, accept/3]).
+-export([start_link/1, accept/3, get_peer_data/1]).
 
 %% gen_fsm callbacks
--export([init/1, listen/2, idle/2, join/2, configure/2, run/2,
+-export([init/1, listen/2, idle/2, join/2, configure/2, data_check/2, run/2,
+	 idle/3, join/3, configure/3, data_check/3, run/3,
 	 handle_event/3,
 	 handle_sync_event/4, handle_info/3, terminate/3, code_change/4]).
 
+-export([handle_packet/3, handle_data/4]).
 
--export([handle_packet/3]).
 -include_lib("public_key/include/OTP-PUB-KEY.hrl").
 -include("capwap_debug.hrl").
 -include("capwap_packet.hrl").
@@ -25,6 +26,7 @@
 
 -record(state, {
 	  peer,
+	  peer_data,
 	  socket,
 	  session,
 	  last_response,
@@ -47,7 +49,7 @@
 %% @end
 %%--------------------------------------------------------------------
 start_link(Peer) ->
-    gen_fsm:start_link({local, ?SERVER}, ?MODULE, [Peer], [{debug, [trace]}]).
+    gen_fsm:start_link(?MODULE, [Peer], [{debug, [trace]}]).
 
 handle_packet(_Address, _Port, Packet) ->
     try	capwap_packet:decode(control, Packet) of
@@ -63,8 +65,24 @@ handle_packet(_Address, _Port, Packet) ->
 	    {error, not_capwap}
     end.
 
+handle_data(Sw, Address, Port, Packet) ->
+    ?DEBUG(?GREEN "capwap_data: ~p, ~p, ~p~n", [Address, Port, Packet]),
+    try	capwap_packet:decode(data, Packet) of
+	{Header, PayLoad} ->
+	    KeepAlive = proplists:get_bool('keep-alive', Header#capwap_header.flags),
+	    handle_capwap_data(Sw, Address, Port, Header, KeepAlive, PayLoad);
+	_ ->
+	    {error, not_capwap}
+    catch
+	_:_ ->
+	    {error, not_capwap}
+    end.
+
 accept(WTP, Type, Socket) ->
     gen_fsm:send_event(WTP, {accept, Type, Socket}).
+
+get_peer_data(WTP) ->
+    gen_fsm:sync_send_all_state_event(WTP, get_peer_data).
 
 %%%===================================================================
 %%% gen_fsm callbacks
@@ -105,7 +123,7 @@ init([Peer]) ->
 listen({accept, udp, Socket}, State) ->
     capwap_udp:setopts(Socket, [{active, true}, {mode, binary}]),
     ?DEBUG(?GREEN "udp_accept: ~p~n", [Socket]),
-    {next_state, idle, State#state{socket = {udp, Socket}}};
+    next_state(idle, State#state{socket = {udp, Socket}});
 
 listen({accept, dtls, Socket}, State) ->
     ?DEBUG(?GREEN "ssl_accept on: ~p~n", [Socket]),
@@ -115,7 +133,7 @@ listen({accept, dtls, Socket}, State) ->
 	{ok, SslSocket} ->
 	    ?DEBUG(?GREEN "ssl_accept: ~p~n", [SslSocket]),
 	    ssl:setopts(SslSocket, [{active, true}, {mode, binary}]),
-	    {next_state, idle, State#state{socket = {dtls, SslSocket}, session = Session}};
+	    next_state(idle, State#state{socket = {dtls, SslSocket}, session = Session});
 	Other ->
 	    ?DEBUG(?RED "ssl_accept failed: ~p~n", [Other]),
 	    {stop, normal, State}
@@ -124,7 +142,12 @@ listen({accept, dtls, Socket}, State) ->
 listen(timeout, State) ->
     {stop, normal, State}.
 
+idle({keep_alive, _Sw, _PeerId, Header, PayLoad}, _From, State) ->
+    ?DEBUG(?RED "in IDLE got unexpected keep_alive: ~p~n", [{Header, PayLoad}]),
+    reply({error, unexpected}, idle, State).
+
 idle(timeout, State) ->
+    ?DEBUG("timeout in IDLE -> stop~n"),
     {stop, normal, State};
 
 idle({discovery_request, Seq, _Elements, #capwap_header{
@@ -133,19 +156,30 @@ idle({discovery_request, Seq, _Elements, #capwap_header{
     RespElements = ac_info(),
     Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
     State1 = send_response(Header, discovery_response, Seq, RespElements, State),
-    {next_state, idle, State1, ?IDLE_TIMEOUT};
+    next_state(idle, State1);
 
-idle({join_request, Seq, _Elements, #capwap_header{
+idle({join_request, Seq, Elements, #capwap_header{
 			   radio_id = RadioId, wb_id = WBID, flags = Flags}},
-     State) ->
+     State = #state{peer = {Address, _}}) ->
+    ?DEBUG(?GREEN "Join-Request: ~p~n", [Elements]),
+    SessionId = proplists:get_value(session_id, Elements),
+    capwap_wtp_reg:register_sessionid(Address, SessionId),
     RespElements = ac_info() ++ [#result_code{result_code = 0}],
     Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
     State1 = send_response(Header, join_response, Seq, RespElements, State),
-    {next_state, join, State1, ?IDLE_TIMEOUT};
+    next_state(join, State1);
 
 idle({Msg, Seq, Elements, Header}, State) ->
-    io:format("in idle got: ~p~n", [{Msg, Seq, Elements, Header}]),
-    {next_state, idle, State, ?IDLE_TIMEOUT}.
+    ?DEBUG(?RED "in IDLE got unexpexted: ~p~n", [{Msg, Seq, Elements, Header}]),
+    next_state(idle, State).
+
+join({keep_alive, _Sw, _PeerId, Header, PayLoad}, _From, State) ->
+    ?DEBUG(?RED "in JOIN got unexpected keep_alive: ~p~n", [{Header, PayLoad}]),
+    reply({error, unexpected}, join, State).
+
+join(timeout, State) ->
+    ?DEBUG("timeout in JOIN -> stop~n"),
+    {stop, normal, State};
 
 join({configuration_status_request, Seq, _Elements, #capwap_header{
 					   radio_id = RadioId, wb_id = WBID, flags = Flags}},
@@ -159,43 +193,55 @@ join({configuration_status_request, Seq, _Elements, #capwap_header{
 		    #idle_timeout{timeout = 10}],
     Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
     State1 = send_response(Header, configuration_status_response, Seq, RespElements, State),
-    {next_state, configure, State1, ?IDLE_TIMEOUT};
+    next_state(configure, State1);
 
 join({Msg, Seq, Elements, Header}, State) ->
-    io:format("in join got: ~p~n", [{Msg, Seq, Elements, Header}]),
-    {next_state, join, State, ?IDLE_TIMEOUT}.
+    ?DEBUG(?RED "in JOIN got unexpexted: ~p~n", [{Msg, Seq, Elements, Header}]),
+    next_state(join, State).
+
+configure({keep_alive, _Sw, _PeerId, Header, PayLoad}, _From, State) ->
+    ?DEBUG(?RED "in CONFIGURE got unexpected keep_alive: ~p~n", [{Header, PayLoad}]),
+    reply({error, unexpected}, configure, State).
+
+configure(timeout, State) ->
+    ?DEBUG("timeout in CONFIGURE -> stop~n"),
+    {stop, normal, State};
 
 configure({change_state_event_request, Seq, _Elements, #capwap_header{
 					      radio_id = RadioId, wb_id = WBID, flags = Flags}},
 	  State) ->
     Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
     State1 = send_response(Header, change_state_event_response, Seq, [], State),
-
-    ReqElements = [#ieee_802_11_add_wlan{
-		      radio_id      = RadioId,
-		      wlan_id       = 1,
-		      capability    = [ess, short_slot_time],
-		      auth_type     = open_system,
-		      mac_mode      = split_mac,
-		      tunnel_mode   = '802_11_tunnel',
-		      suppress_ssid = 1,
-		      ssid          = <<"CAPWAP Test">>
-		     }],
-    Header1 = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
-    State2 = send_request(Header1, ieee_802_11_wlan_configuration_request, ReqElements, State1),
-
-    {next_state, run, State2, ?IDLE_TIMEOUT};
+    next_state(data_check, State1);
 
 configure({Msg, Seq, Elements, Header}, State) ->
     io:format("in configure got: ~p~n", [{Msg, Seq, Elements, Header}]),
-    {next_state, configure, State, ?IDLE_TIMEOUT}.
+    next_state(configure, State).
+
+data_check({keep_alive, Sw, PeerId, Header, PayLoad}, _From, State) ->
+    ?DEBUG(?GREEN "in DATA_CHECK got expected keep_alive: ~p~n", [{Sw, Header, PayLoad}]),
+    capwap_wtp_reg:register(PeerId),
+    gen_fsm:send_event(self(), configure),
+    reply({reply, {Header, PayLoad}}, run, State#state{peer_data = PeerId}).
+
+data_check(timeout, State) ->
+    ?DEBUG("timeout in DATA_CHECK -> stop~n"),
+    {stop, normal, State};
+
+data_check({Msg, Seq, Elements, Header}, State) ->
+    ?DEBUG(?RED "in DATA_CHECK got unexpexted: ~p~n", [{Msg, Seq, Elements, Header}]),
+    next_state(data_check, State).
+
+run({keep_alive, Sw, _PeerId, Header, PayLoad}, _From, State) ->
+    ?DEBUG(?GREEN "in RUN got expected keep_alive: ~p~n", [{Sw, Header, PayLoad}]),
+    reply({reply, {Header, PayLoad}}, run, State).
 
 run(timeout, State) ->
     io:format("IdleTimeout in Run~n"),
     Header = #capwap_header{radio_id = 0, wb_id = 1, flags = []},
     Elements = [],
     State1 = send_request(Header, echo_request, Elements, State),
-    {next_state, run, State1, ?IDLE_TIMEOUT};
+    next_state(run, State1);
 
 run({echo_request, Seq, Elements, #capwap_header{
 			  radio_id = RadioId, wb_id = WBID, flags = Flags}},
@@ -203,11 +249,53 @@ run({echo_request, Seq, Elements, #capwap_header{
     io:format("EchoReq in Run got: ~p~n", [{Seq, Elements}]),
     Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
     State1 = send_response(Header, echo_response, Seq, Elements, State),
-    {next_state, run, State1, ?IDLE_TIMEOUT};
+    next_state(run, State1);
 
-run({Msg, Seq, Elements, Header}, State) ->
-    io:format("in run got: ~p~n", [{Msg, Seq, Elements, Header}]),
-    {next_state, run, State, ?IDLE_TIMEOUT}.
+run({ieee_802_11_wlan_configuration_response, _Seq,
+	   Elements, _Header}, State) ->
+    case proplists:get_value(result_code, Elements) of
+	0 ->
+	    ?DEBUG(?GREEN "IEEE 802.11 WLAN Configuration ok"),
+	    ok;
+	Code ->
+	    ?DEBUG(?RED "IEEE 802.11 WLAN Configuration failed with ~w~n", [Code]),
+	    ok
+    end,
+    next_state(run, State);
+
+run(configure, State) ->
+    ?DEBUG(?GREEN "configure WTP~n"),
+    RadioId = 0,
+    WBID = 1,
+    Flags = [{frame,'802.3'}],
+    ReqElements = [#ieee_802_11_add_wlan{
+    		      radio_id      = RadioId,
+    		      wlan_id       = 1,
+    		      capability    = [ess, short_slot_time],
+    		      auth_type     = open_system,
+    		      mac_mode      = split_mac,
+    		      tunnel_mode   = '802_11_tunnel',
+    		      suppress_ssid = 1,
+    		      ssid          = <<"CAPWAP Test">>
+    		     }],
+    Header1 = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
+    State1 = send_request(Header1, ieee_802_11_wlan_configuration_request, ReqElements, State),
+    next_state(run, State1);
+
+run({add_station, #capwap_header{radio_id = RadioId, wb_id = WBID}, MAC}, State) ->
+    Flags = [{frame,'802.3'}],
+    ReqElements = [#add_station{
+    		      radio_id  = RadioId,
+		      mac       = MAC,
+		      vlan_name = <<>>
+		     }],
+    Header1 = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
+    State1 = send_request(Header1, station_configuration_request, ReqElements, State),
+    next_state(run, State1);
+
+run(Event, State) ->
+    ?DEBUG(?RED "in RUN got unexpexted: ~p~n", [Event]),
+    next_state(run, State).
 
 %%--------------------------------------------------------------------
 %% @private
@@ -245,7 +333,7 @@ run({Msg, Seq, Elements, Header}, State) ->
 %% @end
 %%--------------------------------------------------------------------
 handle_event(_Event, StateName, State) ->
-    {next_state, StateName, State}.
+    next_state(StateName, State).
 
 %%--------------------------------------------------------------------
 %% @private
@@ -263,9 +351,15 @@ handle_event(_Event, StateName, State) ->
 %%                   {stop, Reason, Reply, NewState}
 %% @end
 %%--------------------------------------------------------------------
+handle_sync_event(get_peer_data, _From, run, State) ->
+    Reply = {ok, State#state.peer_data},
+    reply(Reply, run, State);
+handle_sync_event(get_peer_data, _From, StateName, State) ->
+    Reply = {error, not_connected},
+    reply(Reply, StateName, State);
 handle_sync_event(_Event, _From, StateName, State) ->
     Reply = ok,
-    {reply, Reply, StateName, State}.
+    reply(Reply, StateName, State).
 
 %%--------------------------------------------------------------------
 %% @private
@@ -294,7 +388,7 @@ handle_info({timeout, _, retransmit}, StateName, State) ->
     resend_request(StateName, State);
 handle_info(Info, StateName, State) ->
     ?DEBUG(?RED "in State ~p unexpected Info: ~p~n", [StateName, Info]),
-    {next_state, StateName, State}.
+    next_state(StateName, State).
 
 %%--------------------------------------------------------------------
 %% @private
@@ -327,6 +421,64 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 %%% Internal functions
 %%%===================================================================
 
+next_state(NextStateName, State)
+  when NextStateName == idle ->
+    {next_state, NextStateName, State};
+next_state(NextStateName, State) ->
+     {next_state, NextStateName, State, ?IDLE_TIMEOUT}.
+
+reply(Reply, NextStateName, State)
+  when NextStateName == idle ->
+    {reply, Reply, NextStateName, State};
+reply(Reply, NextStateName, State) ->
+    {reply, Reply, NextStateName, State, ?IDLE_TIMEOUT}.
+
+handle_capwap_data(Sw, Address, Port, Header, true, PayLoad) ->
+    ?DEBUG(?BLUE "CAPWAP Data KeepAlive: ~p~n", [PayLoad]),
+
+    SessionId = proplists:get_value(session_id, PayLoad),
+    case capwap_wtp_reg:lookup_sessionid(Address, SessionId) of
+	not_found ->
+	    {error, not_found};
+	{ok, AC} ->
+	    PeerId = {Address, Port},
+	    case gen_fsm:sync_send_event(AC, {keep_alive, Sw, PeerId, Header, PayLoad}) of
+		{reply, {RHeader, RPayLoad}} ->
+		    Data = capwap_packet:encode(data, {RHeader, RPayLoad}),
+		    {reply, Data};
+		Other ->
+		    Other
+	    end
+    end;
+
+handle_capwap_data(_Sw, Address, Port,
+		   Header = #capwap_header{
+		     radio_id = RadioId, wb_id = WBID},
+		   false, Frame) ->
+    ?DEBUG(?BLUE "CAPWAP Data PayLoad:~n~p~n~p~n", [Header, Frame]),
+    PeerId = {Address, Port},
+    case capwap_wtp_reg:lookup(PeerId) of
+	not_found ->
+	    ?DEBUG(?RED "AC for data session no found: ~p~n", [PeerId]),
+	    {error, not_found};
+	{ok, AC} ->
+	    case ieee80211_station:handle_ieee80211_frame(AC, Frame) of
+		{reply, Reply} ->
+		    %% build capwap packet....
+		    RHeader = #capwap_header{
+		      radio_id = RadioId,
+		      wb_id = WBID,
+		      flags = [{frame, 'native'}]},
+		    Data = capwap_packet:encode(data, {RHeader, Reply}),
+		    {reply, Data};
+		{add, RadioMAC, MAC} ->
+		    gen_fsm:send_event(AC, {add_station, Header, MAC}),
+		    {add_flow, Address, Port, RadioMAC, MAC};
+		Other ->
+		    Other
+	    end
+    end.
+
 handle_capwap_packet(Packet, StateName, State = #state{
 					  last_response = LastResponse,
 					  last_request = LastRequest}) ->
@@ -337,10 +489,10 @@ handle_capwap_packet(Packet, StateName, State = #state{
 	    case LastResponse of
 		{Seq, _} ->
 		    resend_response(State),
-		    {next_state, StateName, State};
+		    {next_state, StateName, State, ?IDLE_TIMEOUT};
 		{LastSeq, _} when ?SEQ_LE(Seq, LastSeq) ->
 		    %% old request, silently ignore
-		    {next_state, StateName, State};
+		    {next_state, StateName, State, ?IDLE_TIMEOUT};
 		_ ->
 		    ?MODULE:StateName({Msg, Seq, Elements, Header}, State)
 	    end;
@@ -353,7 +505,7 @@ handle_capwap_packet(Packet, StateName, State = #state{
 		    ?MODULE:StateName({Msg, Seq, Elements, Header}, State1);
 		_ ->
 		    %% invalid Seq, out-of-order packet, silently ignore,
-		    {next_state, StateName, State}
+		    {next_state, StateName, State, ?IDLE_TIMEOUT}
 	    end
     catch
 	Class:Error ->
@@ -415,7 +567,7 @@ resend_request(StateName,
     State1 = State#state{retransmit_timer = send_info_after(?RetransmitInterval, retransmit),
 			 retransmit_counter = MaxRetransmit - 1
 			},
-    {next_state, StateName, State1}.
+    {next_state, StateName, State1, ?IDLE_TIMEOUT}.
 
 
 %% Stop Timer, clear LastRequest
@@ -568,8 +720,10 @@ mk_ssl_opts(Session) ->
 	       {ecdhe_rsa, aes_256_cbc, sha},
 	       {dhe_rsa, aes_256_cbc, sha},
 	       {rsa, aes_256_cbc, sha},
+	       {ecdhe_psk, aes_128_cbc, sha},
 	       {dhe_psk, aes_128_cbc,sha},
 	       {psk, aes_128_cbc,sha},
+	       {ecdhe_psk, aes_256_cbc, sha},
 	       {dhe_psk, aes_256_cbc,sha},
 	       {psk, aes_256_cbc,sha}]},
 
