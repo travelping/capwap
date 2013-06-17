@@ -3,7 +3,7 @@
 -behaviour(gen_fsm).
 
 %% API
--export([start_link/1, accept/3, get_peer_data/1]).
+-export([start_link/1, accept/3, get_peer_data/1, get_peer_mode/1]).
 
 %% gen_fsm callbacks
 -export([init/1, listen/2, idle/2, join/2, configure/2, data_check/2, run/2,
@@ -29,6 +29,10 @@
 	  peer_data,
 	  socket,
 	  session,
+	  mac_types,
+	  tunnel_modes,
+	  mac_mode,
+	  tunnel_mode,
 	  last_response,
 	  last_request,
 	  retransmit_timer,
@@ -83,6 +87,9 @@ accept(WTP, Type, Socket) ->
 
 get_peer_data(WTP) ->
     gen_fsm:sync_send_all_state_event(WTP, get_peer_data).
+
+get_peer_mode(WTP) ->
+    gen_fsm:sync_send_all_state_event(WTP, get_peer_mode).
 
 %%%===================================================================
 %%% gen_fsm callbacks
@@ -160,14 +167,20 @@ idle({discovery_request, Seq, _Elements, #capwap_header{
 
 idle({join_request, Seq, Elements, #capwap_header{
 			   radio_id = RadioId, wb_id = WBID, flags = Flags}},
-     State = #state{peer = {Address, _}}) ->
+     State0 = #state{peer = {Address, _}}) ->
     ?DEBUG(?GREEN "Join-Request: ~p~n", [Elements]),
+
     SessionId = proplists:get_value(session_id, Elements),
     capwap_wtp_reg:register_sessionid(Address, SessionId),
+
+    MacTypes = ie(wtp_mac_type, Elements),
+    TunnelModes = ie(wtp_frame_tunnel_mode, Elements),
+    State1 = State0#state{mac_types = MacTypes, tunnel_modes = TunnelModes},
+
     RespElements = ac_info() ++ [#result_code{result_code = 0}],
     Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
-    State1 = send_response(Header, join_response, Seq, RespElements, State),
-    next_state(join, State1);
+    State = send_response(Header, join_response, Seq, RespElements, State1),
+    next_state(join, State);
 
 idle({Msg, Seq, Elements, Header}, State) ->
     ?DEBUG(?RED "in IDLE got unexpexted: ~p~n", [{Msg, Seq, Elements, Header}]),
@@ -268,19 +281,22 @@ run(configure, State) ->
     RadioId = 0,
     WBID = 1,
     Flags = [{frame,'802.3'}],
+    MacMode = select_mac_mode(State#state.mac_types),
+    TunnelMode = select_tunnel_mode(State#state.tunnel_modes, MacMode),
     ReqElements = [#ieee_802_11_add_wlan{
     		      radio_id      = RadioId,
     		      wlan_id       = 1,
     		      capability    = [ess, short_slot_time],
     		      auth_type     = open_system,
-    		      mac_mode      = split_mac,
-    		      tunnel_mode   = '802_11_tunnel',
+    		      mac_mode      = MacMode,
+    		      tunnel_mode   = TunnelMode,
     		      suppress_ssid = 1,
     		      ssid          = <<"CAPWAP Test">>
     		     }],
     Header1 = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
-    State1 = send_request(Header1, ieee_802_11_wlan_configuration_request, ReqElements, State),
-    next_state(run, State1);
+    State1 = State#state{mac_mode = MacMode, tunnel_mode = TunnelMode},
+    State2 = send_request(Header1, ieee_802_11_wlan_configuration_request, ReqElements, State1),
+    next_state(run, State2);
 
 run({add_station, #capwap_header{radio_id = RadioId, wb_id = WBID}, MAC}, State) ->
     Flags = [{frame,'802.3'}],
@@ -355,6 +371,13 @@ handle_sync_event(get_peer_data, _From, run, State) ->
     Reply = {ok, State#state.peer_data},
     reply(Reply, run, State);
 handle_sync_event(get_peer_data, _From, StateName, State) ->
+    Reply = {error, not_connected},
+    reply(Reply, StateName, State);
+handle_sync_event(get_peer_mode, _From, run,
+		  State = #state{mac_mode = MacMode, tunnel_mode = TunnelMode}) ->
+    Reply = {ok, MacMode, TunnelMode},
+    reply(Reply, run, State);
+handle_sync_event(get_peer_mode, _From, StateName, State) ->
     Reply = {error, not_connected},
     reply(Reply, StateName, State);
 handle_sync_event(_Event, _From, StateName, State) ->
@@ -453,6 +476,7 @@ handle_capwap_data(Sw, Address, Port, Header, true, PayLoad) ->
 
 handle_capwap_data(_Sw, Address, Port,
 		   Header = #capwap_header{
+		     flags = Flags,
 		     radio_id = RadioId, wb_id = WBID},
 		   false, Frame) ->
     ?DEBUG(?BLUE "CAPWAP Data PayLoad:~n~p~n~p~n", [Header, Frame]),
@@ -462,20 +486,38 @@ handle_capwap_data(_Sw, Address, Port,
 	    ?DEBUG(?RED "AC for data session no found: ~p~n", [PeerId]),
 	    {error, not_found};
 	{ok, AC} ->
-	    case ieee80211_station:handle_ieee80211_frame(AC, Frame) of
-		{reply, Reply} ->
-		    %% build capwap packet....
-		    RHeader = #capwap_header{
-		      radio_id = RadioId,
-		      wb_id = WBID,
-		      flags = [{frame, 'native'}]},
-		    Data = capwap_packet:encode(data, {RHeader, Reply}),
-		    {reply, Data};
-		{add, RadioMAC, MAC} ->
-		    gen_fsm:send_event(AC, {add_station, Header, MAC}),
-		    {add_flow, Address, Port, RadioMAC, MAC};
-		Other ->
-		    Other
+	    case proplists:get_value(frame, Flags) of
+		'802.3' ->
+		    ?DEBUG(?RED "got 802.3 payload Frame, what TODO with it???"),
+		    case ieee80211_station:handle_ieee802_3_frame(AC, Frame) of
+			{add, RadioMAC, MAC, MacMode, TunnelMode} ->
+			    gen_fsm:send_event(AC, {add_station, Header, MAC}),
+			    ?DEBUG(?GREEN "MacMode: ~w, TunnelMode ~w~n", [MacMode, TunnelMode]),
+			    {add_flow, Address, Port, RadioMAC, MAC, MacMode, TunnelMode};
+			Other ->
+			    Other
+		    end;
+
+		native ->
+		    case ieee80211_station:handle_ieee80211_frame(AC, Frame) of
+			{reply, Reply} ->
+			    %% build capwap packet....
+			    RHeader = #capwap_header{
+			      radio_id = RadioId,
+			      wb_id = WBID,
+			      flags = [{frame, 'native'}]},
+			    Data = capwap_packet:encode(data, {RHeader, Reply}),
+			    {reply, Data};
+			{add, RadioMAC, MAC, MacMode, TunnelMode} ->
+			    gen_fsm:send_event(AC, {add_station, Header, MAC}),
+			    ?DEBUG(?GREEN "MacMode: ~w, TunnelMode ~w~n", [MacMode, TunnelMode]),
+			    {add_flow, Address, Port, RadioMAC, MAC, MacMode, TunnelMode};
+			Other ->
+			    Other
+		    end;
+
+		_ ->
+		    {error, unknown_frame_format}
 	    end
     end.
 
@@ -760,3 +802,21 @@ session_info(Socket) ->
      {'Tunnel-Type', 'CAPWAP'},
      {'Tunnel-Medium-Type', tunnel_medium(Address)},
      {'Tunnel-Client-Endpoint', ip2str(Address)}].
+
+ie(Key, Elements) ->
+    proplists:get_value(Key, Elements).
+
+select_mac_mode(local) ->
+    local_mac;
+select_mac_mode(split) ->
+    split_mac;
+select_mac_mode(both) ->
+    local_mac.
+
+select_tunnel_mode(Modes, local_mac) ->
+    case proplists:get_bool('802.3', Modes) of
+	true -> '802_3_tunnel';
+	_    -> '802_11_tunnel'
+    end;
+select_tunnel_mode(_Modes, split_mac) ->
+    '802_11_tunnel'.
