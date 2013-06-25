@@ -792,9 +792,9 @@ tunnel_medium({_,_,_,_,_,_,_,_}) ->
     'IPv6'.
 
 start_session(Socket, _State) ->
-    {ok, RadiusOpts} = application:get_env(radius),
     SessionData = session_info(Socket),
-    ctld_session_sup:new_session(?MODULE, self(), ctld_radius, RadiusOpts, SessionData).
+    {ok, {Provider, ProviderOpts}} = application:get_env(ctld_provider),
+    ctld_session_sup:new_session(?MODULE, self(), Provider, ProviderOpts, SessionData).
 
 session_info(Socket) ->
     {ok, {Address, _Port}} = capwap_udp:peername(Socket),
