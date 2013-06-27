@@ -276,6 +276,19 @@ run({ieee_802_11_wlan_configuration_response, _Seq,
     end,
     next_state(run, State);
 
+run({station_configuration_response, _Seq,
+     Elements, _Header}, State) ->
+    %% TODO: timeout and Error handling, e.g. shut the station process down when the Add Station failed
+    case proplists:get_value(result_code, Elements) of
+	0 ->
+	    ?DEBUG(?GREEN "Station Configuration ok"),
+	    ok;
+	Code ->
+	    ?DEBUG(?RED "Station Configuration failed with ~w~n", [Code]),
+	    ok
+    end,
+    next_state(run, State);
+
 run(configure, State) ->
     ?DEBUG(?GREEN "configure WTP~n"),
     RadioId = 0,
