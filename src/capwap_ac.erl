@@ -579,18 +579,21 @@ handle_capwap_packet(Packet, StateName, State = #state{
     end.
 
 ac_info() ->
+    App = capwap,
+    Versions = application:get_env(App, versions, []),
+
     [#ac_descriptor{stations    = 0,
-		    limit       = 200,
+		    limit       = application:get_env(App, limit, 200),
 		    active_wtps = 0,
-		    max_wtps    = 2,
+		    max_wtps    = application:get_env(App, max_wtps, 200),
 %%		    security    = ['pre-shared'],
-		    security    = ['x509'],
+		    security    = application:get_env(App, security, ['x509']),
 		    r_mac       = supported,
 		    dtls_policy = ['clear-text'],
-		    sub_elements = [{{0,4},<<"Hardware Ver. 1.0">>},
-				    {{0,5},<<"Software Ver. 1.0">>}]},
-     #ac_name{name = <<"My AC Name">>}
-    ] ++ control_addresses().
+		    sub_elements = [{{0,4}, proplists:get_value(hardware, Versions, <<"Hardware Ver. 1.0">>)},
+				    {{0,5}, proplists:get_value(software, Versions, <<"Software Ver. 1.0">>)}]},
+     #ac_name{name = application:get_env(App, ac_name, <<"My AC Name">>)}
+    ] ++ control_addresses(App).
 
 send_info_after(Time, Event) ->
     erlang:start_timer(Time, self(), Event).
@@ -646,12 +649,17 @@ cancel_retransmit(State = #state{retransmit_timer = Timer}) ->
     gen_fsm:cancel_timer(Timer),
     State#state{retransmit_timer = undefined}.
 
-control_addresses() ->
-    case application:get_env(server_ip) of
-	{ok, IP} ->
-	    [control_address(IP)];
+control_addresses(App) ->
+    case application:get_env(App, control_ips) of
+	{ok, IPs} when is_list(IPs) ->
+	    [control_address(IP) || IP <- IPs];
 	_ ->
-	    all_local_control_addresses()
+	    case application:get_env(App, server_ip) of
+		{ok, IP} ->
+		    [control_address(IP)];
+		_ ->
+		    all_local_control_addresses()
+	    end
     end.
 
 control_address({A,B,C,D}) ->
@@ -769,7 +777,14 @@ verify_cert_auth_cn(CommonName, Session) ->
     end.
 
 mk_ssl_opts(Session) ->
-    Dir = filename:join([code:lib_dir(capwap), "priv", "certs"]),
+    App = capwap,
+    Dir = case application:get_env(App, certs) of
+	      {ok, Path} ->
+		  Path;
+	      _ ->
+		  filename:join([code:lib_dir(App), "priv", "certs"])
+	  end,
+
     [{active, false},
      {mode, binary},
      {reuseaddr, true},

@@ -16,6 +16,13 @@
 	 {ctld_provider, {ctld_radius, [{nas_identifier, <<"MyNAS">>},
 					{radius_auth_server, {{127,0,0,1}, 1812, <<"secret">>}},
 					{radius_acct_server, {{127,0,0,1}, 1813, <<"secret">>}}
-				       ]}}
+				       ]}},
+	 {control_ips, [{172,28,0,1}]},
+	 {limit, 200},
+	 {max_wtp, 100},
+	 {security, ['x509']},
+	 {versions, [{hardware, <<"SCG">>},
+		     {software, <<"SCG">>}]},
+	 {ac_name, <<"CAPWAP AC">>}
 	]}
  ]}.
