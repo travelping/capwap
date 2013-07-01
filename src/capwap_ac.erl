@@ -499,6 +499,7 @@ handle_capwap_data(_Sw, Address, Port,
 	    ?DEBUG(?RED "AC for data session no found: ~p~n", [PeerId]),
 	    {error, not_found};
 	{ok, AC} ->
+	    %% TODO: multiple highly redundant case to follow, find a way to simplify
 	    case proplists:get_value(frame, Flags) of
 		'802.3' ->
 		    ?DEBUG(?RED "got 802.3 payload Frame, what TODO with it???"),
@@ -506,7 +507,11 @@ handle_capwap_data(_Sw, Address, Port,
 			{add, RadioMAC, MAC, MacMode, TunnelMode} ->
 			    gen_fsm:send_event(AC, {add_station, Header, MAC}),
 			    ?DEBUG(?GREEN "MacMode: ~w, TunnelMode ~w~n", [MacMode, TunnelMode]),
-			    {add_flow, Address, Port, RadioMAC, MAC, MacMode, TunnelMode};
+			    {add_flow, self(), Address, Port, RadioMAC, MAC, MacMode, TunnelMode};
+
+			{flow, RadioMAC, MAC, MacMode, TunnelMode} ->
+			    {add_flow, self(), Address, Port, RadioMAC, MAC, MacMode, TunnelMode};
+
 			Other ->
 			    Other
 		    end;
@@ -521,10 +526,15 @@ handle_capwap_data(_Sw, Address, Port,
 			      flags = [{frame, 'native'}]},
 			    Data = capwap_packet:encode(data, {RHeader, Reply}),
 			    {reply, Data};
+
 			{add, RadioMAC, MAC, MacMode, TunnelMode} ->
 			    gen_fsm:send_event(AC, {add_station, Header, MAC}),
 			    ?DEBUG(?GREEN "MacMode: ~w, TunnelMode ~w~n", [MacMode, TunnelMode]),
-			    {add_flow, Address, Port, RadioMAC, MAC, MacMode, TunnelMode};
+			    {add_flow, self(), Address, Port, RadioMAC, MAC, MacMode, TunnelMode};
+
+			{flow, RadioMAC, MAC, MacMode, TunnelMode} ->
+			    {add_flow, self(), Address, Port, RadioMAC, MAC, MacMode, TunnelMode};
+
 			Other ->
 			    Other
 		    end;

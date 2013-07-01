@@ -182,6 +182,11 @@ connected(timeout, State) ->
     ?DEBUG(?RED "idle timeout in CONNECTED~n"),
     next_state(connected, State).
 
+connected({'802.3', Data}, _From,
+	  State = #state{radio_mac = BSS, mac = MAC, mac_mode = MacMode, tunnel_mode = TunnelMode}) ->
+    ?DEBUG(?GREEN "in CONNECTED got 802.3 Data:~n~s~n", [flower_tools:hexdump(Data)]),
+    reply({flow, BSS, MAC, MacMode, TunnelMode}, connected, State);
+
 connected(Event, _From, State) ->
     ?DEBUG(?RED "in CONNECTED got unexpexted: ~p~n", [Event]),
     reply({error, unexpected}, connected, State).
