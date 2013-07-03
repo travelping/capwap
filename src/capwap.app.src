@@ -23,6 +23,8 @@
 	 {security, ['x509']},
 	 {versions, [{hardware, <<"SCG">>},
 		     {software, <<"SCG">>}]},
-	 {ac_name, <<"CAPWAP AC">>}
+	 {ac_name, <<"CAPWAP AC">>},
+	 {default_ssid, <<"CW Office Dev">>},
+	 {ssids, [{{<<"wtp01.tposs.net">>, 1}, <<"CW AS Office Dev">>}]}
 	]}
  ]}.

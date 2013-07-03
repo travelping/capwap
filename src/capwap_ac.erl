@@ -25,6 +25,7 @@
 -define(MaxRetransmit, 5).
 
 -record(state, {
+	  id,
 	  peer,
 	  peer_data,
 	  socket,
@@ -130,7 +131,7 @@ init([Peer]) ->
 listen({accept, udp, Socket}, State) ->
     capwap_udp:setopts(Socket, [{active, true}, {mode, binary}]),
     ?DEBUG(?GREEN "udp_accept: ~p~n", [Socket]),
-    next_state(idle, State#state{socket = {udp, Socket}});
+    next_state(idle, State#state{socket = {udp, Socket}, id = undefined});
 
 listen({accept, dtls, Socket}, State) ->
     ?DEBUG(?GREEN "ssl_accept on: ~p~n", [Socket]),
@@ -140,7 +141,20 @@ listen({accept, dtls, Socket}, State) ->
 	{ok, SslSocket} ->
 	    ?DEBUG(?GREEN "ssl_accept: ~p~n", [SslSocket]),
 	    ssl:setopts(SslSocket, [{active, true}, {mode, binary}]),
-	    next_state(idle, State#state{socket = {dtls, SslSocket}, session = Session});
+
+	    {ok, Cert} = ssl:peercert(SslSocket),
+	    #'OTPCertificate'{
+	       tbsCertificate =
+		   #'OTPTBSCertificate'{
+		 subject = {rdnSequence, SubjectList}
+		}} = public_key:pkix_decode_cert(Cert, otp),
+	    Subject = [erlang:hd(S)|| S <- SubjectList],
+	    {value, #'AttributeTypeAndValue'{value = {utf8String, CommonName}}} =
+		lists:keysearch(?'id-at-commonName', #'AttributeTypeAndValue'.type, Subject),
+	    ?DEBUG(?BLUE "ssl_cert: ~p~n", [CommonName]),
+
+	    %% TODO: find old connection instance, take over their StationState and stop them
+	    next_state(idle, State#state{socket = {dtls, SslSocket}, session = Session, id = CommonName});
 	Other ->
 	    ?DEBUG(?RED "ssl_accept failed: ~p~n", [Other]),
 	    {stop, normal, State}
@@ -289,9 +303,18 @@ run({station_configuration_response, _Seq,
     end,
     next_state(run, State);
 
-run(configure, State) ->
+run(configure, State = #state{id = WtpId}) ->
     ?DEBUG(?GREEN "configure WTP~n"),
-    RadioId = 0,
+    RadioId = 1,
+    App = capwap,
+    DefaultSSID = application:get_env(App, default_ssid, <<"CAPWAP Test">>),
+    SSIDs = application:get_env(App, ssids, []),
+    SSID = if
+	       is_binary(WtpId) ->
+		   proplists:get_value({WtpId, RadioId}, SSIDs, DefaultSSID);
+	       true ->
+		   DefaultSSID
+	   end,
     WBID = 1,
     Flags = [{frame,'802.3'}],
     MacMode = select_mac_mode(State#state.mac_types),
@@ -304,7 +327,7 @@ run(configure, State) ->
     		      mac_mode      = MacMode,
     		      tunnel_mode   = TunnelMode,
     		      suppress_ssid = 1,
-    		      ssid          = <<"CAPWAP Test">>
+		      ssid          = SSID
     		     }],
     Header1 = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
     State1 = State#state{mac_mode = MacMode, tunnel_mode = TunnelMode},
