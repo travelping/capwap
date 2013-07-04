@@ -3,7 +3,7 @@
 -behaviour(gen_fsm).
 
 %% API
--export([start_link/1, accept/3, get_peer_data/1, get_peer_mode/1]).
+-export([start_link/1, accept/3, get_peer_data/1, get_peer_mode/1, take_over/1]).
 
 %% gen_fsm callbacks
 -export([init/1, listen/2, idle/2, join/2, configure/2, data_check/2, run/2,
@@ -92,6 +92,9 @@ get_peer_data(WTP) ->
 get_peer_mode(WTP) ->
     gen_fsm:sync_send_all_state_event(WTP, get_peer_mode).
 
+take_over(WTP) ->
+    gen_fsm:sync_send_all_state_event(WTP, {take_over, self()}).
+
 %%%===================================================================
 %%% gen_fsm callbacks
 %%%===================================================================
@@ -152,6 +155,16 @@ listen({accept, dtls, Socket}, State) ->
 	    {value, #'AttributeTypeAndValue'{value = {utf8String, CommonName}}} =
 		lists:keysearch(?'id-at-commonName', #'AttributeTypeAndValue'.type, Subject),
 	    ?DEBUG(?BLUE "ssl_cert: ~p~n", [CommonName]),
+
+	    case capwap_wtp_reg:lookup(CommonName) of
+		{ok, OldPid} ->
+		    ?DEBUG(?GREEN "take_over: ~p", [OldPid]),
+		    capwap_ac:take_over(OldPid),
+		    ok;
+		_ ->
+		    ok
+	    end,
+	    capwap_wtp_reg:register(CommonName),
 
 	    %% TODO: find old connection instance, take over their StationState and stop them
 	    next_state(idle, State#state{socket = {dtls, SslSocket}, session = Session, id = CommonName});
@@ -416,6 +429,12 @@ handle_sync_event(get_peer_mode, _From, run,
 handle_sync_event(get_peer_mode, _From, StateName, State) ->
     Reply = {error, not_connected},
     reply(Reply, StateName, State);
+handle_sync_event({take_over, NewWtp}, _From, _StateName, State) ->
+    %% TODO: move Stations to new wtp
+    ?DEBUG(?GREEN "take_over: old: ~p, new: ~p", [self(), NewWtp]),
+    capwap_wtp_reg:unregister(),
+    Reply = ok,
+    {stop, normal, Reply, State};
 handle_sync_event(_Event, _From, StateName, State) ->
     Reply = ok,
     reply(Reply, StateName, State).
