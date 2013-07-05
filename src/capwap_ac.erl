@@ -224,13 +224,18 @@ join(timeout, State) ->
 join({configuration_status_request, Seq, _Elements, #capwap_header{
 					   radio_id = RadioId, wb_id = WBID, flags = Flags}},
      State) ->
+    App = capwap,
+    EchoRequestInterval = application:get_env(App, echo_request_interval, 10),
+    DiscoveryInterval = application:get_env(App, discovery_interval, 20),
+    IdleTimeout = application:get_env(App, idle_timeout, 300),
+
     RespElements = [%%#ac_ipv4_list{ip_address = [<<0,0,0,0>>]},
-		    #timers{discovery = 20,
-			    echo_request = 2},
+		    #timers{discovery = DiscoveryInterval,
+			    echo_request = EchoRequestInterval},
 		    #decryption_error_report_period{
 			     radio_id = RadioId,
 			     report_interval = 15},
-		    #idle_timeout{timeout = 10}],
+		    #idle_timeout{timeout = IdleTimeout}],
     Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
     State1 = send_response(Header, configuration_status_response, Seq, RespElements, State),
     next_state(configure, State1);
