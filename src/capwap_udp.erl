@@ -179,7 +179,8 @@ capwap_socket(SslSocketId) ->
 init([Owner, Port, Options0]) ->
     Options = proplists:expand([{binary, [{mode, binary}]},
 				{list, [{mode, list}]}], Options0),
-    Opts0 = lists:keystore(active, 1, Options, {active, true}),
+    Opts1 = lists:keystore(recbuf, 1, Options, {recbuf, 20*1024}),
+    Opts0 = lists:keystore(active, 1, Opts1, {active, true}),
     Opts = lists:keystore(mode, 1, Opts0, {mode, binary}),
     case gen_udp:open(Port, Opts) of
 	{ok, Socket} ->
