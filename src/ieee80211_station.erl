@@ -26,12 +26,18 @@
 -record(state, {ac, radio_mac, mac, mac_mode, tunnel_mode}).
 
 -record(auth_frame, {algo, seq_no, status, params}).
+-ifdef(debug).
+
+-define(SERVER_OPTS, [{debug, [trace]}]).
+-else.
+-define(SERVER_OPTS, []).
+-endif.
 
 %%%===================================================================
 %%% API
 %%%===================================================================
 start_link(AC, RadioMAC, ClientMAC) ->
-    gen_fsm:start_link(?MODULE, [AC, RadioMAC, ClientMAC], [{debug, [trace]}]).
+    gen_fsm:start_link(?MODULE, [AC, RadioMAC, ClientMAC], ?SERVER_OPTS).
 
 handle_ieee80211_frame(AC, <<FrameControl:2/bytes,
 			      _Duration:16, DA:6/bytes, SA:6/bytes, BSS:6/bytes,

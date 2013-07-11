@@ -40,6 +40,12 @@
 	  retransmit_counter,
 	  seqno = 0}).
 
+-ifdef(debug).
+-define(SERVER_OPTS, [{debug, [trace]}]).
+-else.
+-define(SERVER_OPTS, []).
+-endif.
+
 %%%===================================================================
 %%% API
 %%%===================================================================
@@ -54,7 +60,7 @@
 %% @end
 %%--------------------------------------------------------------------
 start_link(Peer) ->
-    gen_fsm:start_link(?MODULE, [Peer], [{debug, [trace]}]).
+    gen_fsm:start_link(?MODULE, [Peer], ?SERVER_OPTS).
 
 handle_packet(_Address, _Port, Packet) ->
     try	capwap_packet:decode(control, Packet) of
@@ -260,7 +266,7 @@ configure({change_state_event_request, Seq, _Elements, #capwap_header{
     next_state(data_check, State1);
 
 configure({Msg, Seq, Elements, Header}, State) ->
-    io:format("in configure got: ~p~n", [{Msg, Seq, Elements, Header}]),
+    ?DEBUG("in configure got: ~p~n", [{Msg, Seq, Elements, Header}]),
     next_state(configure, State).
 
 data_check({keep_alive, Sw, PeerId, Header, PayLoad}, _From, State) ->
@@ -282,7 +288,7 @@ run({keep_alive, Sw, _PeerId, Header, PayLoad}, _From, State) ->
     reply({reply, {Header, PayLoad}}, run, State).
 
 run(timeout, State) ->
-    io:format("IdleTimeout in Run~n"),
+    ?DEBUG("IdleTimeout in Run~n"),
     Header = #capwap_header{radio_id = 0, wb_id = 1, flags = []},
     Elements = [],
     State1 = send_request(Header, echo_request, Elements, State),
@@ -291,7 +297,7 @@ run(timeout, State) ->
 run({echo_request, Seq, Elements, #capwap_header{
 			  radio_id = RadioId, wb_id = WBID, flags = Flags}},
     State) ->
-    io:format("EchoReq in Run got: ~p~n", [{Seq, Elements}]),
+    ?DEBUG("EchoReq in Run got: ~p~n", [{Seq, Elements}]),
     Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
     State1 = send_response(Header, echo_response, Seq, Elements, State),
     next_state(run, State1);
@@ -671,7 +677,7 @@ send_request(Header, MsgType, ReqElements,
     bump_seqno(State1).
 
 resend_request(StateName, State = #state{retransmit_counter = 0}) ->
-    io:format("Finial Timeout in ~w, STOPPING~n", [StateName]),
+    ?DEBUG("Finial Timeout in ~w, STOPPING~n", [StateName]),
     {stop, normal, State};
 resend_request(StateName,
 	       State = #state{socket = Socket,

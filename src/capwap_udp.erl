@@ -30,11 +30,17 @@
 -define(ECLOSED, {error, closed}).
 -define(ENOTCONN, {error, enotconn}).
 
+-ifdef(debug).
+-define(SERVER_OPTS, [{debug, [trace]}]).
+-else.
+-define(SERVER_OPTS, []).
+-endif.
+
 %%===================================================================
 %% API
 %%===================================================================
 start_link(Port, Options) ->
-    gen_server:start_link({local, ?SERVER}, ?MODULE, [self(), Port, Options], [{debug, [trace]}]).
+    gen_server:start_link({local, ?SERVER}, ?MODULE, [self(), Port, Options], ?SERVER_OPTS).
 
 %%===================================================================
 %% Transport Module Callbacks
@@ -375,7 +381,7 @@ handle_first_packet({Address, Port}, udp, Packet, _State) ->
     %% TODO: keep AC configuration in State and pass it to AC
     capwap_ac:handle_packet(Address, Port, Packet);
 handle_first_packet({Address, Port}, dtls, Packet, _State) ->
-    ?DEBUG("handle_first_packet: DTLS CAPWAP~n"),
+    ?DEBUG(?BLUE "handle_first_packet: DTLS CAPWAP~n"),
     ssl_datagram:handle_packet(Address, Port, Packet).
 
 send(Socket, Type, Data) when is_binary(Data) ->
