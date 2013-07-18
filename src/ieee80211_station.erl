@@ -3,7 +3,8 @@
 -behavior(gen_fsm).
 
 %% API
--export([start_link/3, handle_ieee80211_frame/2, handle_ieee802_3_frame/2]).
+-export([start_link/7, handle_ieee80211_frame/2, handle_ieee802_3_frame/2,
+	 set_out_action/3, get_out_action/2]).
 
 %% gen_fsm callbacks
 -export([init/1,
@@ -11,6 +12,7 @@
 	 init_assoc/2, init_assoc/3,
 	 init_start/2, init_start/3,
 	 connected/2, connected/3,
+	 shutdown/2, shutdown/3,
 	 handle_event/3, handle_sync_event/4,
 	 handle_info/3, terminate/3, code_change/4]).
 
@@ -18,12 +20,20 @@
 
 -define(SERVER, ?MODULE).
 -define(IDLE_TIMEOUT, 30 * 1000).
+-define(SHUTDOWN_TIMEOUT, 1 * 1000).
 
 -define(OPEN_SYSTEM, 0).
 -define(SUCCESS, 0).
 -define(REFUSED, 1).
 
--record(state, {ac, radio_mac, mac, mac_mode, tunnel_mode}).
+-record(state, {ac,
+		flow_switch,
+		peer_data,
+		radio_mac,
+		mac,
+		mac_mode,
+		tunnel_mode,
+		out_action}).
 
 -record(auth_frame, {algo, seq_no, status, params}).
 -ifdef(debug).
@@ -36,8 +46,8 @@
 %%%===================================================================
 %%% API
 %%%===================================================================
-start_link(AC, RadioMAC, ClientMAC) ->
-    gen_fsm:start_link(?MODULE, [AC, RadioMAC, ClientMAC], ?SERVER_OPTS).
+start_link(AC, FlowSwitch, PeerId, RadioMAC, ClientMAC, MacMode, TunnelMode) ->
+    gen_fsm:start_link(?MODULE, [AC, FlowSwitch, PeerId, RadioMAC, ClientMAC, MacMode, TunnelMode], ?SERVER_OPTS).
 
 handle_ieee80211_frame(AC, <<FrameControl:2/bytes,
 			      _Duration:16, DA:6/bytes, SA:6/bytes, BSS:6/bytes,
@@ -64,24 +74,41 @@ handle_ieee802_3_frame(AC, <<_EthDst:6/bytes, EthSrc:6/bytes, _/binary>> = Frame
 handle_ieee802_3_frame(_, _Frame) ->
     {error, unhandled}.
 
-get_wtp_for_client_mac(_Sw, ClientMAC) ->
+get_wtp_for_client_mac(Sw, ClientMAC) ->
     case capwap_station_reg:lookup(ClientMAC) of
 	{ok, Pid} ->
-	    gen_fsm:sync_send_all_state_event(Pid, {get_wtp_for_client_mac, _Sw});
+	    gen_fsm:sync_send_all_state_event(Pid, {get_wtp_for_client_mac, Sw});
 	_ ->
 	    not_found
     end.
 
+set_out_action(Sw, ClientMAC, Action) ->
+    case capwap_station_reg:lookup(ClientMAC) of
+	{ok, Pid} ->
+	    gen_fsm:sync_send_all_state_event(Pid, {set_out_action, Sw, Action});
+	_ ->
+	    not_found
+    end.
+
+get_out_action(Sw, ClientMAC) ->
+    case capwap_station_reg:lookup(ClientMAC) of
+	{ok, Pid} ->
+	    gen_fsm:sync_send_all_state_event(Pid, {get_out_action, Sw});
+	_ ->
+	    not_found
+    end.
+
+
 %%%===================================================================
 %%% gen_fsm callbacks
 %%%===================================================================
-init([AC, RadioMAC, ClientMAC]) ->
+init([AC, FlowSwitch, PeerId, RadioMAC, ClientMAC, MacMode, TunnelMode]) ->
     ?DEBUG(?BLUE "register Station ~p as ~w~n", [{AC, RadioMAC, ClientMAC}, self()]),
     capwap_station_reg:register(ClientMAC),
     capwap_station_reg:register(AC, ClientMAC),
     erlang:monitor(process, AC),
-    {ok, MacMode, TunnelMode} = capwap_ac:get_peer_mode(AC),
-    State = #state{ac = AC, radio_mac = RadioMAC, mac = ClientMAC, mac_mode = MacMode, tunnel_mode = TunnelMode},
+    State = #state{ac = AC, flow_switch = FlowSwitch, peer_data = PeerId,
+		   radio_mac = RadioMAC, mac = ClientMAC, mac_mode = MacMode, tunnel_mode = TunnelMode},
     case MacMode of
 	local_mac ->
 	    {ok, init_assoc, State};
@@ -89,6 +116,13 @@ init([AC, RadioMAC, ClientMAC]) ->
 	    {ok, init_auth, State}
     end.
 
+%%
+%% State transitions follow IEEE 802.11-2012, Section 10.3.2
+%%
+
+%%
+%% State 1
+%%
 init_auth(timeout, State) ->
     ?DEBUG(?RED "idle timeout in INIT_AUTH~n"),
     next_state(init_auth, State).
@@ -112,6 +146,9 @@ init_auth(Event, _From, State) ->
     ?DEBUG(?RED "in INIT_AUTH got unexpexted: ~p~n", [Event]),
     reply({error, unexpected}, init_auth, State).
 
+%%
+%% State 2
+%%
 init_assoc(timeout, State) ->
     ?DEBUG(?RED "idle timeout in INIT_ASSOC~n"),
     next_state(init_assoc, State).
@@ -121,9 +158,10 @@ init_assoc(Event = {'Authentication', _DA, _SA, _BSS, 0, 0, _Frame}, _From, Stat
     ?DEBUG(?GREEN "in INIT_ASSOC Local-MAC Mode got Authentication Request: ~p~n", [Event]),
     reply({ok, ignore}, init_assoc, State);
 
-init_assoc(Event = {'Association Request', _DA, _SA, BSS, 0, 0, _Frame}, _From,
+init_assoc(Event = {FrameType, _DA, _SA, BSS, 0, 0, _Frame}, _From,
 	   State = #state{radio_mac = BSS, mac = MAC, mac_mode = MacMode, tunnel_mode = TunnelMode})
-  when MacMode == local_mac ->
+  when MacMode == local_mac andalso
+       (FrameType == 'Association Request' orelse FrameType == 'Reassociation Request') ->
     ?DEBUG(?GREEN "in INIT_ASSOC Local-MAC Mode got Association Request: ~p~n", [Event]),
 
     %% MAC blocks would go here!
@@ -144,7 +182,8 @@ init_assoc(Event = {'Authentication', _DA, _SA, _BSS, 0, 0, _Frame}, From, State
     %% fall-back to init_auth....
     init_auth(Event, From, State);
 
-init_assoc(Event = {'Association Request', DA, SA, BSS, 0, 0, _Frame}, _From, State) ->
+init_assoc(Event = {FrameType, DA, SA, BSS, 0, 0, _Frame}, _From, State)
+  when (FrameType == 'Association Request' orelse FrameType == 'Reassociation Request') ->
     ?DEBUG(?GREEN "in INIT_ASSOC got Association Request: ~p~n", [Event]),
     %% Fake Assoc Details
     %% we should at the very least match the Rates.....
@@ -171,6 +210,9 @@ init_assoc(Event, _From, State) ->
     ?DEBUG(?RED "in INIT_ASSOC got unexpexted: ~p~n", [Event]),
     reply({error, unexpected}, init_assoc, State).
 
+%%
+%% State 3
+%%
 init_start(timeout, State) ->
     ?DEBUG(?RED "idle timeout in INIT_START~n"),
     next_state(init_start, State).
@@ -184,6 +226,9 @@ init_start(Event, _From, State) ->
     ?DEBUG(?RED "in INIT_START got unexpexted: ~p~n", [Event]),
     reply({error, unexpected}, init_start, State).
 
+%%
+%% State 4
+%%
 connected(timeout, State) ->
     ?DEBUG(?RED "idle timeout in CONNECTED~n"),
     next_state(connected, State).
@@ -193,9 +238,30 @@ connected({'802.3', Data}, _From,
     ?DEBUG(?GREEN "in CONNECTED got 802.3 Data:~n~s~n", [flower_tools:hexdump(Data)]),
     reply({flow, BSS, MAC, MacMode, TunnelMode}, connected, State);
 
+connected(Event = {'Deauthentication', _DA, _SA, BSS, 0, 0, _Frame}, _From,
+	   State = #state{radio_mac = BSS, mac = MAC, mac_mode = MacMode, tunnel_mode = TunnelMode}) ->
+    ?DEBUG(?GREEN "in CONNECTED got Deauthentication: ~p~n", [Event]),
+    reply({del, BSS, MAC, MacMode, TunnelMode}, shutdown, State);
+
+connected(Event = {'Disassociation', _DA, _SA, BSS, 0, 0, _Frame}, _From,
+	   State = #state{radio_mac = BSS, mac = MAC, mac_mode = MacMode, tunnel_mode = TunnelMode}) ->
+    ?DEBUG(?GREEN "in CONNECTED got Disassociation: ~p~n", [Event]),
+    reply({del, BSS, MAC, MacMode, TunnelMode}, init_assoc, State);
+
 connected(Event, _From, State) ->
     ?DEBUG(?RED "in CONNECTED got unexpexted: ~p~n", [Event]),
     reply({error, unexpected}, connected, State).
+
+%%
+%% keep process arround for a few seconds to deal with reorderd, pending frames (should not happen!)
+%%
+shutdown(timeout, State) ->
+    ?DEBUG(?GREEN "idle timeout in SHUTDOWN~n"),
+    {stop, normal, State}.
+
+shutdown(Event, _From, State) ->
+    ?DEBUG(?RED "in SHUTDOWN got unexpexted: ~p~n", [Event]),
+    reply({error, unexpected}, shutdown, State).
 
 handle_event(_Event, StateName, State) ->
     next_state(StateName, State).
@@ -210,12 +276,32 @@ handle_sync_event({get_wtp_for_client_mac, _Sw}, _From, StateName,
 	    reply(Other, StateName, State)
     end;
 
+handle_sync_event({set_out_action, _Sw, Action}, _From, StateName, State) ->
+    reply(ok, StateName, State#state{out_action = Action});
+
+handle_sync_event({get_out_action, _Sw}, _From, StateName, State) ->
+    reply(State#state.out_action, StateName, State);
+
 handle_sync_event(_Event, _From, StateName, State) ->
     Reply = ok,
     reply(Reply, StateName, State).
 
-handle_info({'DOWN', _MonitorRef, process, AC, _Info}, _StateName, State = #state{ac = AC}) ->
-    ?DEBUG(?RED "AC died~n"),
+handle_info({'DOWN', _MonitorRef, process, AC, _Info}, StateName,
+ State = #state{ac = AC, flow_switch = FlowSwitch, peer_data = PeerId,
+		radio_mac = BSS, mac = MAC,
+		mac_mode = MacMode, tunnel_mode = TunnelMode}) ->
+    ?DEBUG(?RED "AC died ~w~n", [AC]),
+
+    if
+	StateName == connected;
+	StateName == shutdown ->
+	    %% if the AC dies in connected whe have to the Switch directly,
+	    %% to avoid a race do it in shutdown as well
+	    FlowSwitch ! {station_down, PeerId, BSS, MAC, MacMode, TunnelMode};
+	true ->
+	    ok
+    end,
+
     {stop, normal, State};
 
 handle_info(Info, StateName, State) ->
@@ -223,7 +309,7 @@ handle_info(Info, StateName, State) ->
     next_state(StateName, State).
 
 terminate(_Reason, StateName, #state{mac = MAC}) ->
-    ?DEBUG(?RED "Station ~p terminated in State ~w~n", [MAC, StateName]),
+    ?DEBUG(?RED "Station ~s terminated in State ~w~n", [flower_tools:format_mac(MAC), StateName]),
     ok.
 
 code_change(_OldVsn, StateName, State, _Extra) ->
@@ -261,9 +347,15 @@ gen_auth_fail(DA, SA, BSS, _InFrame) ->
       SequenceControl:16,
       Frame/binary>>.
 
+next_state(NextStateName, State)
+  when NextStateName == shutdown ->
+     {next_state, NextStateName, State, ?SHUTDOWN_TIMEOUT};
 next_state(NextStateName, State) ->
      {next_state, NextStateName, State, ?IDLE_TIMEOUT}.
 
+reply(Reply, NextStateName, State)
+  when NextStateName == shutdown ->
+    {reply, Reply, NextStateName, State, ?SHUTDOWN_TIMEOUT};
 reply(Reply, NextStateName, State) ->
     {reply, Reply, NextStateName, State, ?IDLE_TIMEOUT}.
 
@@ -275,12 +367,13 @@ ieee80211_request(_AC, _FrameType, _DA, SA, BSS, _FromDS, _ToDS, _Frame)
 ieee80211_request(AC, FrameType, DA, SA, BSS, FromDS, ToDS, Frame)
   when FrameType == 'Authentication';
        FrameType == 'Association Request';
+       FrameType == 'Reassociation Request';
        FrameType == 'Null' ->
     ?DEBUG(?BLUE "search Station ~p~n", [{AC, SA}]),
     Found = case capwap_station_reg:lookup(AC, SA) of
 		not_found ->
 		    ?DEBUG(?BLUE "not found~n"),
-		    capwap_station_sup:new_station(AC, BSS, SA);
+		    capwap_ac:new_station(AC, BSS, SA);
 		Ok = {ok, Station0} ->
 		    ?DEBUG(?BLUE "found as ~p~n", [Station0]),
 		    Ok
@@ -290,6 +383,22 @@ ieee80211_request(AC, FrameType, DA, SA, BSS, FromDS, ToDS, Frame)
 	    gen_fsm:sync_send_event(Station, {FrameType, DA, SA, BSS, FromDS, ToDS, Frame});
 	Other ->
 	    Other
+    end;
+
+ieee80211_request(AC, FrameType, DA, SA, BSS, FromDS, ToDS, Frame)
+  when FrameType == 'Deauthentication';
+       FrameType == 'Disassociation' ->
+    ?DEBUG(?RED "got IEEE 802.11 Frame: ~p~n", [{FrameType, DA, SA, BSS, FromDS, ToDS, Frame}]),
+
+    ?DEBUG(?BLUE "search Station ~p~n", [{AC, SA}]),
+    case capwap_station_reg:lookup(AC, SA) of
+	not_found ->
+	    ?DEBUG(?BLUE "not found~n"),
+	    {ok, ignore};
+
+	{ok, Station} ->
+	    ?DEBUG(?BLUE "found as ~p~n", [Station]),
+	    gen_fsm:sync_send_event(Station, {FrameType, DA, SA, BSS, FromDS, ToDS, Frame})
     end;
 
 ieee80211_request(_AC, FrameType, _DA, _SA, _BSS, _FromDS, _ToDS, _Frame)

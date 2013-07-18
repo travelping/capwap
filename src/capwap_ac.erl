@@ -3,7 +3,7 @@
 -behaviour(gen_fsm).
 
 %% API
--export([start_link/1, accept/3, get_peer_data/1, get_peer_mode/1, take_over/1]).
+-export([start_link/1, accept/3, get_peer_data/1, take_over/1, new_station/3]).
 
 %% gen_fsm callbacks
 -export([init/1, listen/2, idle/2, join/2, configure/2, data_check/2, run/2,
@@ -11,7 +11,7 @@
 	 handle_event/3,
 	 handle_sync_event/4, handle_info/3, terminate/3, code_change/4]).
 
--export([handle_packet/3, handle_data/4]).
+-export([handle_packet/3, handle_data/5]).
 
 -include_lib("public_key/include/OTP-PUB-KEY.hrl").
 -include("capwap_debug.hrl").
@@ -28,6 +28,7 @@
 	  id,
 	  peer,
 	  peer_data,
+	  flow_switch,
 	  socket,
 	  session,
 	  mac_types,
@@ -76,12 +77,12 @@ handle_packet(_Address, _Port, Packet) ->
 	    {error, not_capwap}
     end.
 
-handle_data(Sw, Address, Port, Packet) ->
+handle_data(FlowSwitch, Sw, Address, Port, Packet) ->
     ?DEBUG(?GREEN "capwap_data: ~p, ~p, ~p~n", [Address, Port, Packet]),
     try	capwap_packet:decode(data, Packet) of
 	{Header, PayLoad} ->
 	    KeepAlive = proplists:get_bool('keep-alive', Header#capwap_header.flags),
-	    handle_capwap_data(Sw, Address, Port, Header, KeepAlive, PayLoad);
+	    handle_capwap_data(FlowSwitch, Sw, Address, Port, Header, KeepAlive, PayLoad);
 	_ ->
 	    {error, not_capwap}
     catch
@@ -95,11 +96,11 @@ accept(WTP, Type, Socket) ->
 get_peer_data(WTP) ->
     gen_fsm:sync_send_all_state_event(WTP, get_peer_data).
 
-get_peer_mode(WTP) ->
-    gen_fsm:sync_send_all_state_event(WTP, get_peer_mode).
-
 take_over(WTP) ->
     gen_fsm:sync_send_all_state_event(WTP, {take_over, self()}).
+
+new_station(WTP, BSS, SA) ->
+    gen_fsm:sync_send_event(WTP, {new_station, BSS, SA}).
 
 %%%===================================================================
 %%% gen_fsm callbacks
@@ -182,7 +183,7 @@ listen({accept, dtls, Socket}, State) ->
 listen(timeout, State) ->
     {stop, normal, State}.
 
-idle({keep_alive, _Sw, _PeerId, Header, PayLoad}, _From, State) ->
+idle({keep_alive, _FlowSwitch, _Sw, _PeerId, Header, PayLoad}, _From, State) ->
     ?DEBUG(?RED "in IDLE got unexpected keep_alive: ~p~n", [{Header, PayLoad}]),
     reply({error, unexpected}, idle, State).
 
@@ -219,7 +220,7 @@ idle({Msg, Seq, Elements, Header}, State) ->
     ?DEBUG(?RED "in IDLE got unexpexted: ~p~n", [{Msg, Seq, Elements, Header}]),
     next_state(idle, State).
 
-join({keep_alive, _Sw, _PeerId, Header, PayLoad}, _From, State) ->
+join({keep_alive, _FlowSwitch, _Sw, _PeerId, Header, PayLoad}, _From, State) ->
     ?DEBUG(?RED "in JOIN got unexpected keep_alive: ~p~n", [{Header, PayLoad}]),
     reply({error, unexpected}, join, State).
 
@@ -250,7 +251,7 @@ join({Msg, Seq, Elements, Header}, State) ->
     ?DEBUG(?RED "in JOIN got unexpexted: ~p~n", [{Msg, Seq, Elements, Header}]),
     next_state(join, State).
 
-configure({keep_alive, _Sw, _PeerId, Header, PayLoad}, _From, State) ->
+configure({keep_alive, _FlowSwitch, _Sw, _PeerId, Header, PayLoad}, _From, State) ->
     ?DEBUG(?RED "in CONFIGURE got unexpected keep_alive: ~p~n", [{Header, PayLoad}]),
     reply({error, unexpected}, configure, State).
 
@@ -269,11 +270,11 @@ configure({Msg, Seq, Elements, Header}, State) ->
     ?DEBUG("in configure got: ~p~n", [{Msg, Seq, Elements, Header}]),
     next_state(configure, State).
 
-data_check({keep_alive, Sw, PeerId, Header, PayLoad}, _From, State) ->
+data_check({keep_alive, FlowSwitch, Sw, PeerId, Header, PayLoad}, _From, State) ->
     ?DEBUG(?GREEN "in DATA_CHECK got expected keep_alive: ~p~n", [{Sw, Header, PayLoad}]),
     capwap_wtp_reg:register(PeerId),
     gen_fsm:send_event(self(), configure),
-    reply({reply, {Header, PayLoad}}, run, State#state{peer_data = PeerId}).
+    reply({reply, {Header, PayLoad}}, run, State#state{peer_data = PeerId, flow_switch = FlowSwitch}).
 
 data_check(timeout, State) ->
     ?DEBUG("timeout in DATA_CHECK -> stop~n"),
@@ -283,7 +284,23 @@ data_check({Msg, Seq, Elements, Header}, State) ->
     ?DEBUG(?RED "in DATA_CHECK got unexpexted: ~p~n", [{Msg, Seq, Elements, Header}]),
     next_state(data_check, State).
 
-run({keep_alive, Sw, _PeerId, Header, PayLoad}, _From, State) ->
+run({new_station, BSS, SA}, _From, State = #state{peer_data = PeerId, flow_switch = FlowSwitch,
+						  mac_mode = MacMode, tunnel_mode = TunnelMode}) ->
+    ?DEBUG(?RED "in RUN got new_station: ~p~n", [SA]),
+
+    ?DEBUG(?BLUE "search Station ~p~n", [{self(), SA}]),
+    %% we have to repeat the search again to avoid a race
+    Reply = case capwap_station_reg:lookup(self(), SA) of
+		not_found ->
+		    ?DEBUG(?BLUE "not found~n"),
+		    capwap_station_sup:new_station(self(), FlowSwitch, PeerId, BSS, SA, MacMode, TunnelMode);
+		Ok = {ok, Station0} ->
+		    ?DEBUG(?BLUE "found as ~p~n", [Station0]),
+		    Ok
+	    end,
+    reply(Reply, run, State);
+
+run({keep_alive, _FlowSwitch, Sw, _PeerId, Header, PayLoad}, _From, State) ->
     ?DEBUG(?GREEN "in RUN got expected keep_alive: ~p~n", [{Sw, Header, PayLoad}]),
     reply({reply, {Header, PayLoad}}, run, State).
 
@@ -369,6 +386,16 @@ run({add_station, #capwap_header{radio_id = RadioId, wb_id = WBID}, MAC}, State)
     State1 = send_request(Header1, station_configuration_request, ReqElements, State),
     next_state(run, State1);
 
+run({del_station, #capwap_header{radio_id = RadioId, wb_id = WBID}, MAC}, State) ->
+    Flags = [{frame,'802.3'}],
+    ReqElements = [#delete_station{
+    		      radio_id  = RadioId,
+		      mac       = MAC
+		     }],
+    Header1 = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
+    State1 = send_request(Header1, station_configuration_request, ReqElements, State),
+    next_state(run, State1);
+
 run(Event, State) ->
     ?DEBUG(?RED "in RUN got unexpexted: ~p~n", [Event]),
     next_state(run, State).
@@ -433,13 +460,6 @@ handle_sync_event(get_peer_data, _From, run, State) ->
 handle_sync_event(get_peer_data, _From, StateName, State) ->
     Reply = {error, not_connected},
     reply(Reply, StateName, State);
-handle_sync_event(get_peer_mode, _From, run,
-		  State = #state{mac_mode = MacMode, tunnel_mode = TunnelMode}) ->
-    Reply = {ok, MacMode, TunnelMode},
-    reply(Reply, run, State);
-handle_sync_event(get_peer_mode, _From, StateName, State) ->
-    Reply = {error, not_connected},
-    reply(Reply, StateName, State);
 handle_sync_event({take_over, NewWtp}, _From, _StateName, State) ->
     %% TODO: move Stations to new wtp
     ?DEBUG(?GREEN "take_over: old: ~p, new: ~p", [self(), NewWtp]),
@@ -490,7 +510,14 @@ handle_info(Info, StateName, State) ->
 %% @spec terminate(Reason, StateName, State) -> void()
 %% @end
 %%--------------------------------------------------------------------
-terminate(_Reason, _StateName, #state{socket = Socket}) ->
+terminate(_Reason, StateName, #state{peer_data = PeerId, flow_switch = FlowSwitch, socket = Socket}) ->
+    case StateName of
+	run ->
+	    FlowSwitch ! {wtp_down, PeerId},
+	    ok;
+	_ ->
+	    ok
+    end,
     socket_close(Socket),
     ok.
 
@@ -522,7 +549,7 @@ reply(Reply, NextStateName, State)
 reply(Reply, NextStateName, State) ->
     {reply, Reply, NextStateName, State, ?IDLE_TIMEOUT}.
 
-handle_capwap_data(Sw, Address, Port, Header, true, PayLoad) ->
+handle_capwap_data(FlowSwitch, Sw, Address, Port, Header, true, PayLoad) ->
     ?DEBUG(?BLUE "CAPWAP Data KeepAlive: ~p~n", [PayLoad]),
 
     SessionId = proplists:get_value(session_id, PayLoad),
@@ -531,7 +558,7 @@ handle_capwap_data(Sw, Address, Port, Header, true, PayLoad) ->
 	    {error, not_found};
 	{ok, AC} ->
 	    PeerId = {Address, Port},
-	    case gen_fsm:sync_send_event(AC, {keep_alive, Sw, PeerId, Header, PayLoad}) of
+	    case gen_fsm:sync_send_event(AC, {keep_alive, FlowSwitch, Sw, PeerId, Header, PayLoad}) of
 		{reply, {RHeader, RPayLoad}} ->
 		    Data = capwap_packet:encode(data, {RHeader, RPayLoad}),
 		    {reply, Data};
@@ -540,7 +567,7 @@ handle_capwap_data(Sw, Address, Port, Header, true, PayLoad) ->
 	    end
     end;
 
-handle_capwap_data(_Sw, Address, Port,
+handle_capwap_data(_FlowSwitch, Sw, Address, Port,
 		   Header = #capwap_header{
 		     flags = Flags,
 		     radio_id = RadioId, wb_id = WBID},
@@ -560,10 +587,10 @@ handle_capwap_data(_Sw, Address, Port,
 			{add, RadioMAC, MAC, MacMode, TunnelMode} ->
 			    gen_fsm:send_event(AC, {add_station, Header, MAC}),
 			    ?DEBUG(?GREEN "MacMode: ~w, TunnelMode ~w~n", [MacMode, TunnelMode]),
-			    {add_flow, self(), Address, Port, RadioMAC, MAC, MacMode, TunnelMode};
+			    {add_flow, Sw, self(), Address, Port, RadioMAC, MAC, MacMode, TunnelMode};
 
 			{flow, RadioMAC, MAC, MacMode, TunnelMode} ->
-			    {add_flow, self(), Address, Port, RadioMAC, MAC, MacMode, TunnelMode};
+			    {add_flow, Sw, self(), Address, Port, RadioMAC, MAC, MacMode, TunnelMode};
 
 			Other ->
 			    Other
@@ -583,10 +610,14 @@ handle_capwap_data(_Sw, Address, Port,
 			{add, RadioMAC, MAC, MacMode, TunnelMode} ->
 			    gen_fsm:send_event(AC, {add_station, Header, MAC}),
 			    ?DEBUG(?GREEN "MacMode: ~w, TunnelMode ~w~n", [MacMode, TunnelMode]),
-			    {add_flow, self(), Address, Port, RadioMAC, MAC, MacMode, TunnelMode};
+			    {add_flow, Sw, self(), Address, Port, RadioMAC, MAC, MacMode, TunnelMode};
 
 			{flow, RadioMAC, MAC, MacMode, TunnelMode} ->
-			    {add_flow, self(), Address, Port, RadioMAC, MAC, MacMode, TunnelMode};
+			    {add_flow, Sw, self(), Address, Port, RadioMAC, MAC, MacMode, TunnelMode};
+
+			{del, RadioMAC, MAC, MacMode, TunnelMode} ->
+			    gen_fsm:send_event(AC, {del_station, Header, MAC}),
+			    {del_flow, Sw, self(), Address, Port, RadioMAC, MAC, MacMode, TunnelMode};
 
 			Other ->
 			    Other

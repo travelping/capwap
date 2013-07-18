@@ -3,7 +3,7 @@
 -behaviour(supervisor).
 
 %% API
--export([start_link/0, new_station/3]).
+-export([start_link/0, new_station/7]).
 
 %% Supervisor callbstationks
 -export([init/1]).
@@ -17,9 +17,9 @@
 start_link() ->
     supervisor:start_link({local, ?SERVER}, ?MODULE, []).
 
-new_station(AC, RadioMAC, ClientMAC) ->
-    io:format("Stating new Station: ~p~n", [{AC, RadioMAC, ClientMAC}]),
-    R = supervisor:start_child(?SERVER, [AC, RadioMAC, ClientMAC]),
+new_station(AC, FlowSwitch, PeerId, RadioMAC, ClientMAC, MacMode, TunnelMode) ->
+    io:format("Stating new Station: ~p~n", [{AC, FlowSwitch, PeerId, RadioMAC, ClientMAC, MacMode, TunnelMode}]),
+    R = supervisor:start_child(?SERVER, [AC, FlowSwitch, PeerId, RadioMAC, ClientMAC, MacMode, TunnelMode]),
     io:format("Result: ~p~n", [R]),
     R.
 
