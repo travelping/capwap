@@ -12,6 +12,7 @@
                  ]},
   {mod, { capwap_app, []}},
   {env, [{server_ip, {172,28,0,1}},
+	 {server_socket_opts, [{netns, "/var/run/netns/upstream"}]},
 	 %%  {ctld_provider, {ctld_mock, [{secret, <<"MySecret">>}]}}
 	 {ctld_provider, {ctld_radius, [{nas_identifier, <<"MyNAS">>},
 					{radius_auth_server, {{127,0,0,1}, 1812, <<"secret">>}},
@@ -30,5 +31,6 @@
 	 {echo_request_interval, 10},
 	 {discovery_interval, 20},
 	 {idle_timeout, 300}
+	 %% {ac_ipv4_list, [{92,43,52,4}]}
 	]}
  ]}.

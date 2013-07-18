@@ -63,7 +63,7 @@ connect(Address, Port, Opts0) ->
     Options = lists:filter(fun({packet, _}) -> false;
 			      ({packet_size, _}) -> false;
 			      (_) -> true end, Opts0),
-    case gen_udp:open(0, Options) of
+    case open_socket(0, Options) of
 	{ok, Socket} ->
 	    case gen_udp:connect(Socket, Address, Port) of
 		ok ->
@@ -188,7 +188,7 @@ init([Owner, Port, Options0]) ->
     Opts1 = lists:keystore(recbuf, 1, Options, {recbuf, 20*1024}),
     Opts0 = lists:keystore(active, 1, Opts1, {active, true}),
     Opts = lists:keystore(mode, 1, Opts0, {mode, binary}),
-    case gen_udp:open(Port, Opts) of
+    case open_socket(Port, Opts) of
 	{ok, Socket} ->
 	    {ok, #state{socket = Socket,
 			owner = Owner,
@@ -519,3 +519,27 @@ delete_csocket(#capwap_socket{id = CSocketId, type = Type, peer = Peer},
     State#state{
       connections = gb_trees:delete_any({Peer, Type}, Connections),
       virtual_sockets = gb_trees:delete_any(CSocketId, VSockets)}.
+
+open_socket(Port, Options) ->
+    case lists:keytake(netns, 1, Options) of
+	{value, {_, NetNs}, Opts} ->
+	    case gen_socket:raw_socketat(NetNs, inet, dgram, udp) of
+		{ok, Fd} ->
+		    Ret = case lists:keytake(ip, 1, Opts) of
+			      {value, {_, IP}, _} ->
+				  gen_socket:bind(Fd, {inet4, IP, Port});
+			      _ ->
+				  ok
+			  end,
+		    case Ret of
+			ok ->
+			    gen_udp:open(Port, [{fd, Fd}|Opts]);
+			_ ->
+			    Ret
+		    end;
+		Other ->
+		    Other
+	    end;
+	_ ->
+	    gen_udp:open(Port, Options)
+    end.
