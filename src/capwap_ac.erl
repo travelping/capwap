@@ -345,7 +345,7 @@ run({station_configuration_response, _Seq,
     next_state(run, State);
 
 run(configure, State = #state{id = WtpId}) ->
-    lager:debug("configure WTP~n"),
+    lager:debug("configure WTP: ~p", [WtpId]),
     RadioId = 1,
     App = capwap,
     DefaultSSID = application:get_env(App, default_ssid, <<"CAPWAP">>),
