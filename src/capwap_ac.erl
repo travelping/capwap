@@ -68,12 +68,14 @@ handle_packet(_Address, _Port, Packet) ->
 	{Header, {discovery_request, 1, Seq, Elements}} ->
 	    Answer = answer_discover(Seq, Elements, Header),
 	    {reply, Answer};
-	{_Header, {join_request, 1, _Seq, _Elements}} ->
-	    accept;
-	_ ->
+	{Header, {join_request, 1, Seq, Elements}} ->
+	    handle_plain_join(Seq, Elements, Header);
+	Pkt ->
+	    lager:warning("unexpected CAPWAP packet: ~p", [Pkt]),
 	    {error, not_capwap}
     catch
-	_:_ ->
+	Class:Error ->
+	    lager:error("failure: ~p:~p", [Class, Error]),
 	    {error, not_capwap}
     end.
 
@@ -553,6 +555,21 @@ reply(Reply, NextStateName, State)
     {reply, Reply, NextStateName, State};
 reply(Reply, NextStateName, State) ->
     {reply, Reply, NextStateName, State, ?IDLE_TIMEOUT}.
+
+%% non-DTLS join-reqeust, check app config
+handle_plain_join(Seq, _Elements, #capwap_header{
+			 radio_id = RadioId, wb_id = WBID, flags = Flags}) ->
+    case application:get_env(capwap, enforce_dtls_control, true) of
+	false ->
+	    lager:warning("Accepting JOIN with DTLS"),
+	    accept;
+	_ ->
+	    lager:warning("Rejecting JOIN without DTLS"),
+	    RespElems = [#result_code{result_code = 18}],
+	    Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
+	    Answer = capwap_packet:encode(control, {Header, {join_response, Seq, RespElems}}),
+	    {reply, Answer}
+    end.
 
 handle_capwap_data(FlowSwitch, Sw, Address, Port, Header, true, PayLoad) ->
     lager:debug("CAPWAP Data KeepAlive: ~p~n", [PayLoad]),
