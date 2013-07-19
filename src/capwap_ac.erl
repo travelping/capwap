@@ -348,14 +348,19 @@ run(configure, State = #state{id = WtpId}) ->
     lager:debug("configure WTP~n"),
     RadioId = 1,
     App = capwap,
-    DefaultSSID = application:get_env(App, default_ssid, <<"CAPWAP Test">>),
+    DefaultSSID = application:get_env(App, default_ssid, <<"CAPWAP">>),
     SSIDs = application:get_env(App, ssids, []),
-    SSID = if
-	       is_binary(WtpId) ->
-		   proplists:get_value({WtpId, RadioId}, SSIDs, DefaultSSID);
-	       true ->
-		   DefaultSSID
-	   end,
+    DynSSIDSuffixLen = application:get_env(App, dynamic_ssid_suffix_len, false),
+    SSID = case proplists:get_value({WtpId, RadioId}, SSIDs) of
+	       undefined
+		 when is_integer(DynSSIDSuffixLen), is_binary(WtpId) ->
+                   binary:list_to_bin([DefaultSSID, $-, binary:part(WtpId, size(WtpId) - DynSSIDSuffixLen, DynSSIDSuffixLen)]);
+               WtpSSID
+		 when is_binary(WtpSSID) ->
+                   WtpSSID;
+	       _ ->
+                   DefaultSSID
+           end,
     WBID = 1,
     Flags = [{frame,'802.3'}],
     MacMode = select_mac_mode(State#state.mac_types),

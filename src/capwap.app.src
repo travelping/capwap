@@ -1,36 +1,37 @@
-{application, capwap,
- [
-  {description, ""},
-  {vsn, "1"},
-  {registered, []},
-  {applications, [
-                  kernel,
-                  stdlib,
-		  ssl,
-		  regine,
-		  ctld
-                 ]},
-  {mod, { capwap_app, []}},
-  {env, [{server_ip, {172,28,0,1}},
-	 {server_socket_opts, [{netns, "/var/run/netns/upstream"}]},
-	 %%  {ctld_provider, {ctld_mock, [{secret, <<"MySecret">>}]}}
-	 {ctld_provider, {ctld_radius, [{nas_identifier, <<"MyNAS">>},
-					{radius_auth_server, {{127,0,0,1}, 1812, <<"secret">>}},
-					{radius_acct_server, {{127,0,0,1}, 1813, <<"secret">>}}
-				       ]}},
-	 {control_ips, [{172,28,0,1}]},
-	 {limit, 200},
-	 {max_wtp, 100},
-	 {security, ['x509']},
-	 {versions, [{hardware, <<"SCG">>},
-		     {software, <<"SCG">>}]},
-	 {ac_name, <<"CAPWAP AC">>},
-	 {default_ssid, <<"CW Office Dev">>},
-	 {ssids, [{{<<"wtp01.tposs.net">>, 1}, <<"CW AS Office Dev">>}]},
-
-	 {echo_request_interval, 10},
-	 {discovery_interval, 20},
-	 {idle_timeout, 300}
-	 %% {ac_ipv4_list, [{92,43,52,4}]}
-	]}
- ]}.
+{application, capwap, [
+    {description, "CAPWAP AC Server"},
+    {vsn, "1.0.0"},
+    {registered, []},
+    {applications, [
+        kernel,
+        stdlib,
+        ssl,
+        regine,
+        ctld
+    ]},
+    {mod, { capwap_app, []}},
+    {env, [
+        {server_ip, {172,28,0,1}},
+        {server_socket_opts, [{netns, "/var/run/netns/upstream"}]},
+        %%  {ctld_provider, {ctld_mock, [{secret, <<"MySecret">>}]}}
+        {ctld_provider, {ctld_radius, [{nas_identifier, <<"MyNAS">>},
+                            {radius_auth_server, {{127,0,0,1}, 1812, <<"secret">>}},
+                            {radius_acct_server, {{127,0,0,1}, 1813, <<"secret">>}}
+                            ]}
+        },
+        {control_ips, [{172,28,0,1}]},
+        {limit, 200},
+        {max_wtp, 100},
+        {security, ['x509']},
+        {versions, [{hardware, <<"SCG">>},
+                    {software, <<"SCG">>}]},
+        {ac_name, <<"CAPWAP AC">>},
+        {default_ssid, <<"DEV CAPWAP WIFI">>},
+        {ssids, []},
+        {dynamic_ssid_suffix_len, false},
+        {echo_request_interval, 10},
+        {discovery_interval, 20},
+        {idle_timeout, 300}
+        %% {ac_ipv4_list, [{92,43,52,4}]}
+    ]}
+]}.
