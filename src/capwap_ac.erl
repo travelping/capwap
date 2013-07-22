@@ -687,7 +687,14 @@ handle_capwap_packet(Packet, StateName, State = #state{
 ac_info() ->
     App = capwap,
     Versions = application:get_env(App, versions, []),
-
+    AcList = case application:get_env(App, ac_ipv4_list, []) of
+                 [] ->
+                     [];
+                 AcIps when is_list(AcIps) ->
+                     [#ac_ipv4_list{ip_address=AcIps}];
+                 _ ->
+                     []
+             end,
     [#ac_descriptor{stations    = 0,
 		    limit       = application:get_env(App, limit, 200),
 		    active_wtps = 0,
@@ -699,7 +706,7 @@ ac_info() ->
 		    sub_elements = [{{0,4}, proplists:get_value(hardware, Versions, <<"Hardware Ver. 1.0">>)},
 				    {{0,5}, proplists:get_value(software, Versions, <<"Software Ver. 1.0">>)}]},
      #ac_name{name = application:get_env(App, ac_name, <<"My AC Name">>)}
-    ] ++ control_addresses(App).
+    ] ++ control_addresses(App) ++ AcList.
 
 send_info_after(Time, Event) ->
     erlang:start_timer(Time, self(), Event).

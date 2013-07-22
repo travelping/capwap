@@ -164,17 +164,26 @@ encode_flag(Key, List) ->
     encode_bool(proplists:get_bool(Key, List)).
 
 encode_mac_list(MACs = [H|_]) ->
-
     Num = length(MACs),
     Len = byte_size(H),
     M = << <<X/binary>> || X <- MACs>>,
     <<Num:8, Len:8, M/binary>>.
 
-encode_ipv4_list(IPs) ->
-    << <<X:4/bytes>> || X <- IPs >>.
+encode_ipv4_list(IPs) when is_list(IPs) ->
+    binary:list_to_bin([encode_ipv4(Ip) || Ip <- IPs ]).
 
-encode_ipv6_list(IPs) ->
-    << <<X:16/bytes>> || X <- IPs >>.
+encode_ipv4({A, B, C, D}) ->
+    <<A,B,C,D>>;
+encode_ipv4(Ip) when is_binary(Ip) ->
+    Ip.
+
+encode_ipv6_list(IPs) when is_list(IPs) ->
+    binary:list_to_bin([encode_ipv6(Ip) || Ip <- IPs ]).
+
+encode_ipv6({A, B, C, D, E, F, G, H}) ->
+    <<A:16,B:16,C:16,D:16,E:16,F:16,G:16,H:16>>;
+encode_ipv6(Ip) when is_binary(Ip) ->
+    Ip.
 
 encode_subelement(Type, Value) ->
     Len = byte_size(Value),
