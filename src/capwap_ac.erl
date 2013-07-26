@@ -39,7 +39,9 @@
 	  last_request,
 	  retransmit_timer,
 	  retransmit_counter,
-	  seqno = 0}).
+	  seqno = 0,
+	  event_log
+}).
 
 -ifdef(debug).
 -define(SERVER_OPTS, [{debug, [trace]}]).
@@ -175,8 +177,14 @@ listen({accept, dtls, Socket}, State) ->
 	    end,
 	    capwap_wtp_reg:register(CommonName),
 
+	    EventLogBasePath = application:get_env(capwap, event_log_base_path, "."),
+	    EventLogPath = filename:join([EventLogBasePath, ["events-", erlang:binary_to_list(CommonName), ".log"]]),
+	    lager:info("EventLogP: ~w", [EventLogPath]),
+
+	    {ok, EventLog} = lager:trace_file(EventLogPath, [{class, wtp_statistics}], debug),
+	    State1 = State#state{event_log=EventLog, socket = {dtls, SslSocket}, session = Session, id = CommonName},
 	    %% TODO: find old connection instance, take over their StationState and stop them
-	    next_state(idle, State#state{socket = {dtls, SslSocket}, session = Session, id = CommonName});
+	    next_state(idle, State1);
 	Other ->
 	    lager:error("ssl_accept failed: ~p~n", [Other]),
 	    {stop, normal, State}
@@ -403,6 +411,18 @@ run({del_station, #capwap_header{radio_id = RadioId, wb_id = WBID}, MAC}, State)
     State1 = send_request(Header1, station_configuration_request, ReqElements, State),
     next_state(run, State1);
 
+run({wtp_event_request, Seq, Elements, #capwap_header{radio_id = RadioId, wb_id = WBID, 
+                                                       flags = Flags}}, State) ->
+    Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
+    State1 = send_response(Header, wtp_event_response, Seq, [], State),
+    Now = calendar:now_to_universal_time(erlang:now()),
+    {FormatString, FormatVars} = lists:foldl(
+                                   fun({Key, Value}, {FStr, FVars}) ->
+                                           {FStr ++ "~p(~p), ", FVars ++ [Key, Value]}
+                                   end, {"~p@~p: ", [State#state.id, Now]}, Elements),
+    lager:debug([{class, wtp_statistics}], FormatString, FormatVars),
+    next_state(run, State1);
+
 run(Event, State) ->
     lager:warning("in RUN got unexpexted: ~p~n", [Event]),
     next_state(run, State).
@@ -517,7 +537,8 @@ handle_info(Info, StateName, State) ->
 %% @spec terminate(Reason, StateName, State) -> void()
 %% @end
 %%--------------------------------------------------------------------
-terminate(_Reason, StateName, #state{peer_data = PeerId, flow_switch = FlowSwitch, socket = Socket}) ->
+terminate(_Reason, StateName, #state{peer_data = PeerId, event_log=EventLog,
+                                     flow_switch = FlowSwitch, socket = Socket}) ->
     case StateName of
 	run ->
 	    FlowSwitch ! {wtp_down, PeerId},
@@ -526,6 +547,7 @@ terminate(_Reason, StateName, #state{peer_data = PeerId, flow_switch = FlowSwitc
 	    ok
     end,
     socket_close(Socket),
+    stop_trace(EventLog),
     ok.
 
 %%--------------------------------------------------------------------
@@ -680,7 +702,7 @@ handle_capwap_packet(Packet, StateName, State = #state{
 	    end
     catch
 	Class:Error ->
-	    error_logger:error_report([{capwap_packet, decode}, {class, Class}, {error, Error}]),
+	    lager:error([{capwap_packet, decode}, {class, Class}, {error, Error}], "Decode error ~p:~p", [Class, Error]),
 	    {next_state, StateName, State, ?IDLE_TIMEOUT}
     end.
 
@@ -814,6 +836,11 @@ socket_send({udp, Socket}, Data) ->
     capwap_udp:send(Socket, Data);
 socket_send({dtls, Socket}, Data) ->
     ssl:send(Socket, Data).
+
+stop_trace(undefined) ->
+    ok;
+stop_trace(Trace) ->
+    lager:stop_trace(Trace).
 
 socket_close({udp, Socket}) ->
     capwap_udp:close(Socket);
