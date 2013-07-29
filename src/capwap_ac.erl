@@ -329,32 +329,30 @@ run({echo_request, Seq, Elements, #capwap_header{
     State1 = send_response(Header, echo_response, Seq, Elements, State),
     next_state(run, State1);
 
-run({ieee_802_11_wlan_configuration_response, _Seq,
-	   Elements, _Header}, State) ->
-    case proplists:get_value(result_code, Elements) of
-	0 ->
-	    lager:debug("IEEE 802.11 WLAN Configuration ok"),
-	    ok;
-	Code ->
-	    lager:warning("IEEE 802.11 WLAN Configuration failed with ~w~n", [Code]),
-	    ok
-    end,
-    next_state(run, State);
-
-run({station_configuration_response, _Seq,
-     Elements, _Header}, State) ->
-    %% TODO: timeout and Error handling, e.g. shut the station process down when the Add Station failed
-    case proplists:get_value(result_code, Elements) of
-	0 ->
-	    lager:debug("Station Configuration ok"),
-	    ok;
-	Code ->
-	    lager:warning("Station Configuration failed with ~w~n", [Code]),
-	    ok
-    end,
-    next_state(run, State);
-
 run(configure, State = #state{id = WtpId}) ->
+    lager:debug("configure WTP: ~p", [WtpId]),
+    {TStamp, _} = now_to_sntp_time(erlang:now()),
+    RadioId = 1,
+    WBID = 1,
+    Flags = [{frame,'802.3'}],
+    ReqElements = [#ac_timestamp{timestamp = TStamp}],
+    Header1 = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
+    State1 = send_request(Header1, configuration_update_request, ReqElements, State),
+    next_state(run, State1);
+
+run({configuration_update_response, _Seq, Elements, _Header}, State) ->
+    case proplists:get_value(result_code, Elements) of
+	0 ->
+	    lager:debug("Configuration Update ok"),
+	    ok;
+	Code ->
+	    lager:warning("Configuration Update with ~w~n", [Code]),
+	    %% ignore failures
+	    ok
+    end,
+    run(configure_wlan, State);
+
+run(configure_wlan, State = #state{id = WtpId}) ->
     lager:debug("configure WTP: ~p", [WtpId]),
     RadioId = 1,
     App = capwap,
@@ -389,6 +387,30 @@ run(configure, State = #state{id = WtpId}) ->
     State1 = State#state{mac_mode = MacMode, tunnel_mode = TunnelMode},
     State2 = send_request(Header1, ieee_802_11_wlan_configuration_request, ReqElements, State1),
     next_state(run, State2);
+
+run({ieee_802_11_wlan_configuration_response, _Seq, Elements, _Header}, State) ->
+    case proplists:get_value(result_code, Elements) of
+	0 ->
+	    lager:debug("IEEE 802.11 WLAN Configuration ok"),
+	    ok;
+	Code ->
+	    lager:warning("IEEE 802.11 WLAN Configuration failed with ~w~n", [Code]),
+	    ok
+    end,
+    next_state(run, State);
+
+run({station_configuration_response, _Seq,
+     Elements, _Header}, State) ->
+    %% TODO: timeout and Error handling, e.g. shut the station process down when the Add Station failed
+    case proplists:get_value(result_code, Elements) of
+	0 ->
+	    lager:debug("Station Configuration ok"),
+	    ok;
+	Code ->
+	    lager:warning("Station Configuration failed with ~w~n", [Code]),
+	    ok
+    end,
+    next_state(run, State);
 
 run({add_station, #capwap_header{radio_id = RadioId, wb_id = WBID}, MAC}, State) ->
     Flags = [{frame,'802.3'}],
@@ -998,3 +1020,22 @@ select_tunnel_mode(Modes, local_mac) ->
     end;
 select_tunnel_mode(_Modes, split_mac) ->
     '802_11_tunnel'.
+
+%% sntp_time_to_now({Sec, USec}) ->
+%%     case Sec band 16#80000000 of
+%% 	0 -> Time = Sec + 2085978496; % use base: 7-Feb-2036 @ 06:28:16 UTC
+%% 	_ -> Time = Sec - 2208988800  % use base: 1-Jan-1900 @ 01:00:00 UTC
+%%     end,
+%%     {Time div 1000000, Time rem 1000000, round((USec * 1000000) / (1 bsl 32))}.
+
+now_to_sntp_time({_,_,USec} = Now) ->
+    %% calendar:datetime_to_gregorian_seconds({{1900,1,1}, {0,0,0}})   == 59958230400
+    %% calendar:datetime_to_gregorian_seconds({{2036,2,7}, {6,28,16}}) == 64253197696
+    Seconds =
+	case calendar:datetime_to_gregorian_seconds(calendar:now_to_universal_time(Now)) of
+	    SecsSinceFeb2036 when SecsSinceFeb2036 >= 64253197696 ->
+		SecsSinceFeb2036 - 64253197696;
+	    SecsSinceJan1900 ->
+		16#80000000 bor SecsSinceJan1900 - 59958230400
+	end,
+    {Seconds, round(USec * (1 bsl 32) / 1000000)}.
