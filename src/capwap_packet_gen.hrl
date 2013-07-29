@@ -422,9 +422,7 @@ decode_element(36, <<M_statistics_timer:16/integer>>) ->
 decode_element(37, <<M_vendor:32/integer,
                      M_element_id:16/integer,
                      M_data/binary>>) ->
-    #vendor_specific_payload{vendor = M_vendor,
-                             element_id = M_element_id,
-                             data = M_data};
+    decode_vendor_element({M_vendor, M_element_id}, M_data);
 
 decode_element(38, <<M_vendor:32/integer,
                      M_board_data_sub_elements/binary>>) ->
@@ -831,6 +829,41 @@ decode_element(1048, <<M_radio_id:8/integer,
 
 decode_element(Tag, Value) ->
         {Tag, Value}.
+
+decode_vendor_element({18681,1}, <<M_timestamp:32/integer,
+                                   M_wwan_id:8/integer,
+                                   M_rat:8/integer,
+                                   M_rssi:8/integer,
+                                   _:8,
+                                   M_lac:16/integer,
+                                   _:16,
+                                   M_cell_id:32/integer>>) ->
+    #tp_wtp_wwan_statistics{timestamp = M_timestamp,
+                            wwan_id = M_wwan_id,
+                            rat = M_rat,
+                            rssi = M_rssi,
+                            lac = M_lac,
+                            cell_id = M_cell_id};
+
+decode_vendor_element({18681,2}, <<M_timestamp:32/integer>>) ->
+    #tp_wtp_timestamp{timestamp = M_timestamp};
+
+decode_vendor_element({18681,3}, <<M_wwan_id:8/integer,
+                                   M_iccid/binary>>) ->
+    #tp_wtp_wwan_iccid{wwan_id = M_wwan_id,
+                       iccid = M_iccid};
+
+decode_vendor_element({18681,4}, <<M_radio_id:8/integer,
+                                   M_wlan_id:8/integer,
+                                   _:16,
+                                   M_hold_time:32/integer>>) ->
+    #tp_ieee_802_11_wlan_hold_time{radio_id = M_radio_id,
+                                   wlan_id = M_wlan_id,
+                                   hold_time = M_hold_time};
+
+decode_vendor_element(Tag, Value) ->
+        {Tag, Value}.
+
 encode_element(#ac_descriptor{
                     stations = M_stations,
                     limit = M_limit,
@@ -1047,14 +1080,6 @@ encode_element(#session_id{
 encode_element(#statistics_timer{
                     statistics_timer = M_statistics_timer}) ->
     encode_element(36, <<M_statistics_timer:16>>);
-
-encode_element(#vendor_specific_payload{
-                    vendor = M_vendor,
-                    element_id = M_element_id,
-                    data = M_data}) ->
-    encode_element(37, <<M_vendor:32,
-                         M_element_id:16,
-                         M_data/binary>>);
 
 encode_element(#wtp_board_data{
                     vendor = M_vendor,
@@ -1487,4 +1512,39 @@ encode_element(#ieee_802_11_wtp_radio_information{
                            (encode_flag('802.11n', M_radio_type)):1,
                            (encode_flag('802.11g', M_radio_type)):1,
                            (encode_flag('802.11a', M_radio_type)):1,
-                           (encode_flag('802.11b', M_radio_type)):1>>).
+                           (encode_flag('802.11b', M_radio_type)):1>>);
+
+encode_element(#tp_wtp_wwan_statistics{
+                    timestamp = M_timestamp,
+                    wwan_id = M_wwan_id,
+                    rat = M_rat,
+                    rssi = M_rssi,
+                    lac = M_lac,
+                    cell_id = M_cell_id}) ->
+    encode_vendor_element({18681,1}, <<M_timestamp:32,
+                                       M_wwan_id:8,
+                                       M_rat:8,
+                                       M_rssi:8,
+                                       0:8,
+                                       M_lac:16,
+                                       0:16,
+                                       M_cell_id:32>>);
+
+encode_element(#tp_wtp_timestamp{
+                    timestamp = M_timestamp}) ->
+    encode_vendor_element({18681,2}, <<M_timestamp:32>>);
+
+encode_element(#tp_wtp_wwan_iccid{
+                    wwan_id = M_wwan_id,
+                    iccid = M_iccid}) ->
+    encode_vendor_element({18681,3}, <<M_wwan_id:8,
+                                       M_iccid/binary>>);
+
+encode_element(#tp_ieee_802_11_wlan_hold_time{
+                    radio_id = M_radio_id,
+                    wlan_id = M_wlan_id,
+                    hold_time = M_hold_time}) ->
+    encode_vendor_element({18681,4}, <<M_radio_id:8,
+                                       M_wlan_id:8,
+                                       0:16,
+                                       M_hold_time:32>>).

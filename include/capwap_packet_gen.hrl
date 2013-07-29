@@ -181,12 +181,6 @@
         statistics_timer = 0
 }).
 
--record(vendor_specific_payload, {
-        vendor = 0,
-        element_id = 0,
-        data = <<>>
-}).
-
 -record(wtp_board_data, {
         vendor = 0,
         board_data_sub_elements
@@ -443,5 +437,29 @@
 -record(ieee_802_11_wtp_radio_information, {
         radio_id = 0,
         radio_type = []
+}).
+
+-record(tp_wtp_wwan_statistics, {
+        timestamp = 0,
+        wwan_id = 0,
+        rat = 0,
+        rssi = 0,
+        lac = 0,
+        cell_id = 0
+}).
+
+-record(tp_wtp_timestamp, {
+        timestamp = 0
+}).
+
+-record(tp_wtp_wwan_iccid, {
+        wwan_id = 0,
+        iccid = <<>>
+}).
+
+-record(tp_ieee_802_11_wlan_hold_time, {
+        radio_id = 0,
+        wlan_id = 0,
+        hold_time = 0
 }).
 

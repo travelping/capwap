@@ -202,6 +202,9 @@ encode_vendor_subelements(IEs) ->
 encode_element(Type, Value) ->
     <<Type:16, (byte_size(Value)):16, Value/binary>>.
 
+encode_vendor_element({Vendor, Type}, Value) ->
+    encode_element(37, <<Vendor:32, Type:16, Value/binary>>).
+
 encode_data_keep_alive(#capwap_header{wb_id = WBID,
 				      radio_mac = RadioMAC,
 				      wireless_spec_info = WirelessSpecInfo},

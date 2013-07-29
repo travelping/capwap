@@ -115,9 +115,7 @@ ies() ->
      {36, "Statistics Timer",
       [{"Statistics Timer", 16, integer}]},
      {37, "Vendor Specific Payload",
-      [{"Vendor", 32, integer},
-       {"Element Id", 16, integer},
-       {"Data", 0, binary}]},
+      [{"Data", 0, vendor_element}]},
      {38, "WTP Board Data",
       [{"Vendor", 32, integer},
        {"Board Data Sub-Elements", subelements}]},
@@ -331,6 +329,28 @@ ies() ->
        {"Radio Type", {flags, ["802.11n", "802.11g", "802.11a", "802.11b"]}}]}
     ].
 
+vendor_ies() ->
+    [{{18681, 1}, "TP WTP WWAN Statistics",
+      [{"Timestamp", 32, integer},
+       {"WWAN Id", 8, integer},
+       {"RAT", 8, integer},
+       {"RSSi", 8, integer},
+       {'_', 8},
+       {"LAC", 16, integer},
+       {'_', 16},
+       {"Cell Id", 32, integer}]},
+     {{18681, 2}, "TP WTP Timestamp",
+      [{"Timestamp", 32, integer}]},
+     {{18681, 3}, "TP WTP WWAN ICCID",
+      [{"WWAN Id", 8, integer},
+       {"ICCID", 0, binary}]},
+     {{18681, 4}, "TP IEEE 802.11 WLAN Hold Time",
+      [{"Radio ID", 8, integer},
+       {"WLAN ID", 8, integer},
+       {'_', 16},
+       {"Hold Time", 32, integer}]}
+    ].
+
 msgs() ->
     [{1, "Discovery Request"},
      {2, "Discovery Response"},
@@ -538,8 +558,15 @@ write_record({_Id, Name, Fields}) ->
     RecordDef = string:join(collect(fun(X) -> gen_record_def(X) end, Fields), [",\n", Indent]),
     io_lib:format("-record(~s, {~n~s~s~n}).~n", [s2a(Name), Indent, RecordDef]).
 
-write_decoder({Id, Name, Fields}) ->
-    FunHead = io_lib:format("decode_element(~w, ", [Id]),
+%% hand crafted vendor IE
+write_decoder(_FunName, {37, _Name, _Fields}) ->
+"decode_element(37, <<M_vendor:32/integer,
+                     M_element_id:16/integer,
+                     M_data/binary>>) ->
+    decode_vendor_element({M_vendor, M_element_id}, M_data)";
+
+write_decoder(FunName, {Id, Name, Fields}) ->
+    FunHead = io_lib:format("~s(~w, ", [FunName, Id]),
     MatchIdent = indent(FunHead, 2),
     Match = string:join(collect(fun(X) -> gen_decoder_header_match(X) end, Fields), [",\n", MatchIdent]),
 
@@ -554,11 +581,11 @@ write_decoder({Id, Name, Fields}) ->
     RecAssign = string:join(collect(fun(X) -> gen_decoder_record_assign(X) end, Fields), [",\n", RecIdent]),
     io_lib:format("~s<<~s>>) ->~n~s    #~s{~s}", [FunHead, Match, Body, s2a(Name), RecAssign]).
 
-write_encoder({Id, Name, Fields}) ->
+write_encoder(FunName, {Id, Name, Fields}) ->
     RecIdent = indent("encode_element(#", 4),
     RecAssign = string:join(collect(fun(X) -> gen_encoder_record_assign(X) end, Fields), [",\n", RecIdent]),
     FunHead = io_lib:format("encode_element(#~s{~n~s~s}) ->~n", [s2a(Name), RecIdent, RecAssign]),
-    DecHead = io_lib:format("    encode_element(~w, ", [Id]),
+    DecHead = io_lib:format("    ~s(~w, ", [FunName, Id]),
     BinIndent = indent(DecHead, 2),
     BinAssign = string:join(collect(fun(X) -> gen_encoder_bin(X) end, Fields), [",\n", BinIndent]),
     io_lib:format("~s~s<<~s>>)", [FunHead, DecHead, BinAssign]).
@@ -570,17 +597,21 @@ main(_) ->
     WildFun = ["message_type({Vendor, Type}) when is_integer(Vendor), is_integer(Type) -> {Vendor, Type}"],
     MTypes = string:join(FwdFuns ++ RevFuns ++ WildFun, ";\n") ++ ".\n",
 
-    Records = string:join([write_record(X) || X <- ies()], "\n"),
+    Records = string:join([write_record(X) || X <- ies() ++ vendor_ies(), element(1, X) /= 37], "\n"),
     HrlRecs = io_lib:format("%% This file is auto-generated. DO NOT EDIT~n~n~s~n", [Records]),
-    Enums = write_enums(ies()),
+    Enums = write_enums(ies() ++ vendor_ies()),
+
     CatchAnyDecoder = "decode_element(Tag, Value) ->\n        {Tag, Value}",
+    CatchAnyVendorDecoder = "decode_vendor_element(Tag, Value) ->\n        {Tag, Value}",
 
-    Funs = string:join([write_decoder(X) || X <- ies()] ++ [CatchAnyDecoder], ";\n\n"),
+    Funs = string:join([write_decoder("decode_element", X) || X <- ies()] ++ [CatchAnyDecoder], ";\n\n"),
+    VendorFuns = string:join([write_decoder("decode_vendor_element", X) || X <- vendor_ies()] ++ [CatchAnyVendorDecoder], ";\n\n"),
 
-    EncFuns = string:join([write_encoder(X) || X <- ies()], ";\n\n"),
+    EncFuns = string:join([write_encoder("encode_element", X) || X <- ies(), element(1, X) /= 37] ++
+			      [write_encoder("encode_vendor_element", X) || X <- vendor_ies()], ";\n\n"),
 
-    ErlDecls = io_lib:format("%% This file is auto-generated. DO NOT EDIT~n~n~s~n~s~n~s.~n~s.~n",
-			     [MTypes, Enums, Funs, EncFuns]),
+    ErlDecls = io_lib:format("%% This file is auto-generated. DO NOT EDIT~n~n~s~n~s~n~s.~n~n~s.~n~n~s.~n",
+			     [MTypes, Enums, Funs, VendorFuns, EncFuns]),
     io:format(ErlDecls),
     file:write_file("include/capwap_packet_gen.hrl", HrlRecs),
     file:write_file("src/capwap_packet_gen.hrl", ErlDecls).
