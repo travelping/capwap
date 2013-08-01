@@ -559,8 +559,9 @@ handle_info(Info, StateName, State) ->
 %% @spec terminate(Reason, StateName, State) -> void()
 %% @end
 %%--------------------------------------------------------------------
-terminate(_Reason, StateName, #state{peer_data = PeerId, event_log=EventLog, session=Session,
-                                     flow_switch = FlowSwitch, socket = Socket}) ->
+terminate(Reason, StateName, #state{peer_data = PeerId, event_log=EventLog, session=Session,
+                                    flow_switch = FlowSwitch, socket = Socket}) ->
+    lager:debug("CAPWAP WTP Session ~p terminating in state ~p with reason ~p", [PeerId, StateName, Reason]),
     case StateName of
         run ->
             FlowSwitch ! {wtp_down, PeerId},
