@@ -559,15 +559,17 @@ handle_info(Info, StateName, State) ->
 %% @spec terminate(Reason, StateName, State) -> void()
 %% @end
 %%--------------------------------------------------------------------
-terminate(_Reason, StateName, #state{peer_data = PeerId, event_log=EventLog,
+terminate(_Reason, StateName, #state{peer_data = PeerId, event_log=EventLog, session=Session,
                                      flow_switch = FlowSwitch, socket = Socket}) ->
     case StateName of
-	run ->
-	    FlowSwitch ! {wtp_down, PeerId},
-	    ok;
-	_ ->
-	    ok
+        run ->
+            FlowSwitch ! {wtp_down, PeerId},
+            ok;
+        _ ->
+            ok
     end,
+    ctld_session:stop(Session, []),
+    ctld_session:terminate(Session),
     socket_close(Socket),
     stop_trace(EventLog),
     ok.
