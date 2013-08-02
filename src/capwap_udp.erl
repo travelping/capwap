@@ -183,6 +183,7 @@ capwap_socket(SslSocketId) ->
 -record(capwap_socket, {id, type, peer, owner, mode, queue}).
 
 init([Owner, Port, Options0]) ->
+    process_flag(trap_exit, true),
     Options = proplists:expand([{binary, [{mode, binary}]},
 				{list, [{mode, list}]}], Options0),
     Opts1 = lists:keystore(recbuf, 1, Options, {recbuf, 20*1024}),
@@ -330,7 +331,7 @@ handle_info({udp, Socket, IP, InPortNo, Packet},
 %%     {noreply, State1};
 
 handle_info(Info, State) ->
-    ?DEBUG(?RED "unexpected Info: ~p~n", [Info]),
+    lager:warning("Unhandled info message: ~p", [Info]),
     {noreply, State}.
 
 handle_packet(Peer, <<0:4, 0:4, _/binary>> = Packet, State) ->
@@ -533,7 +534,7 @@ open_socket(Port, Options) ->
 			  end,
 		    case Ret of
 			ok ->
-			    gen_udp:open(Port, [{fd, Fd}|Opts]);
+			    gen_udp:open(Port, [{reuseaddr, true}, {fd, Fd}|Opts]);
 			_ ->
 			    Ret
 		    end;
