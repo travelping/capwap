@@ -562,7 +562,7 @@ handle_info(Info, StateName, State) ->
 terminate(Reason, StateName, #state{peer_data = PeerId, event_log=EventLog, session=Session,
                                     flow_switch = FlowSwitch, socket = Socket}) ->
     % FIXME: why does lager crash at this point?
-    catch lager:debug("CAPWAP WTP Session ~p terminating in state ~p with reason ~p", [PeerId, StateName, Reason]),
+    % lager:debug("CAPWAP WTP Session ~p terminating in state ~p with reason ~p", [PeerId, StateName, Reason]),
     case StateName of
         run ->
             FlowSwitch ! {wtp_down, PeerId},
