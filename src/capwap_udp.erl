@@ -69,10 +69,11 @@ connect(Address, Port, Opts0) ->
                 ok ->
                     {ok, Socket};
                 Error = {error, _Reason} ->
+                    lager:error("Error ~p connecting socket on port ~p : ~p", [Error, Port, Address]),
                     Error
             end;
         Error = {error, _Reason} ->
-            lager:error("Error ~p opening socket on port port 0 with opts ~p", [Error, Options]),
+            lager:error("Error ~p opening socket on port 0 with opts ~p", [Error, Options]),
             Error
     end.
 
@@ -536,13 +537,21 @@ open_socket(Port, Options) ->
                           end,
                     case Ret of
                         ok ->
-                            gen_udp:open(Port, [{reuseaddr, true}, {fd, Fd}|Opts]);
+                            Opts1 = [{reuseaddr, true}, {fd, Fd}|Opts],
+                            Res = gen_udp:open(Port, Opts1),
+                            lager:debug("Opening udp connecting on port ~p : ~p : ~p ", [Port, Res, Opts1]),
+                            Res;
                         _ ->
+                            lager:error("Error ~p binding socket ~p : ~p", [Ret, Fd, Port]),
                             Ret
                     end;
                 Other ->
+                    lager:error("Error ~p opening raw socketat in ~p", [Other, NetNs]),
                     Other
             end;
         _ ->
-            gen_udp:open(Port, [{reuseaddr, true} | Options])
+            Opts1 = [{reuseaddr, true}|Options],
+            Res = gen_udp:open(Port, Opts1),
+            lager:debug("Opening udp connecting on port ~p : ~p : ~p ", [Port, Res, Opts1]),
+            Res
     end.
