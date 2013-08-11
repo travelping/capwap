@@ -61,18 +61,19 @@ connect(Address, Port, Options, _Timeout) ->
 
 connect(Address, Port, Opts0) ->
     Options = lists:filter(fun({packet, _}) -> false;
-			      ({packet_size, _}) -> false;
-			      (_) -> true end, Opts0),
+                              ({packet_size, _}) -> false;
+                              (_) -> true end, Opts0),
     case open_socket(0, Options) of
-	{ok, Socket} ->
-	    case gen_udp:connect(Socket, Address, Port) of
-		ok ->
-		    {ok, Socket};
-		Error = {error, _Reason} ->
-		    Error
-	    end;
-	Error = {error, _Reason} ->
-	    Error
+        {ok, Socket} ->
+            case gen_udp:connect(Socket, Address, Port) of
+                ok ->
+                    {ok, Socket};
+                Error = {error, _Reason} ->
+                    Error
+            end;
+        Error = {error, _Reason} ->
+            lager:error("Error ~p opening socket on port port 0 with opts ~p", [Error, Options]),
+            Error
     end.
 
 accept(ListenSocket, Timeout) ->
@@ -190,15 +191,16 @@ init([Owner, Port, Options0]) ->
     Opts0 = lists:keystore(active, 1, Opts1, {active, true}),
     Opts = lists:keystore(mode, 1, Opts0, {mode, binary}),
     case open_socket(Port, Opts) of
-	{ok, Socket} ->
-	    {ok, #state{socket = Socket,
-			owner = Owner,
-			mode = proplists:get_value(mode, Options, list),
-			state = listen,
-			connections = gb_trees:empty(),
-			virtual_sockets = gb_trees:empty()}};
-	Error ->
-	    Error
+        {ok, Socket} ->
+            {ok, #state{socket = Socket,
+                        owner = Owner,
+                        mode = proplists:get_value(mode, Options, list),
+                        state = listen,
+                        connections = gb_trees:empty(),
+                        virtual_sockets = gb_trees:empty()}};
+        Error ->
+            lager:error("Error ~p opening socket on port port ~p with opts ~p", [Error, Port, Opts]),
+            Error
     end.
 
 %%--------------------------------------------------------------------
@@ -523,24 +525,24 @@ delete_csocket(#capwap_socket{id = CSocketId, type = Type, peer = Peer},
 
 open_socket(Port, Options) ->
     case lists:keytake(netns, 1, Options) of
-	{value, {_, NetNs}, Opts} ->
-	    case gen_socket:raw_socketat(NetNs, inet, dgram, udp) of
-		{ok, Fd} ->
-		    Ret = case lists:keytake(ip, 1, Opts) of
-			      {value, {_, IP}, _} ->
-				  gen_socket:bind(Fd, {inet4, IP, Port});
-			      _ ->
-				  ok
-			  end,
-		    case Ret of
-			ok ->
-			    gen_udp:open(Port, [{reuseaddr, true}, {fd, Fd}|Opts]);
-			_ ->
-			    Ret
-		    end;
-		Other ->
-		    Other
-	    end;
-	_ ->
-	    gen_udp:open(Port, [{reuseaddr, true} | Options])
+        {value, {_, NetNs}, Opts} ->
+            case gen_socket:raw_socketat(NetNs, inet, dgram, udp) of
+                {ok, Fd} ->
+                    Ret = case lists:keytake(ip, 1, Opts) of
+                              {value, {_, IP}, _} ->
+                                  gen_socket:bind(Fd, {inet4, IP, Port});
+                              _ ->
+                                  ok
+                          end,
+                    case Ret of
+                        ok ->
+                            gen_udp:open(Port, [{reuseaddr, true}, {fd, Fd}|Opts]);
+                        _ ->
+                            Ret
+                    end;
+                Other ->
+                    Other
+            end;
+        _ ->
+            gen_udp:open(Port, [{reuseaddr, true} | Options])
     end.
