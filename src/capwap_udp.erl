@@ -542,5 +542,5 @@ open_socket(Port, Options) ->
 		    Other
 	    end;
 	_ ->
-	    gen_udp:open(Port, Options)
+	    gen_udp:open(Port, [{reuseaddr, true} | Options])
     end.
