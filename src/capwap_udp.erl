@@ -352,24 +352,24 @@ handle_packet(Peer, Type, undefined, Packet,
 	      State0 = #state{socket = Socket}) ->
     ?DEBUG("handle_packet #4~n"),
     case handle_first_packet(Peer, Type, Packet, State0) of
-	{reply, Data} ->
-	    ?DEBUG("handle_packet #4-1~n"),
-	    send(Socket, Peer, Type, [Data]),
-	    State0;
+        {reply, Data} ->
+            ?DEBUG("handle_packet #4-1~n"),
+            send(Socket, Peer, Type, [Data]),
+            State0;
 
-	accept ->
-	    ?DEBUG("handle_packet #4-2~n"),
-	    %% NOTE: the first request is decode twice, should this be changed?
-	    {ok, Owner} = get_wtp(Peer, State0),
+        accept ->
+            ?DEBUG("handle_packet #4-2~n"),
+            %% NOTE: the first request is decode twice, should this be changed?
+            {ok, Owner} = get_wtp(Peer, State0),
 
-	    {CSocketId, State} = new_csocket(Peer, Type, Owner, Packet, State0),
-	    capwap_ac:accept(Owner, Type, capwap_socket(CSocketId)),
-	    State;
+            {CSocketId, State} = new_csocket(Peer, Type, Owner, Packet, State0),
+            capwap_ac:accept(Owner, Type, capwap_socket(CSocketId)),
+            State;
 
-	Other ->
-	    ?DEBUG(?RED "handle_packet #4-3: ~p~n", [Other]),
-	    %% silently ignore
-	    State0
+        Other ->
+            ?DEBUG(?RED "handle_packet #4-3: ~p~n", [Other]),
+            %% silently ignore
+            State0
     end;
 
 handle_packet(_Peer, _Type, CSocket0 = #capwap_socket{mode = passive, queue = Queue}, Packet, State) ->
@@ -388,7 +388,13 @@ handle_first_packet({Address, Port}, udp, Packet, _State) ->
     capwap_ac:handle_packet(Address, Port, Packet);
 handle_first_packet({Address, Port}, dtls, Packet, _State) ->
     ?DEBUG(?BLUE "handle_first_packet: DTLS CAPWAP~n"),
-    ssl_datagram:handle_packet(Address, Port, Packet).
+    try
+        ssl_datagram:handle_packet(Address, Port, Packet)
+    catch
+        E:C ->
+            lager:error("Error ~p:~p handling DTLS packet ~p", [E, C, Packet]),
+            ignore
+    end.
 
 send(Socket, Type, Data) when is_binary(Data) ->
     do_send(Socket, Type, Data);
