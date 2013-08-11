@@ -212,7 +212,9 @@ init([Owner, Port, Options0]) ->
 %% cleaning up. When it returns, the gen_server terminates with Reason.
 %% The return value is ignored.
 %%--------------------------------------------------------------------
-terminate(_Reason, _State) ->
+terminate(Reason, State) ->
+    error_logger:info_msg("Terminating process with reason ~p : ~p~n", [Reason, State]),
+    gen_udp:close(State#state.socket),
     ok.
 
 %%--------------------------------------------------------------------
