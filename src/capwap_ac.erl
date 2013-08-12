@@ -152,42 +152,42 @@ listen({accept, dtls, Socket}, State) ->
 
     {ok, Session} = start_session(Socket, State),
     case ssl:ssl_accept(Socket, mk_ssl_opts(Session)) of
-	{ok, SslSocket} ->
-	    lager:info("ssl_accept: ~p~n", [SslSocket]),
-	    ssl:setopts(SslSocket, [{active, true}, {mode, binary}]),
+        {ok, SslSocket} ->
+            lager:info("ssl_accept: ~p~n", [SslSocket]),
+            ssl:setopts(SslSocket, [{active, true}, {mode, binary}]),
 
-	    {ok, Cert} = ssl:peercert(SslSocket),
-	    #'OTPCertificate'{
-	       tbsCertificate =
-		   #'OTPTBSCertificate'{
-		 subject = {rdnSequence, SubjectList}
-		}} = public_key:pkix_decode_cert(Cert, otp),
-	    Subject = [erlang:hd(S)|| S <- SubjectList],
-	    {value, #'AttributeTypeAndValue'{value = {utf8String, CommonName}}} =
-		lists:keysearch(?'id-at-commonName', #'AttributeTypeAndValue'.type, Subject),
-	    lager:debug("ssl_cert: ~p~n", [CommonName]),
+            {ok, Cert} = ssl:peercert(SslSocket),
+            #'OTPCertificate'{
+               tbsCertificate =
+               #'OTPTBSCertificate'{
+                  subject = {rdnSequence, SubjectList}
+                 }} = public_key:pkix_decode_cert(Cert, otp),
+            Subject = [erlang:hd(S)|| S <- SubjectList],
+            {value, #'AttributeTypeAndValue'{value = {utf8String, CommonName}}} =
+            lists:keysearch(?'id-at-commonName', #'AttributeTypeAndValue'.type, Subject),
+            lager:debug("ssl_cert: ~p~n", [CommonName]),
 
-	    case capwap_wtp_reg:lookup(CommonName) of
-		{ok, OldPid} ->
-		    lager:info("take_over: ~p", [OldPid]),
-		    capwap_ac:take_over(OldPid),
-		    ok;
-		_ ->
-		    ok
-	    end,
-	    capwap_wtp_reg:register(CommonName),
+            case capwap_wtp_reg:lookup(CommonName) of
+                {ok, OldPid} ->
+                    lager:info("take_over: ~p", [OldPid]),
+                    capwap_ac:take_over(OldPid),
+                    ok;
+                _ ->
+                    ok
+            end,
+            capwap_wtp_reg:register(CommonName),
 
-	    EventLogBasePath = application:get_env(capwap, event_log_base_path, "."),
-	    EventLogPath = filename:join([EventLogBasePath, ["events-", erlang:binary_to_list(CommonName), ".log"]]),
-	    lager:info("EventLogP: ~w", [EventLogPath]),
+            EventLogBasePath = application:get_env(capwap, event_log_base_path, "."),
+            EventLogPath = filename:join([EventLogBasePath, ["events-", erlang:binary_to_list(CommonName), ".log"]]),
+            lager:info("EventLogP: ~w", [EventLogPath]),
 
-	    {ok, EventLog} = lager:trace_file(EventLogPath, [{class, wtp_statistics}], debug),
-	    State1 = State#state{event_log=EventLog, socket = {dtls, SslSocket}, session = Session, id = CommonName},
-	    %% TODO: find old connection instance, take over their StationState and stop them
-	    next_state(idle, State1);
-	Other ->
-	    lager:error("ssl_accept failed: ~p~n", [Other]),
-	    {stop, normal, State}
+            {ok, EventLog} = lager:trace_file(EventLogPath, [{class, wtp_statistics}], debug),
+            State1 = State#state{event_log=EventLog, socket = {dtls, SslSocket}, session = Session, id = CommonName},
+            %% TODO: find old connection instance, take over their StationState and stop them
+            next_state(idle, State1);
+        Other ->
+            lager:error("ssl_accept failed: ~p~n", [Other]),
+            {stop, normal, State}
     end;
 
 listen(timeout, State) ->
@@ -931,15 +931,15 @@ verify_cert_auth_cn(CommonName, Session) ->
     Opts = [{'Username', CommonName},
 	    {'Authentication-Method', {'TLS', 'X509-Subject-CN'}}],
     case ctld_session:authenticate(Session, Opts) of
-	success ->
-	    lager:info("AuthResult: success~n"),
-	    {valid, Session};
-	{fail, Reason} ->
-	    lager:info("AuthResult: fail, ~p~n", [Reason]),
-	    {fail, Reason};
-	Other ->
-	    lager:info("AuthResult: ~p~n", [Other]),
-	    {fail, Other}
+        success ->
+            lager:info("AuthResult: success for ~p", [CommonName]),
+            {valid, Session};
+        {fail, Reason} ->
+            lager:info("AuthResult: fail, ~p for ~p", [Reason, CommonName]),
+            {fail, Reason};
+        Other ->
+            lager:info("AuthResult: ~p for ~p", [Other, CommonName]),
+            {fail, Other}
     end.
 
 mk_ssl_opts(Session) ->
