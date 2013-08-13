@@ -124,7 +124,7 @@ new_station(WTP, BSS, SA) ->
 %% @end
 %%--------------------------------------------------------------------
 init([Peer]) ->
-    %process_flag(trap_exit, true),
+    process_flag(trap_exit, true),
     capwap_wtp_reg:register(Peer),
     {ok, listen, #state{peer = Peer}, 5000}.
 
