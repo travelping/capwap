@@ -488,12 +488,12 @@ handle_sync_event(get_peer_data, _From, run, State) ->
 handle_sync_event(get_peer_data, _From, StateName, State) ->
     Reply = {error, not_connected},
     reply(Reply, StateName, State);
-handle_sync_event({take_over, NewWtp}, _From, StateName, State) ->
+handle_sync_event({take_over, NewWtp}, _From, _StateName, State) ->
     %% TODO: move Stations to new wtp
     lager:debug("take_over: old: ~p, new: ~p", [self(), NewWtp]),
     capwap_wtp_reg:unregister(),
     Reply = ok,
-    reply(Reply, StateName, State);
+    {stop, normal, Reply, State};
 handle_sync_event(_Event, _From, StateName, State) ->
     Reply = ok,
     reply(Reply, StateName, State).
