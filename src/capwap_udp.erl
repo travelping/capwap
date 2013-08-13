@@ -40,7 +40,8 @@
 %% API
 %%===================================================================
 start_link(Port, Options) ->
-    gen_server:start_link({local, ?SERVER}, ?MODULE, [self(), Port, Options], ?SERVER_OPTS).
+    gen_server:start_link({local, ?SERVER}, ?MODULE, [self(), Port, Options], 
+                          [{debug, [{log_to_file, "/tmp/capwap_udp_trace.log"}]}]).
 
 %%===================================================================
 %% Transport Module Callbacks
