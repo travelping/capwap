@@ -762,9 +762,9 @@ send_request(Header, MsgType, ReqElements,
 		   },
     bump_seqno(State1).
 
-%resend_request(StateName, State = #state{retransmit_counter = 0}) ->
-%    lager:debug("Finial Timeout in ~w, STOPPING~n", [StateName]),
-%    {stop, normal, State};
+resend_request(StateName, State = #state{retransmit_counter = 0}) ->
+    lager:debug("Finial Timeout in ~w, STOPPING~n", [StateName]),
+    {stop, normal, State};
 resend_request(StateName,
 	       State = #state{socket = Socket,
 			      last_request = {_, BinMsg},
