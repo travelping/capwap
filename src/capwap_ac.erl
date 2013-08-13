@@ -124,6 +124,7 @@ new_station(WTP, BSS, SA) ->
 %% @end
 %%--------------------------------------------------------------------
 init([Peer]) ->
+    process_flag(trap_exit, true),
     capwap_wtp_reg:register(Peer),
     {ok, listen, #state{peer = Peer}, 5000}.
 
@@ -562,8 +563,6 @@ handle_info(Info, StateName, State) ->
 terminate(Reason, StateName, #state{peer_data = PeerId, event_log=EventLog, session=Session,
                                     flow_switch = FlowSwitch, socket = Socket}=State) ->
     error_logger:info_msg("AC session terminating in state ~p with state ~p with reason ~p~n", [StateName, State, Reason]),
-    % FIXME: why does lager crash at this point?
-    % lager:debug("CAPWAP WTP Session ~p terminating in state ~p with reason ~p", [PeerId, StateName, Reason]),
     case StateName of
         run ->
             FlowSwitch ! {wtp_down, PeerId},
