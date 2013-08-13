@@ -185,7 +185,7 @@ capwap_socket(SslSocketId) ->
 -record(capwap_socket, {id, type, peer, owner, mode, queue}).
 
 init([Owner, Port, Options0]) ->
-    process_flag(trap_exit, true),
+    %process_flag(trap_exit, true),
     Options = proplists:expand([{binary, [{mode, binary}]},
 				{list, [{mode, list}]}], Options0),
     Opts0 = lists:keystore(active, 1, Options, {active, true}),
