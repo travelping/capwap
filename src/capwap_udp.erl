@@ -212,7 +212,7 @@ init([Owner, Port, Options0]) ->
 %% The return value is ignored.
 %%--------------------------------------------------------------------
 terminate(Reason, State) ->
-    error_logger:info_msg("Terminating process with reason ~p : ~p~n", [Reason, State]),
+    error_logger:info_msg("Terminating UDP process with reason ~p : ~p~n", [Reason, State]),
     gen_udp:close(State#state.socket),
     ok.
 
@@ -266,6 +266,7 @@ handle_call({controlling_process, undefined, _}, _From, State) ->
     {reply, {error, not_owner}, State};
 
 handle_call({close, undefined, _Args}, _From, State0 = #state{socket = Socket}) ->
+    lager:info("Closing socket, requested from ~p", [_From]),
     Reply = gen_udp:close(Socket),
     State = reply_accept(?ECLOSED, State0),
     {reply, Reply, State#state{state = closed}};
@@ -281,6 +282,7 @@ handle_call({_, undefined, _Args}, _From, State) ->
 %% ---------------------------------------------------------------------------
 
 handle_call({close, CSocketId, Args}, From, State) ->
+    lager:info("Closing socket, requested from ~p", [From]),
     with_socket(CSocketId, Args, From, ok, fun socket_close/4, State);
 
 handle_call({shutdown, CSocketId, How}, From, State) ->
