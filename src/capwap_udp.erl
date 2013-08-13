@@ -188,8 +188,7 @@ init([Owner, Port, Options0]) ->
     process_flag(trap_exit, true),
     Options = proplists:expand([{binary, [{mode, binary}]},
 				{list, [{mode, list}]}], Options0),
-    Opts1 = lists:keystore(recbuf, 1, Options, {recbuf, 20*1024}),
-    Opts0 = lists:keystore(active, 1, Opts1, {active, true}),
+    Opts0 = lists:keystore(active, 1, Options, {active, true}),
     Opts = lists:keystore(mode, 1, Opts0, {mode, binary}),
     case open_socket(Port, Opts) of
         {ok, Socket} ->
