@@ -553,7 +553,7 @@ terminate(Reason, StateName, #state{peer_data = PeerId, event_log=EventLog, sess
     %ctld_session:stop(Session, []),
     %ctld_session:terminate(Session),
     %socket_close(Socket),
-    %stop_trace(EventLog),
+    stop_trace(EventLog),
     ok.
 
 %%--------------------------------------------------------------------
@@ -846,7 +846,7 @@ socket_send({dtls, Socket}, Data) ->
 stop_trace(undefined) ->
     ok;
 stop_trace(Trace) ->
-    lager:stop_trace(Trace).
+    ok = lager:stop_trace(Trace).
 
 socket_close({udp, Socket}) ->
     capwap_udp:close(Socket);
