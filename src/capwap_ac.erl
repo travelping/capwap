@@ -188,7 +188,7 @@ listen({accept, dtls, Socket}, State) ->
             next_state(idle, State1);
         Other ->
             lager:error("ssl_accept failed: ~p~n", [Other]),
-            {stop, normal, State}
+            {stop, normal, State#state{session=Session}}
     end;
 
 listen(timeout, State) ->
