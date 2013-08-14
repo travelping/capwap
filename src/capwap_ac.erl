@@ -183,8 +183,8 @@ listen({accept, dtls, Socket}, State) ->
             EventLogPath = filename:join([EventLogBasePath, ["events-", erlang:binary_to_list(CommonName), ".log"]]),
             lager:info("EventLogP: ~w", [EventLogPath]),
 
-            {ok, EventLog} = lager:trace_file(EventLogPath, [{class, wtp_statistics}], debug),
-            State1 = State#state{event_log=EventLog, socket = {dtls, SslSocket}, session = Session, id = CommonName},
+            %{ok, EventLog} = lager:trace_file(EventLogPath, [{class, wtp_statistics}], debug),
+            State1 = State#state{event_log=undefined, socket = {dtls, SslSocket}, session = Session, id = CommonName},
             %% TODO: find old connection instance, take over their StationState and stop them
             next_state(idle, State1);
         Other ->
