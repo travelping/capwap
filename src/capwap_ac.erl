@@ -551,9 +551,9 @@ terminate(Reason, StateName, #state{peer_data = PeerId, event_log=EventLog, sess
             ok
     end,
     %ctld_session:stop(Session, []),
-    ctld_session:terminate(Session),
+    %ctld_session:terminate(Session),
     %socket_close(Socket),
-    stop_trace(EventLog),
+    %stop_trace(EventLog),
     ok.
 
 %%--------------------------------------------------------------------
