@@ -494,8 +494,7 @@ handle_sync_event({take_over, NewWtp}, _From, _StateName, State) ->
     lager:debug("take_over: old: ~p, new: ~p", [self(), NewWtp]),
     capwap_wtp_reg:unregister(),
     Reply = ok,
-    %{stop, normal, Reply, State};
-    reply(Reply, _StateName, State);
+    {stop, normal, Reply, State};
 handle_sync_event(_Event, _From, StateName, State) ->
     Reply = ok,
     reply(Reply, StateName, State).
@@ -545,14 +544,14 @@ terminate(Reason, StateName, #state{peer_data = PeerId, event_log=EventLog, sess
     error_logger:info_msg("AC session terminating in state ~p with state ~p with reason ~p~n", [StateName, State, Reason]),
     case StateName of
         run ->
-            %FlowSwitch ! {wtp_down, PeerId},
+            FlowSwitch ! {wtp_down, PeerId},
             ok;
         _ ->
             ok
     end,
     %ctld_session:stop(Session, []),
-    %ctld_session:terminate(Session),
-    %socket_close(Socket),
+    ctld_session:terminate(Session),
+    socket_close(Socket),
     stop_trace(EventLog),
     ok.
 
@@ -765,7 +764,7 @@ send_request(Header, MsgType, ReqElements,
     bump_seqno(State1).
 
 resend_request(StateName, State = #state{retransmit_counter = 0}) ->
-    lager:debug("Finial Timeout in ~w, STOPPING~n", [StateName]),
+    lager:debug("Final Timeout in ~w, STOPPING~n", [StateName]),
     {stop, normal, State};
 resend_request(StateName,
 	       State = #state{socket = Socket,
