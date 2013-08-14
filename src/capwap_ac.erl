@@ -21,6 +21,7 @@
 
 %% TODO: convert constants into configuration values
 -define(IDLE_TIMEOUT, 30 * 1000).
+-define(SSL_ACCEPT_TIMEOUT, 30 * 1000).
 -define(RetransmitInterval, 3 * 1000).
 -define(MaxRetransmit, 5).
 
@@ -152,7 +153,7 @@ listen({accept, dtls, Socket}, State) ->
     lager:info("ssl_accept on: ~p~n", [Socket]),
 
     {ok, Session} = start_session(Socket, State),
-    case ssl:ssl_accept(Socket, mk_ssl_opts(Session)) of
+    case ssl:ssl_accept(Socket, mk_ssl_opts(Session), ?SSL_ACCEPT_TIMEOUT) of
         {ok, SslSocket} ->
             lager:info("ssl_accept: ~p~n", [SslSocket]),
             ssl:setopts(SslSocket, [{active, true}, {mode, binary}]),
