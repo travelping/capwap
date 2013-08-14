@@ -91,6 +91,7 @@ controlling_process(Socket, Pid) ->
     call(Socket, controlling_process, {self(), Pid}).
 
 close(Socket) when is_port(Socket) ->
+    lager:debug("Closing socket ~p", [Socket]),
     gen_udp:close(Socket);
 close(Socket) ->
     call(Socket, close, undefined).
@@ -170,9 +171,9 @@ call({Socket, SslSocket}, Request, Args, Timeout) when is_pid(Socket) ->
 
 call_socket(Socket, Request, Timeout) ->
     try
-	gen_server:call(Socket, Request, Timeout)
+        gen_server:call(Socket, Request, Timeout)
     catch
-	exit:{noproc,_} -> ?ECLOSED
+        exit:{noproc,_} -> ?ECLOSED
     end.
 
 capwap_socket(SslSocketId) ->
@@ -273,9 +274,11 @@ handle_call({close, undefined, _Args}, _From, State0 = #state{socket = Socket}) 
     {reply, Reply, State#state{state = closed}};
 
 handle_call({_, undefined, _Args}, _From, State = #state{state = closed}) ->
+    lager:debug("Socket already closed", []),
     {reply, ?ECLOSED, State};
 
 handle_call({_, undefined, _Args}, _From, State) ->
+    lager:debug("Socket not connected", []),
     {reply, ?ENOTCONN, State};
 
 %% ---------------------------------------------------------------------------
