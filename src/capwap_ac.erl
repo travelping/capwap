@@ -545,7 +545,7 @@ terminate(Reason, StateName, #state{peer_data = PeerId, event_log=EventLog, sess
     error_logger:info_msg("AC session terminating in state ~p with state ~p with reason ~p~n", [StateName, State, Reason]),
     case StateName of
         run ->
-            FlowSwitch ! {wtp_down, PeerId},
+            %FlowSwitch ! {wtp_down, PeerId},
             ok;
         _ ->
             ok
