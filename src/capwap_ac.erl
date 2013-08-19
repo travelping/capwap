@@ -183,8 +183,9 @@ listen({accept, dtls, Socket}, State) ->
             EventLogPath = filename:join([EventLogBasePath, ["events-", erlang:binary_to_list(CommonName), ".log"]]),
             lager:info("EventLogP: ~w", [EventLogPath]),
 
-            %{ok, EventLog} = lager:trace_file(EventLogPath, [{class, wtp_statistics}], debug),
-            State1 = State#state{event_log=undefined, socket = {dtls, SslSocket}, session = Session, id = CommonName},
+            ok = filelib:ensure_dir(EventLogPath),
+            {ok, EventLog} = file:open(EventLogPath, [append]),
+            State1 = State#state{event_log=EventLog, socket = {dtls, SslSocket}, session = Session, id = CommonName},
             %% TODO: find old connection instance, take over their StationState and stop them
             next_state(idle, State1);
         Other ->
@@ -422,7 +423,8 @@ run({wtp_event_request, Seq, Elements, #capwap_header{radio_id = RadioId, wb_id 
                                    fun({Key, Value}, {FStr, FVars}) ->
                                            {FStr ++ "~p(~p), ", FVars ++ [Key, Value]}
                                    end, {"~p@~p: ", [State#state.id, Now]}, Elements),
-    lager:debug([{class, wtp_statistics}], FormatString, FormatVars),
+    EventData = io_lib:format(FormatString ++ "~n", FormatVars),
+    ok = file:write(State#state.event_log, EventData),
     next_state(run, State1);
 
 run(Event, State) ->
@@ -845,7 +847,7 @@ socket_send({dtls, Socket}, Data) ->
 stop_trace(undefined) ->
     ok;
 stop_trace(Trace) ->
-    ok = lager:stop_trace(Trace).
+    ok = file:close(Trace).
 
 socket_close({udp, Socket}) ->
     capwap_udp:close(Socket);
