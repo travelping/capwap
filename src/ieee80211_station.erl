@@ -527,7 +527,7 @@ frame_type(_) ->
     {0, 0}.
 
 format_mac(<<A:8, B:8, C:8, D:8, E:8, F:8>>) ->
-    flat_format("~2.16.0B:~2.16.0B:~2.16.0B:~2.16.0B:~2.16.0B:~2.16.0B", [A, B, C, D, E, F]);
+    flat_format("~2.16.0b:~2.16.0b:~2.16.0b:~2.16.0b:~2.16.0b:~2.16.0b", [A, B, C, D, E, F]);
 format_mac(MAC) ->
     flat_format("~w", MAC).
 
