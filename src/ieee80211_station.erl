@@ -179,7 +179,7 @@ init_assoc(Event = {FrameType, _DA, _SA, BSS, 0, 0, _Frame}, _From,
     %%   from the AC, the WTP MUST send a Disassociation frame to the station.
 
     {ok, {_, ProviderOpts}} = application:get_env(ctld_provider),
-    ctld_station_session:association(MAC, WtpIp, ProviderOpts),
+    ctld_station_session:association(format_mac(MAC), WtpIp, ProviderOpts),
 
     reply({add, BSS, MAC, MacMode, TunnelMode}, connected, State);
 
@@ -525,3 +525,11 @@ frame_type('QoS CF-Ack + CF-Poll')        -> {2#10, 2#1111};
 
 frame_type(_) ->
     {0, 0}.
+
+format_mac(<<A:8, B:8, C:8, D:8, E:8, F:8>>) ->
+    flat_format("~2.16.0B:~2.16.0B:~2.16.0B:~2.16.0B:~2.16.0B:~2.16.0B", [A, B, C, D, E, F]);
+format_mac(MAC) ->
+    flat_format("~w", MAC).
+
+flat_format(Format, Data) ->
+    lists:flatten(io_lib:format(Format, Data)).
