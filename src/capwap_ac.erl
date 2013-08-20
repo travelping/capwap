@@ -298,17 +298,17 @@ data_check({Msg, Seq, Elements, Header}, State) ->
     next_state(data_check, State).
 
 run({new_station, BSS, SA}, _From, State = #state{peer_data = PeerId, flow_switch = FlowSwitch,
-						  mac_mode = MacMode, tunnel_mode = TunnelMode}) ->
-    lager:warning("in RUN got new_station: ~p~n", [SA]),
-
-    lager:debug("search Station ~p~n", [{self(), SA}]),
+                                                  mac_mode = MacMode, tunnel_mode = TunnelMode}) ->
+    lager:info("in RUN got new_station: ~p", [SA]),
+    
+    lager:debug("search for station ~p", [{self(), SA}]),
     %% we have to repeat the search again to avoid a race
     Reply = case capwap_station_reg:lookup(self(), SA) of
 		not_found ->
-		    lager:debug("not found~n"),
+		    lager:debug("station not found: ~p", [{self(), SA}]),
 		    capwap_station_sup:new_station(self(), FlowSwitch, PeerId, BSS, SA, MacMode, TunnelMode);
 		Ok = {ok, Station0} ->
-		    lager:debug("found as ~p~n", [Station0]),
+		    lager:debug("station ~p found as ~p", [{self(), SA}, Station0]),
 		    Ok
 	    end,
     reply(Reply, run, State);
