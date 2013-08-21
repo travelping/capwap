@@ -319,10 +319,7 @@ run({keep_alive, _FlowSwitch, Sw, _PeerId, Header, PayLoad}, _From, State) ->
 
 run(timeout, State) ->
     lager:info("IdleTimeout in Run~n"),
-    Header = #capwap_header{radio_id = 0, wb_id = 1, flags = []},
-    Elements = [],
-    State1 = send_request(Header, echo_request, Elements, State),
-    next_state(run, State1);
+    next_state(run, State);
 
 run({echo_request, Seq, Elements, #capwap_header{
 			  radio_id = RadioId, wb_id = WBID, flags = Flags}},
