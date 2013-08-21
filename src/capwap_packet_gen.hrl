@@ -1547,4 +1547,10 @@ encode_element(#tp_ieee_802_11_wlan_hold_time{
     encode_vendor_element({18681,4}, <<M_radio_id:8,
                                        M_wlan_id:8,
                                        0:16,
-                                       M_hold_time:32>>).
+                                       M_hold_time:32>>);
+
+encode_element({Tag = {_, _}, Value}) ->
+    encode_vendor_element(Tag, Value);
+
+encode_element({Tag, Value}) when is_integer(Tag) ->
+    encode_element(Tag, Value).

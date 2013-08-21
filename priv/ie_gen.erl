@@ -607,9 +607,12 @@ main(_) ->
     Funs = string:join([write_decoder("decode_element", X) || X <- ies()] ++ [CatchAnyDecoder], ";\n\n"),
     VendorFuns = string:join([write_decoder("decode_vendor_element", X) || X <- vendor_ies()] ++ [CatchAnyVendorDecoder], ";\n\n"),
 
+    CatchAnyVendorEncoder = "encode_element({Tag = {_, _}, Value}) ->\n    encode_vendor_element(Tag, Value)",
+    CatchAnyEncoder = "encode_element({Tag, Value}) when is_integer(Tag) ->\n    encode_element(Tag, Value)",
     EncFuns = string:join([write_encoder("encode_element", X) || X <- ies(), element(1, X) /= 37] ++
-			      [write_encoder("encode_vendor_element", X) || X <- vendor_ies()], ";\n\n"),
-
+                          [write_encoder("encode_vendor_element", X) || X <- vendor_ies()]
+                          ++ [CatchAnyVendorEncoder, CatchAnyEncoder] , ";\n\n"),
+ 
     ErlDecls = io_lib:format("%% This file is auto-generated. DO NOT EDIT~n~n~s~n~s~n~s.~n~n~s.~n~n~s.~n",
 			     [MTypes, Enums, Funs, VendorFuns, EncFuns]),
     io:format(ErlDecls),
