@@ -245,13 +245,19 @@ connected({'802.3', Data}, _From,
     reply({flow, BSS, MAC, MacMode, TunnelMode}, connected, State);
 
 connected(Event = {'Deauthentication', _DA, _SA, BSS, 0, 0, _Frame}, _From,
-	   State = #state{radio_mac = BSS, mac = MAC, mac_mode = MacMode, tunnel_mode = TunnelMode}) ->
+	   State = #state{radio_mac = BSS, mac = MAC, mac_mode = MacMode, 
+                      peer_data = {WtpIp, _}, tunnel_mode = TunnelMode}) ->
     lager:debug("in CONNECTED got Deauthentication: ~p", [Event]),
+    {ok, {_, ProviderOpts}} = application:get_env(ctld_provider),
+    ctld_station_session:disassociation(format_mac(MAC), WtpIp, ProviderOpts),
     reply({del, BSS, MAC, MacMode, TunnelMode}, shutdown, State);
 
 connected(Event = {'Disassociation', _DA, _SA, BSS, 0, 0, _Frame}, _From,
-	   State = #state{radio_mac = BSS, mac = MAC, mac_mode = MacMode, tunnel_mode = TunnelMode}) ->
+	   State = #state{radio_mac = BSS, mac = MAC, mac_mode = MacMode, 
+                      peer_data = {WtpIp, _}, tunnel_mode = TunnelMode}) ->
     lager:debug("in CONNECTED got Disassociation: ~p", [Event]),
+    {ok, {_, ProviderOpts}} = application:get_env(ctld_provider),
+    ctld_station_session:disassociation(format_mac(MAC), WtpIp, ProviderOpts),
     reply({del, BSS, MAC, MacMode, TunnelMode}, init_assoc, State);
 
 connected(Event, _From, State) ->
@@ -397,13 +403,13 @@ ieee80211_request(AC, FrameType, DA, SA, BSS, FromDS, ToDS, Frame)
 
     lager:debug("search Station ~p", [{AC, SA}]),
     case capwap_station_reg:lookup(AC, SA) of
-	not_found ->
-	    lager:debug("not found"),
-	    {ok, ignore};
+        not_found ->
+            lager:debug("not found"),
+            {ok, ignore};
 
-	{ok, Station} ->
-	    lager:debug("found as ~p", [Station]),
-	    gen_fsm:sync_send_event(Station, {FrameType, DA, SA, BSS, FromDS, ToDS, Frame})
+        {ok, Station} ->
+            lager:debug("found as ~p", [Station]),
+            gen_fsm:sync_send_event(Station, {FrameType, DA, SA, BSS, FromDS, ToDS, Frame})
     end;
 
 ieee80211_request(_AC, FrameType, _DA, _SA, _BSS, _FromDS, _ToDS, _Frame)
