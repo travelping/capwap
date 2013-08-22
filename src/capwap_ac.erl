@@ -417,8 +417,11 @@ run({wtp_event_request, Seq, Elements, #capwap_header{radio_id = RadioId, wb_id 
     State1 = send_response(Header, wtp_event_response, Seq, [], State),
     Now = calendar:now_to_universal_time(erlang:now()),
     {FormatString, FormatVars} = lists:foldl(
-                                   fun({Key, Value}, {FStr, FVars}) ->
-                                           {FStr ++ "~p(~p), ", FVars ++ [Key, Value]}
+                                   fun
+                                       ({Key, Value}, {FStr, FVars}) ->
+                                           {FStr ++ "~p(~p), ", FVars ++ [Key, Value]};
+                                       (Record, {FStr, FVars}) ->
+                                           {FStr ++ "~p, ", FVars ++ [Record]}
                                    end, {"~p@~p: ", [State#state.id, Now]}, Elements),
     EventData = io_lib:format(FormatString ++ "~n", FormatVars),
     ok = file:write(State#state.event_log, EventData),
