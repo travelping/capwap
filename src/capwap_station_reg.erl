@@ -4,7 +4,7 @@
 
 %% API
 -export([start_link/0]).
--export([register/2, lookup/2, register/1, lookup/1]).
+-export([register/2, unregister/2, lookup/2, register/1, unregister/1, lookup/1]).
 
 %% regine_server callbacks
 -export([init/1, handle_register/4, handle_unregister/3, handle_pid_remove/3, handle_death/3, terminate/2]).
@@ -26,6 +26,12 @@ register(ClientMAC) ->
 
 register(AC, Station) ->
     regine_server:register(?SERVER, self(), {AC, Station}, undefined).
+
+unregister(ClientMAC) ->
+    regine_server:unregister(?SERVER, ClientMAC, undefined).
+
+unregister(AC, Station) ->
+    regine_server:unregister(?SERVER, {AC, Station}, undefined).
 
 lookup(ClientMAC) ->
     case ets:lookup(?SERVER, ClientMAC) of

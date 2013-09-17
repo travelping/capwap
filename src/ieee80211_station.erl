@@ -4,7 +4,7 @@
 
 %% API
 -export([start_link/7, handle_ieee80211_frame/2, handle_ieee802_3_frame/2,
-         set_out_action/3, get_out_action/2]).
+         set_out_action/3, get_out_action/2, take_over/7]).
 
 %% gen_fsm callbacks
 -export([init/1,
@@ -28,6 +28,7 @@
 
 -record(state, {
           ac,
+          ac_monitor,
           flow_switch,
           peer_data,
           radio_mac,
@@ -100,6 +101,8 @@ get_out_action(Sw, ClientMAC) ->
 	    not_found
     end.
 
+take_over(Pid, AC, FlowSwitch, PeerId, RadioMAC, MacMode, TunnelMode) ->
+    gen_fsm:sync_send_event(Pid, {take_over, AC, FlowSwitch, PeerId, RadioMAC, MacMode, TunnelMode}).
 
 %%%===================================================================
 %%% gen_fsm callbacks
@@ -108,15 +111,10 @@ init([AC, FlowSwitch, PeerId, RadioMAC, ClientMAC, MacMode, TunnelMode]) ->
     lager:debug("Register station ~p as ~w", [{AC, RadioMAC, ClientMAC}, self()]),
     capwap_station_reg:register(ClientMAC),
     capwap_station_reg:register(AC, ClientMAC),
-    erlang:monitor(process, AC),
-    State = #state{ac = AC, flow_switch = FlowSwitch, peer_data = PeerId,
+    ACMonitor = erlang:monitor(process, AC),
+    State = #state{ac = AC, ac_monitor = ACMonitor, flow_switch = FlowSwitch, peer_data = PeerId,
                    radio_mac = RadioMAC, mac = ClientMAC, mac_mode = MacMode, tunnel_mode = TunnelMode},
-    case MacMode of
-        local_mac ->
-            {ok, init_assoc, State};
-        split_mac ->
-            {ok, init_auth, State}
-    end.
+    {ok, initial_state(MacMode), State}.
 
 %%
 %% State transitions follow IEEE 802.11-2012, Section 10.3.2
@@ -143,6 +141,11 @@ init_auth(Event = {'Authentication', DA, SA, BSS, 0, 0, Frame}, _From, State) ->
 	    Reply = gen_auth_fail(DA, SA, BSS, Frame),
 	    reply({reply, Reply}, init_auth, State)
     end;
+
+init_auth(Event, From, State)
+  when element(1, Event) == take_over ->
+    lager:debug("in INIT_AUTH got TAKE-OVER: ~p", [Event]),
+    handle_take_over(Event, From, State);
 
 init_auth(Event, _From, State) ->
     lager:warning("in INIT_AUTH got unexpexted: ~p", [Event]),
@@ -212,6 +215,11 @@ init_assoc(Event = {FrameType, DA, SA, BSS, 0, 0, _Frame}, _From, State)
 	      Frame/binary>>,
     reply({reply, Reply}, init_start, State);
 
+init_assoc(Event, From, State)
+  when element(1, Event) == take_over ->
+    lager:debug("in INIT_ASSOC got TAKE-OVER: ~p", [Event]),
+    handle_take_over(Event, From, State);
+
 init_assoc(Event, _From, State) ->
     lager:warning("in INIT_ASSOC got unexpexted: ~p", [Event]),
     reply({error, unexpected}, init_assoc, State).
@@ -227,6 +235,11 @@ init_start(Event = {'Null', _DA, _SA, BSS, 0, 1, <<>>}, _From,
 	   State = #state{radio_mac = BSS, mac = MAC, mac_mode = MacMode, tunnel_mode = TunnelMode}) ->
     lager:debug("in INIT_START got Null: ~p", [Event]),
     reply({add, BSS, MAC, MacMode, TunnelMode}, connected, State);
+
+init_start(Event, From, State)
+  when element(1, Event) == take_over ->
+    lager:debug("in INIT_START got TAKE-OVER: ~p", [Event]),
+    handle_take_over(Event, From, State);
 
 init_start(Event, _From, State) ->
     lager:warning("in INIT_START got unexpexted: ~p", [Event]),
@@ -259,6 +272,13 @@ connected(Event = {'Disassociation', _DA, _SA, BSS, 0, 0, _Frame}, _From,
     {ok, {_, ProviderOpts}} = application:get_env(ctld_provider),
     ctld_station_session:disassociation(format_mac(MAC), WtpIp, ProviderOpts),
     reply({del, BSS, MAC, MacMode, TunnelMode}, init_assoc, State);
+
+connected(Event, From, State = #state{mac = MAC, peer_data = {WtpIp, _}})
+  when element(1, Event) == take_over ->
+    lager:debug("in CONNECTED got TAKE-OVER: ~p", [Event]),
+    {ok, {_, ProviderOpts}} = application:get_env(ctld_provider),
+    ctld_station_session:disassociation(format_mac(MAC), WtpIp, ProviderOpts),
+    handle_take_over(Event, From, State);
 
 connected(Event, _From, State) ->
     lager:warning("in CONNECTED got unexpexted: ~p", [Event]),
@@ -298,8 +318,9 @@ handle_sync_event(_Event, _From, StateName, State) ->
     Reply = ok,
     reply(Reply, StateName, State).
 
-handle_info({'DOWN', _MonitorRef, process, AC, _Info}, StateName,
-            State = #state{ac = AC, flow_switch = FlowSwitch, peer_data = PeerId,
+handle_info({'DOWN', ACMonitor, process, AC, _Info}, StateName,
+            State = #state{ac = AC, ac_monitor = ACMonitor,
+			   flow_switch = FlowSwitch, peer_data = PeerId,
                            radio_mac = BSS, mac = MAC,
                            mac_mode = MacMode, tunnel_mode = TunnelMode}) ->
     lager:warning("AC died ~w", [AC]),
@@ -420,6 +441,32 @@ ieee80211_request(_AC, FrameType, DA, SA, BSS, FromDS, ToDS, Frame) ->
     lager:warning("unhandled IEEE 802.11 Frame: ~p", [{FrameType, DA, SA, BSS, FromDS, ToDS, Frame}]),
     {error, unhandled}.
 
+handle_take_over({take_over, AC, FlowSwitch, PeerId, RadioMAC, MacMode, TunnelMode}, _From,
+		 State0 = #state{ac = OldAC, ac_monitor = OldACMonitor,
+				 flow_switch = _OldFlowSwitch,
+				 radio_mac = OldRadioMAC, mac = ClientMAC,
+				 mac_mode = _OldMacMode, tunnel_mode = _OldTunnelMode}) ->
+    %% NOTE: we could build a real WIFI switch when we could build OF rules that sends
+    %%       the traffic to all WTP's this client is still valid on!
+    %%
+    %%       with the current MacMode, the new flow entry will simply overwrite the old one,
+    %%       so no further action is required here, but other Mac/TunnelModes might
+
+    lager:debug("Takeover station ~p as ~w", [{OldAC, OldRadioMAC, ClientMAC}, self()]),
+    lager:debug("Register station ~p as ~w", [{AC, RadioMAC, ClientMAC}, self()]),
+
+    capwap_station_reg:unregister(OldAC, ClientMAC),
+    capwap_station_reg:register(AC, ClientMAC),
+
+    erlang:demonitor(OldACMonitor, [flush]),
+    ACMonitor = erlang:monitor(process, AC),
+
+    State = State0#state{ac = AC, ac_monitor = ACMonitor,
+			 flow_switch = FlowSwitch, peer_data = PeerId,
+			 radio_mac = RadioMAC, mac_mode = MacMode,
+			 tunnel_mode = TunnelMode},
+    reply({ok, self()}, initial_state(MacMode), State).
+
 %% partially en/decode Authentication Frames
 decode_auth_frame(<<Algo:16/little-integer, SeqNo:16/little-integer,
 		    Status:16/little-integer, Params/binary>>) ->
@@ -539,3 +586,8 @@ format_mac(MAC) ->
 
 flat_format(Format, Data) ->
     lists:flatten(io_lib:format(Format, Data)).
+
+initial_state(local_mac) ->
+    init_assoc;
+initial_state(split_mac) ->
+    init_auth.
