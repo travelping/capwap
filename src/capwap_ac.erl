@@ -41,6 +41,7 @@
 	  retransmit_timer,
 	  retransmit_counter,
 	  seqno = 0,
+	  version,
 	  event_log
 }).
 
@@ -204,10 +205,11 @@ idle(timeout, State) ->
     lager:info("timeout in IDLE -> stop~n"),
     {stop, normal, State};
 
-idle({discovery_request, Seq, _Elements, #capwap_header{
+idle({discovery_request, Seq, Elements, #capwap_header{
 				radio_id = RadioId, wb_id = WBID, flags = Flags}},
      State) ->
-    RespElements = ac_info(),
+    lager:debug("discover_request: ~p~n", [[lager:pr(E, ?MODULE) || E <- Elements]]),
+    RespElements = ac_info(Elements),
     Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
     State1 = send_response(Header, discovery_response, Seq, RespElements, State),
     next_state(idle, State1);
@@ -215,16 +217,17 @@ idle({discovery_request, Seq, _Elements, #capwap_header{
 idle({join_request, Seq, Elements, #capwap_header{
 			   radio_id = RadioId, wb_id = WBID, flags = Flags}},
      State0 = #state{peer = {Address, _}}) ->
-    lager:info("Join-Request: ~p~n", [Elements]),
+    lager:info("Join-Request: ~p~n", [[lager:pr(E, ?MODULE) || E <- Elements]]),
 
+    Version = get_wtp_version(Elements),
     SessionId = proplists:get_value(session_id, Elements),
     capwap_wtp_reg:register_sessionid(Address, SessionId),
 
     MacTypes = ie(wtp_mac_type, Elements),
     TunnelModes = ie(wtp_frame_tunnel_mode, Elements),
-    State1 = State0#state{mac_types = MacTypes, tunnel_modes = TunnelModes},
+    State1 = State0#state{mac_types = MacTypes, tunnel_modes = TunnelModes, version = Version},
 
-    RespElements = ac_info() ++ [#result_code{result_code = 0}],
+    RespElements = ac_info_version(Version) ++ [#result_code{result_code = 0}],
     Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
     State = send_response(Header, join_response, Seq, RespElements, State1),
     next_state(join, State);
@@ -722,17 +725,61 @@ handle_capwap_packet(Packet, StateName, State = #state{
 	    {next_state, StateName, State, ?IDLE_TIMEOUT}
     end.
 
-ac_info() ->
+map_aalwp({Priority, Name}) when is_binary(Name) ->
+    #tp_ac_address_with_priority{
+	   priority = Priority,
+	   type = 0,
+	   value = Name
+	  };
+map_aalwp({Priority, IPv4 = {_,_,_,_}}) ->
+    #tp_ac_address_with_priority{
+	   priority = Priority,
+	   type = 1,
+	   value = tuple_to_ip(IPv4)
+	  };
+map_aalwp({Priority, IPv6 = {_,_,_,_,_,_,_,_}}) ->
+    #tp_ac_address_with_priority{
+	   priority = Priority,
+	   type = 2,
+	   value = tuple_to_ip(IPv6)
+	  }.
+
+s2i(V) ->
+    case string:to_integer(V) of
+	{Int, []} -> Int;
+	_         -> V
+    end.
+
+split_version(Value) ->
+    [s2i(V) || V <- string:tokens(binary_to_list(Value), ".-")].
+
+get_wtp_version(Elements) ->
+    case lists:keyfind(wtp_descriptor, 1, Elements) of
+	#wtp_descriptor{sub_elements=SubElements} ->
+	    case lists:keyfind({18681,0}, 1, SubElements) of
+		{_, Value} ->
+		    [Major, Minor, Patch|AddOn] = split_version(Value),
+		    {Major * 65536 + Minor * 256 + Patch, AddOn};
+		_ ->
+		    {0, undefined}
+	    end;
+	_ ->
+	    {0, undefined}
+    end.
+
+ac_info(Elements) ->
+    Version = get_wtp_version(Elements),
+    lager:debug("ac_info version: ~p", [Version]),
+    ac_info_version(Version).
+
+ac_info_version({Version, _AddOn}) ->
     App = capwap,
     Versions = application:get_env(App, versions, []),
-    AcList = case application:get_env(App, ac_ipv4_list, []) of
-                 [] ->
-                     [];
-                 AcIps when is_list(AcIps) ->
-                     [#ac_ipv4_list{ip_address=AcIps}];
-                 _ ->
-                     []
-             end,
+    AcList = if Version > 16#010104 ->
+		     [map_aalwp(I) || I <- application:get_env(App, ac_address_list_with_prio, [])];
+
+		true -> []
+	     end,
     [#ac_descriptor{stations    = 0,
 		    limit       = application:get_env(App, limit, 200),
 		    active_wtps = 0,
@@ -842,9 +889,10 @@ process_ifopt([{addr,IP}|Rest], Acc) ->
 process_ifopt([_|Rest], Acc) ->
     process_ifopt(Rest, Acc).
 
-answer_discover(Seq, _Elements, #capwap_header{
+answer_discover(Seq, Elements, #capwap_header{
 		       radio_id = RadioId, wb_id = WBID, flags = Flags}) ->
-    RespElems = ac_info(),
+    lager:debug("discover_request: ~p~n", [[lager:pr(E, ?MODULE) || E <- Elements]]),
+    RespElems = ac_info(Elements),
     Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
     capwap_packet:encode(control, {Header, {discovery_response, Seq, RespElems}}).
 
@@ -1014,3 +1062,8 @@ select_tunnel_mode(Modes, local_mac) ->
     end;
 select_tunnel_mode(_Modes, split_mac) ->
     '802_11_tunnel'.
+
+tuple_to_ip({A, B, C, D}) ->
+    <<A:8, B:8, C:8, D:8>>;
+tuple_to_ip({A, B, C, D, E, F, G, H}) ->
+    <<A:16, B:16, C:16, D:16, E:16, F:16, G:16, H:16>>.

@@ -889,6 +889,13 @@ decode_vendor_element({18681,5}, <<M_data_channel_dead_interval:16/integer>>) ->
 decode_vendor_element({18681,6}, <<M_ac_join_timeout:16/integer>>) ->
     #tp_ac_join_timeout{ac_join_timeout = M_ac_join_timeout};
 
+decode_vendor_element({18681,7}, <<M_priority:8/integer,
+                                   M_type:8/integer,
+                                   M_value/binary>>) ->
+    #tp_ac_address_with_priority{priority = M_priority,
+                                 type = M_type,
+                                 value = M_value};
+
 decode_vendor_element(Tag, Value) ->
         {Tag, Value}.
 
@@ -1607,6 +1614,14 @@ encode_element(#tp_data_channel_dead_interval{
 encode_element(#tp_ac_join_timeout{
                     ac_join_timeout = M_ac_join_timeout}) ->
     encode_vendor_element({18681,6}, <<M_ac_join_timeout:16>>);
+
+encode_element(#tp_ac_address_with_priority{
+                    priority = M_priority,
+                    type = M_type,
+                    value = M_value}) ->
+    encode_vendor_element({18681,7}, <<M_priority:8,
+                                       M_type:8,
+                                       M_value/binary>>);
 
 encode_element({Tag = {Vendor, Type}, Value}) when is_integer(Vendor), is_integer(Type), is_binary(Value) ->
     encode_vendor_element(Tag, Value);

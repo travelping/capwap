@@ -34,5 +34,6 @@
         {discovery_interval, 20},
         {idle_timeout, 300}
         %% {ac_ipv4_list, [{92,43,52,4}]}
+        %% {ac_address_list_with_prio, [{1, {80,154,129,132}}]}
     ]}
 ]}.

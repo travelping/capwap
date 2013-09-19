@@ -485,3 +485,9 @@
         ac_join_timeout = 0
 }).
 
+-record(tp_ac_address_with_priority, {
+        priority = 0,
+        type = 0,
+        value = <<>>
+}).
+

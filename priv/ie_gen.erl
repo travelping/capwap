@@ -363,7 +363,11 @@ vendor_ies() ->
      {{18681, 5}, "TP Data Channel Dead Interval",
       [{"Data Channel Dead Interval", 16, integer}]},
      {{18681, 6}, "TP AC Join Timeout",
-      [{"AC Join Timeout", 16, integer}]}
+      [{"AC Join Timeout", 16, integer}]},
+     {{18681, 7}, "TP AC Address with Priority",
+      [{"Priority", 8, integer},
+       {"Type", 8, integer},
+       {"Value", 0, binary}]}
     ].
 
 msgs() ->
