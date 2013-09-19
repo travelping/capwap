@@ -439,17 +439,31 @@
         radio_type = []
 }).
 
+-record(tp_wtp_wwan_statistics_0_9, {
+        timestamp,
+        wwan_id = 0,
+        rat = 0,
+        rssi = 0,
+        lac,
+        cell_id
+}).
+
 -record(tp_wtp_wwan_statistics, {
         timestamp = 0,
         wwan_id = 0,
         rat = 0,
         rssi = 0,
+        creg = 0,
         lac = 0,
+        latency = 0,
+        mcc = 0,
+        mnc = 0,
         cell_id = 0
 }).
 
 -record(tp_wtp_timestamp, {
-        timestamp = 0
+        second = 0,
+        fraction = 0
 }).
 
 -record(tp_wtp_wwan_iccid, {
@@ -461,5 +475,13 @@
         radio_id = 0,
         wlan_id = 0,
         hold_time = 0
+}).
+
+-record(tp_data_channel_dead_interval, {
+        data_channel_dead_interval = 0
+}).
+
+-record(tp_ac_join_timeout, {
+        ac_join_timeout = 0
 }).
 

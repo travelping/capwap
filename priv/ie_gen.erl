@@ -330,25 +330,40 @@ ies() ->
     ].
 
 vendor_ies() ->
-    [{{18681, 1}, "TP WTP WWAN Statistics",
+    [{{18681, 1}, "TP WTP WWAN Statistics 0.9",
+      [{"Timestamp", 32, 'integer-little'},
+       {"WWAN Id", 8, integer},
+       {"RAT", 8, integer},
+       {"RSSi", 8, integer},
+       {"LAC", 16, 'integer-little'},
+       {'_', 16},
+       {"Cell Id", 32, 'integer-little'}]},
+     {{18681, 1}, "TP WTP WWAN Statistics",
       [{"Timestamp", 32, integer},
        {"WWAN Id", 8, integer},
        {"RAT", 8, integer},
        {"RSSi", 8, integer},
-       {'_', 8},
+       {"CREG", 8, integer},
        {"LAC", 16, integer},
+       {"Latency", 16, integer},
+       {"MCC", 8, integer},
+       {"MNC", 8, integer},
        {'_', 16},
        {"Cell Id", 32, integer}]},
      {{18681, 2}, "TP WTP Timestamp",
-      [{"Timestamp", 32, integer}]},
+      [{"Second", 32, integer},
+       {"Fraction", 32, integer}]},
      {{18681, 3}, "TP WTP WWAN ICCID",
       [{"WWAN Id", 8, integer},
        {"ICCID", 0, binary}]},
      {{18681, 4}, "TP IEEE 802.11 WLAN Hold Time",
       [{"Radio ID", 8, integer},
        {"WLAN ID", 8, integer},
-       {'_', 16},
-       {"Hold Time", 32, integer}]}
+       {"Hold Time", 16, integer}]},
+     {{18681, 5}, "TP Data Channel Dead Interval",
+      [{"Data Channel Dead Interval", 16, integer}]},
+     {{18681, 6}, "TP AC Join Timeout",
+      [{"AC Join Timeout", 16, integer}]}
     ].
 
 msgs() ->
@@ -423,7 +438,7 @@ gen_decoder_header_match({Name, Len, length_binary}) ->
 gen_decoder_header_match({Name, 0, Type}) ->
     [io_lib:format("M_~s/~w", [s2a(Name), Type])];
 gen_decoder_header_match({Name, Size, Type}) ->
-    [io_lib:format("M_~s:~w/~w", [s2a(Name), Size, Type])].
+    [io_lib:format("M_~s:~w/~s", [s2a(Name), Size, Type])].
 
 gen_decoder_record_assign({Value, _}) when is_integer(Value); is_atom(Value) ->
     [];
@@ -607,15 +622,14 @@ main(_) ->
     Funs = string:join([write_decoder("decode_element", X) || X <- ies()] ++ [CatchAnyDecoder], ";\n\n"),
     VendorFuns = string:join([write_decoder("decode_vendor_element", X) || X <- vendor_ies()] ++ [CatchAnyVendorDecoder], ";\n\n"),
 
-    CatchAnyVendorEncoder = "encode_element({Tag = {_, _}, Value}) ->\n    encode_vendor_element(Tag, Value)",
-    CatchAnyEncoder = "encode_element({Tag, Value}) when is_integer(Tag) ->\n    encode_element(Tag, Value)",
+    CatchAnyVendorEncoder = "encode_element({Tag = {Vendor, Type}, Value}) when is_integer(Vendor), is_integer(Type), is_binary(Value) ->\n    encode_vendor_element(Tag, Value)",
+    CatchAnyEncoder = "encode_element({Tag, Value}) when is_integer(Tag), is_binary(Value) ->\n    encode_element(Tag, Value)",
     EncFuns = string:join([write_encoder("encode_element", X) || X <- ies(), element(1, X) /= 37] ++
                           [write_encoder("encode_vendor_element", X) || X <- vendor_ies()]
                           ++ [CatchAnyVendorEncoder, CatchAnyEncoder] , ";\n\n"),
- 
+
     ErlDecls = io_lib:format("%% This file is auto-generated. DO NOT EDIT~n~n~s~n~s~n~s.~n~n~s.~n~n~s.~n",
 			     [MTypes, Enums, Funs, VendorFuns, EncFuns]),
     io:format(ErlDecls),
     file:write_file("include/capwap_packet_gen.hrl", HrlRecs),
     file:write_file("src/capwap_packet_gen.hrl", ErlDecls).
-

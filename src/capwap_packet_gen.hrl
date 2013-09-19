@@ -830,23 +830,46 @@ decode_element(1048, <<M_radio_id:8/integer,
 decode_element(Tag, Value) ->
         {Tag, Value}.
 
+decode_vendor_element({18681,1}, <<M_timestamp:32/integer-little,
+                                   M_wwan_id:8/integer,
+                                   M_rat:8/integer,
+                                   M_rssi:8/integer,
+                                   M_lac:16/integer-little,
+                                   _:16,
+                                   M_cell_id:32/integer-little>>) ->
+    #tp_wtp_wwan_statistics_0_9{timestamp = M_timestamp,
+                                wwan_id = M_wwan_id,
+                                rat = M_rat,
+                                rssi = M_rssi,
+                                lac = M_lac,
+                                cell_id = M_cell_id};
+
 decode_vendor_element({18681,1}, <<M_timestamp:32/integer,
                                    M_wwan_id:8/integer,
                                    M_rat:8/integer,
                                    M_rssi:8/integer,
-                                   _:8,
+                                   M_creg:8/integer,
                                    M_lac:16/integer,
+                                   M_latency:16/integer,
+                                   M_mcc:8/integer,
+                                   M_mnc:8/integer,
                                    _:16,
                                    M_cell_id:32/integer>>) ->
     #tp_wtp_wwan_statistics{timestamp = M_timestamp,
                             wwan_id = M_wwan_id,
                             rat = M_rat,
                             rssi = M_rssi,
+                            creg = M_creg,
                             lac = M_lac,
+                            latency = M_latency,
+                            mcc = M_mcc,
+                            mnc = M_mnc,
                             cell_id = M_cell_id};
 
-decode_vendor_element({18681,2}, <<M_timestamp:32/integer>>) ->
-    #tp_wtp_timestamp{timestamp = M_timestamp};
+decode_vendor_element({18681,2}, <<M_second:32/integer,
+                                   M_fraction:32/integer>>) ->
+    #tp_wtp_timestamp{second = M_second,
+                      fraction = M_fraction};
 
 decode_vendor_element({18681,3}, <<M_wwan_id:8/integer,
                                    M_iccid/binary>>) ->
@@ -855,11 +878,16 @@ decode_vendor_element({18681,3}, <<M_wwan_id:8/integer,
 
 decode_vendor_element({18681,4}, <<M_radio_id:8/integer,
                                    M_wlan_id:8/integer,
-                                   _:16,
-                                   M_hold_time:32/integer>>) ->
+                                   M_hold_time:16/integer>>) ->
     #tp_ieee_802_11_wlan_hold_time{radio_id = M_radio_id,
                                    wlan_id = M_wlan_id,
                                    hold_time = M_hold_time};
+
+decode_vendor_element({18681,5}, <<M_data_channel_dead_interval:16/integer>>) ->
+    #tp_data_channel_dead_interval{data_channel_dead_interval = M_data_channel_dead_interval};
+
+decode_vendor_element({18681,6}, <<M_ac_join_timeout:16/integer>>) ->
+    #tp_ac_join_timeout{ac_join_timeout = M_ac_join_timeout};
 
 decode_vendor_element(Tag, Value) ->
         {Tag, Value}.
@@ -1514,7 +1542,7 @@ encode_element(#ieee_802_11_wtp_radio_information{
                            (encode_flag('802.11a', M_radio_type)):1,
                            (encode_flag('802.11b', M_radio_type)):1>>);
 
-encode_element(#tp_wtp_wwan_statistics{
+encode_element(#tp_wtp_wwan_statistics_0_9{
                     timestamp = M_timestamp,
                     wwan_id = M_wwan_id,
                     rat = M_rat,
@@ -1525,14 +1553,38 @@ encode_element(#tp_wtp_wwan_statistics{
                                        M_wwan_id:8,
                                        M_rat:8,
                                        M_rssi:8,
-                                       0:8,
                                        M_lac:16,
                                        0:16,
                                        M_cell_id:32>>);
 
+encode_element(#tp_wtp_wwan_statistics{
+                    timestamp = M_timestamp,
+                    wwan_id = M_wwan_id,
+                    rat = M_rat,
+                    rssi = M_rssi,
+                    creg = M_creg,
+                    lac = M_lac,
+                    latency = M_latency,
+                    mcc = M_mcc,
+                    mnc = M_mnc,
+                    cell_id = M_cell_id}) ->
+    encode_vendor_element({18681,1}, <<M_timestamp:32,
+                                       M_wwan_id:8,
+                                       M_rat:8,
+                                       M_rssi:8,
+                                       M_creg:8,
+                                       M_lac:16,
+                                       M_latency:16,
+                                       M_mcc:8,
+                                       M_mnc:8,
+                                       0:16,
+                                       M_cell_id:32>>);
+
 encode_element(#tp_wtp_timestamp{
-                    timestamp = M_timestamp}) ->
-    encode_vendor_element({18681,2}, <<M_timestamp:32>>);
+                    second = M_second,
+                    fraction = M_fraction}) ->
+    encode_vendor_element({18681,2}, <<M_second:32,
+                                       M_fraction:32>>);
 
 encode_element(#tp_wtp_wwan_iccid{
                     wwan_id = M_wwan_id,
@@ -1546,11 +1598,18 @@ encode_element(#tp_ieee_802_11_wlan_hold_time{
                     hold_time = M_hold_time}) ->
     encode_vendor_element({18681,4}, <<M_radio_id:8,
                                        M_wlan_id:8,
-                                       0:16,
-                                       M_hold_time:32>>);
+                                       M_hold_time:16>>);
 
-encode_element({Tag = {_, _}, Value}) ->
+encode_element(#tp_data_channel_dead_interval{
+                    data_channel_dead_interval = M_data_channel_dead_interval}) ->
+    encode_vendor_element({18681,5}, <<M_data_channel_dead_interval:16>>);
+
+encode_element(#tp_ac_join_timeout{
+                    ac_join_timeout = M_ac_join_timeout}) ->
+    encode_vendor_element({18681,6}, <<M_ac_join_timeout:16>>);
+
+encode_element({Tag = {Vendor, Type}, Value}) when is_integer(Vendor), is_integer(Type), is_binary(Value) ->
     encode_vendor_element(Tag, Value);
 
-encode_element({Tag, Value}) when is_integer(Tag) ->
+encode_element({Tag, Value}) when is_integer(Tag), is_binary(Value) ->
     encode_element(Tag, Value).

@@ -248,10 +248,14 @@ join({configuration_status_request, Seq, _Elements, #capwap_header{
     EchoRequestInterval = application:get_env(App, echo_request_interval, 10),
     DiscoveryInterval = application:get_env(App, discovery_interval, 20),
     IdleTimeout = application:get_env(App, idle_timeout, 300),
+    DataChannelDeadInterval = application:get_env(App, data_channel_dead_interval, 70),
+    ACJoinTimeout = application:get_env(App, ac_join_timeout, 60),
 
     RespElements = [%%#ac_ipv4_list{ip_address = [<<0,0,0,0>>]},
 		    #timers{discovery = DiscoveryInterval,
 			    echo_request = EchoRequestInterval},
+		    #tp_data_channel_dead_interval{data_channel_dead_interval = DataChannelDeadInterval},
+		    #tp_ac_join_timeout{ac_join_timeout = ACJoinTimeout},
 		    #decryption_error_report_period{
 			     radio_id = RadioId,
 			     report_interval = 15},
