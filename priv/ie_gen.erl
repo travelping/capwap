@@ -335,6 +335,7 @@ vendor_ies() ->
        {"WWAN Id", 8, integer},
        {"RAT", 8, integer},
        {"RSSi", 8, integer},
+       {'_', 8},
        {"LAC", 16, 'integer-little'},
        {'_', 16},
        {"Cell Id", 32, 'integer-little'}]},

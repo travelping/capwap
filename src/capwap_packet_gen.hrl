@@ -834,6 +834,7 @@ decode_vendor_element({18681,1}, <<M_timestamp:32/integer-little,
                                    M_wwan_id:8/integer,
                                    M_rat:8/integer,
                                    M_rssi:8/integer,
+                                   _:8,
                                    M_lac:16/integer-little,
                                    _:16,
                                    M_cell_id:32/integer-little>>) ->
@@ -1560,6 +1561,7 @@ encode_element(#tp_wtp_wwan_statistics_0_9{
                                        M_wwan_id:8,
                                        M_rat:8,
                                        M_rssi:8,
+                                       0:8,
                                        M_lac:16,
                                        0:16,
                                        M_cell_id:32>>);

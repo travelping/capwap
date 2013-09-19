@@ -216,7 +216,7 @@ idle({discovery_request, Seq, Elements, #capwap_header{
 
 idle({join_request, Seq, Elements, #capwap_header{
 			   radio_id = RadioId, wb_id = WBID, flags = Flags}},
-     State0 = #state{peer = {Address, _}}) ->
+     State0 = #state{peer = {Address, _}, session = Session}) ->
     lager:info("Join-Request: ~p~n", [[lager:pr(E, ?MODULE) || E <- Elements]]),
 
     Version = get_wtp_version(Elements),
@@ -230,6 +230,9 @@ idle({join_request, Seq, Elements, #capwap_header{
     RespElements = ac_info_version(Version) ++ [#result_code{result_code = 0}],
     Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
     State = send_response(Header, join_response, Seq, RespElements, State1),
+    SessionOpts = wtp_accounting_infos(Elements, [{'TP-CAPWAP-Radio-Id', RadioId}]),
+    lager:info("WTP Session Start Opts: ~p", [SessionOpts]),
+    ctld_session:start(Session, SessionOpts),
     next_state(join, State);
 
 idle({Msg, Seq, Elements, Header}, State) ->
@@ -424,10 +427,11 @@ run({del_station, #capwap_header{radio_id = RadioId, wb_id = WBID}, MAC}, State)
     State1 = send_request(Header1, station_configuration_request, ReqElements, State),
     next_state(run, State1);
 
-run({wtp_event_request, Seq, Elements, #capwap_header{radio_id = RadioId, wb_id = WBID, 
-                                                       flags = Flags}}, State) ->
-    Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
-    State1 = send_response(Header, wtp_event_response, Seq, [], State),
+run({wtp_event_request, Seq, Elements, RequestHeader =
+	 #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags}}, State) ->
+    ResponseHeader = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
+    State1 = send_response(ResponseHeader, wtp_event_response, Seq, [], State),
+    State2 = handle_wtp_event(Elements, RequestHeader, State1),
     Now = calendar:now_to_universal_time(erlang:now()),
     {FormatString, FormatVars} = lists:foldl(
                                    fun
@@ -438,7 +442,7 @@ run({wtp_event_request, Seq, Elements, #capwap_header{radio_id = RadioId, wb_id 
                                    end, {"~p@~p: ", [State#state.id, Now]}, Elements),
     EventData = io_lib:format(FormatString ++ "~n", FormatVars),
     ok = file:write(State#state.event_log, EventData),
-    next_state(run, State1);
+    next_state(run, State2);
 
 run(Event, State) ->
     lager:warning("in RUN got unexpexted: ~p~n", [Event]),
@@ -554,8 +558,10 @@ handle_info(Info, StateName, State) ->
 %% @spec terminate(Reason, StateName, State) -> void()
 %% @end
 %%--------------------------------------------------------------------
-terminate(Reason, StateName, #state{peer_data = PeerId, event_log=EventLog, session=Session,
-                                    flow_switch = FlowSwitch, socket = Socket}=State) ->
+terminate(Reason, StateName,
+	  State = #state{peer_data = PeerId, event_log=EventLog,
+			 flow_switch = FlowSwitch, socket = Socket,
+			 session = Session}) ->
     error_logger:info_msg("AC session terminating in state ~p with state ~p with reason ~p~n", [StateName, State, Reason]),
     case StateName of
         run ->
@@ -564,7 +570,9 @@ terminate(Reason, StateName, #state{peer_data = PeerId, event_log=EventLog, sess
         _ ->
             ok
     end,
-    ctld_session:stop(Session, []),
+    if Session /= undefined -> ctld_session:stop(Session, []);
+       true -> ok
+    end,
     socket_close(Socket),
     stop_trace(EventLog),
     ok.
@@ -725,6 +733,44 @@ handle_capwap_packet(Packet, StateName, State = #state{
 	    {next_state, StateName, State, ?IDLE_TIMEOUT}
     end.
 
+handle_wtp_event(Elements, Header, State = #state{session = Session}) ->
+    SessionOptsList = lists:foldl(fun(Ev, SOptsList) -> handle_wtp_stats_event(Ev, Header, SOptsList) end, [], Elements),
+    if length(SessionOptsList) /= 0 ->
+	    ctld_session:interim_batch(Session, SessionOptsList);
+       true -> ok
+    end,
+    State.
+
+handle_wtp_stats_event(#tp_wtp_wwan_statistics_0_9{timestamp = Timestamp, wwan_id = WWanId, rat = RAT,
+					     rssi = RSSi, lac = LAC, cell_id = CellId},
+		 _Header, SOptsList) ->
+    Opts = orddict:from_list([{'TP-CAPWAP-Timestamp', Timestamp},
+			      {'TP-CAPWAP-WWAN-Id',   WWanId},
+			      {'TP-CAPWAP-WWAN-RAT',       RAT},
+			      {'TP-CAPWAP-WWAN-RSSi',      RSSi},
+			      {'TP-CAPWAP-WWAN-LAC',       LAC},
+			      {'TP-CAPWAP-WWAN-Cell-Id',   CellId}]),
+    lager:debug("WTP Event Opts: ~p", [Opts]),
+    [Opts|SOptsList];
+handle_wtp_stats_event(#tp_wtp_wwan_statistics{timestamp = Timestamp, wwan_id = WWanId, rat = RAT,
+					 rssi = RSSi, creg = CREG, lac = LAC, latency = Latency,
+					 mcc = MCC, mnc = MNC, cell_id = CellId},
+		 _Header, SOptsList) ->
+    Opts = orddict:from_list([{'TP-CAPWAP-Timestamp', Timestamp},
+			      {'TP-CAPWAP-WWAN-Id',   WWanId},
+			      {'TP-CAPWAP-WWAN-RAT',       RAT},
+			      {'TP-CAPWAP-WWAN-RSSi',      RSSi},
+			      {'TP-CAPWAP-WWAN-CREG',      CREG},
+			      {'TP-CAPWAP-WWAN-LAC',       LAC},
+			      {'TP-CAPWAP-WWAN-Latency',   Latency},
+			      {'TP-CAPWAP-WWAN-MCC',       MCC},
+			      {'TP-CAPWAP-WWAN-MNC',       MNC},
+			      {'TP-CAPWAP-WWAN-Cell-Id',   CellId}]),
+    lager:debug("WTP Event Opts: ~p", [Opts]),
+    [Opts|SOptsList];
+handle_wtp_stats_event(_Event, _Header, SOptsList) ->
+    SOptsList.
+
 map_aalwp({Priority, Name}) when is_binary(Name) ->
     #tp_ac_address_with_priority{
 	   priority = Priority,
@@ -766,6 +812,27 @@ get_wtp_version(Elements) ->
 	_ ->
 	    {0, undefined}
     end.
+
+wtp_accounting_infos([], Acc) ->
+    Acc;
+wtp_accounting_infos([#wtp_descriptor{sub_elements = SubElements}|Elements], Acc) ->
+    Acc1 = wtp_accounting_descriptor_infos(SubElements, Acc),
+    wtp_accounting_infos(Elements, Acc1);
+wtp_accounting_infos([{session_id, Value}|Elements], Acc)
+  when is_integer(Value) ->
+    Acc1 = [{'TP-CAPWAP-Session-Id', <<Value:128>>}|Acc],
+    wtp_accounting_infos(Elements, Acc1);
+wtp_accounting_infos([_|Elements], Acc) ->
+    wtp_accounting_infos(Elements, Acc).
+
+wtp_accounting_descriptor_infos([], Acc) ->
+    Acc;
+wtp_accounting_descriptor_infos([{{18681,0}, Version}|Elements], Acc)
+  when is_binary(Version) ->
+    Acc1 = [{'TP-CAPWAP-WTP-Version', Version}|Acc],
+    wtp_accounting_descriptor_infos(Elements, Acc1);
+wtp_accounting_descriptor_infos([_|Elements], Acc) ->
+    wtp_accounting_descriptor_infos(Elements, Acc).
 
 ac_info(Elements) ->
     Version = get_wtp_version(Elements),
