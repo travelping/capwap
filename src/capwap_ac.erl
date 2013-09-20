@@ -40,6 +40,8 @@
 	  last_request,
 	  retransmit_timer,
 	  retransmit_counter,
+	  echo_request_timer,
+	  echo_request_timeout,
 	  seqno = 0,
 	  version,
 	  event_log
@@ -268,7 +270,9 @@ join({configuration_status_request, Seq, _Elements, #capwap_header{
 		    #idle_timeout{timeout = IdleTimeout}],
     Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
     State1 = send_response(Header, configuration_status_response, Seq, RespElements, State),
-    next_state(configure, State1);
+
+    EchoRequestTimeout = EchoRequestInterval * 2,
+    next_state(configure, State1#state{echo_request_timeout = EchoRequestTimeout});
 
 join({Msg, Seq, Elements, Header}, State) ->
     lager:warning("in JOIN got unexpexted: ~p~n", [{Msg, Seq, Elements, Header}]),
@@ -333,9 +337,9 @@ run({keep_alive, _FlowSwitch, Sw, _PeerId, Header, PayLoad}, _From, State) ->
     lager:debug("in RUN got expected keep_alive: ~p~n", [{Sw, Header, PayLoad}]),
     reply({reply, {Header, PayLoad}}, run, State).
 
-run(timeout, State) ->
-    lager:info("IdleTimeout in Run~n"),
-    next_state(run, State);
+run(echo_timeout, State) ->
+    lager:info("Echo Timeout in Run~n"),
+    {stop, normal, State};
 
 run({echo_request, Seq, Elements, #capwap_header{
 			  radio_id = RadioId, wb_id = WBID, flags = Flags}},
@@ -343,7 +347,8 @@ run({echo_request, Seq, Elements, #capwap_header{
     lager:debug("EchoReq in Run got: ~p~n", [{Seq, Elements}]),
     Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
     State1 = send_response(Header, echo_response, Seq, Elements, State),
-    next_state(run, State1);
+    State2 = reset_echo_request_timer(State1),
+    next_state(run, State2);
 
 run({ieee_802_11_wlan_configuration_response, _Seq,
 	   Elements, _Header}, State) ->
@@ -355,7 +360,8 @@ run({ieee_802_11_wlan_configuration_response, _Seq,
 	    lager:warning("IEEE 802.11 WLAN Configuration failed with ~w~n", [Code]),
 	    ok
     end,
-    next_state(run, State);
+    State1 = reset_echo_request_timer(State),
+    next_state(run, State1);
 
 run({station_configuration_response, _Seq,
      Elements, _Header}, State) ->
@@ -368,7 +374,8 @@ run({station_configuration_response, _Seq,
 	    lager:warning("Station Configuration failed with ~w~n", [Code]),
 	    ok
     end,
-    next_state(run, State);
+    State1 = reset_echo_request_timer(State),
+    next_state(run, State1);
 
 run(configure, State = #state{id = WtpId}) ->
     lager:debug("configure WTP: ~p", [WtpId]),
@@ -442,7 +449,8 @@ run({wtp_event_request, Seq, Elements, RequestHeader =
                                    end, {"~p@~p: ", [State#state.id, Now]}, Elements),
     EventData = io_lib:format(FormatString ++ "~n", FormatVars),
     ok = file:write(State#state.event_log, EventData),
-    next_state(run, State2);
+    State3 = reset_echo_request_timer(State2),
+    next_state(run, State3);
 
 run(Event, State) ->
     lager:warning("in RUN got unexpexted: ~p~n", [Event]),
@@ -594,13 +602,13 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 %%%===================================================================
 
 next_state(NextStateName, State)
-  when NextStateName == idle ->
+  when NextStateName == idle; NextStateName == run ->
     {next_state, NextStateName, State};
 next_state(NextStateName, State) ->
      {next_state, NextStateName, State, ?IDLE_TIMEOUT}.
 
 reply(Reply, NextStateName, State)
-  when NextStateName == idle ->
+  when NextStateName == idle; NextStateName == run  ->
     {reply, Reply, NextStateName, State};
 reply(Reply, NextStateName, State) ->
     {reply, Reply, NextStateName, State, ?IDLE_TIMEOUT}.
@@ -859,6 +867,12 @@ ac_info_version({Version, _AddOn}) ->
 				    {{0,5}, proplists:get_value(software, Versions, <<"Software Ver. 1.0">>)}]},
      #ac_name{name = application:get_env(App, ac_name, <<"My AC Name">>)}
     ] ++ control_addresses(App) ++ AcList.
+
+reset_echo_request_timer(State = #state{echo_request_timer = Timer, echo_request_timeout = Timeout}) ->
+    if is_reference(Timer) -> gen_fsm:cancel_timer(Timer);
+       true -> ok
+    end,
+    State#state{echo_request_timer = gen_fsm:send_event_after(Timeout * 1000, echo_timeout)}.
 
 send_info_after(Time, Event) ->
     erlang:start_timer(Time, self(), Event).

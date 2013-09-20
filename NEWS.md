@@ -2,7 +2,12 @@ capwap
 ======
 
 Erlang CAPWAP AC implementation.
- 
+
+Version 1.1.1 - xx Sep 2013
+---------------------------
+
+* strict Echo Timeout handling for the control channel
+
 Version 1.1.0 - 20 Sep 2013
 ---------------------------
 
