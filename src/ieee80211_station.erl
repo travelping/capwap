@@ -164,7 +164,7 @@ init_assoc(Event = {'Authentication', _DA, _SA, _BSS, 0, 0, _Frame}, _From, Stat
     reply({ok, ignore}, init_assoc, State);
 
 init_assoc(Event = {FrameType, _DA, _SA, BSS, 0, 0, _Frame}, _From,
-	   State = #state{radio_mac = BSS, mac = MAC, mac_mode = MacMode, 
+	   State = #state{radio_mac = BSS, mac = MAC, mac_mode = MacMode,
                       peer_data = {WtpIp, _}, tunnel_mode = TunnelMode})
   when MacMode == local_mac andalso
        (FrameType == 'Association Request' orelse FrameType == 'Reassociation Request') ->
@@ -258,7 +258,7 @@ connected({'802.3', Data}, _From,
     reply({flow, BSS, MAC, MacMode, TunnelMode}, connected, State);
 
 connected(Event = {'Deauthentication', _DA, _SA, BSS, 0, 0, _Frame}, _From,
-	   State = #state{radio_mac = BSS, mac = MAC, mac_mode = MacMode, 
+	   State = #state{radio_mac = BSS, mac = MAC, mac_mode = MacMode,
                       peer_data = {WtpIp, _}, tunnel_mode = TunnelMode}) ->
     lager:debug("in CONNECTED got Deauthentication: ~p", [Event]),
     {ok, {_, ProviderOpts}} = application:get_env(ctld_provider),
@@ -266,7 +266,7 @@ connected(Event = {'Deauthentication', _DA, _SA, BSS, 0, 0, _Frame}, _From,
     reply({del, BSS, MAC, MacMode, TunnelMode}, shutdown, State);
 
 connected(Event = {'Disassociation', _DA, _SA, BSS, 0, 0, _Frame}, _From,
-	   State = #state{radio_mac = BSS, mac = MAC, mac_mode = MacMode, 
+	   State = #state{radio_mac = BSS, mac = MAC, mac_mode = MacMode,
                       peer_data = {WtpIp, _}, tunnel_mode = TunnelMode}) ->
     lager:debug("in CONNECTED got Disassociation: ~p", [Event]),
     {ok, {_, ProviderOpts}} = application:get_env(ctld_provider),
@@ -340,7 +340,13 @@ handle_info(Info, StateName, State) ->
     lager:warning("in State ~p unexpected Info: ~p", [StateName, Info]),
     next_state(StateName, State).
 
-terminate(_Reason, StateName, #state{mac = MAC}) ->
+terminate(_Reason, StateName, #state{mac = MAC, peer_data = {WtpIp, _}}) ->
+    if StateName == connected ->
+	    {ok, {_, ProviderOpts}} = application:get_env(ctld_provider),
+	    ctld_station_session:disassociation(format_mac(MAC), WtpIp, ProviderOpts);
+       true ->
+	    ok
+    end,
     lager:warning("Station ~s terminated in State ~w", [flower_tools:format_mac(MAC), StateName]),
     ok.
 
