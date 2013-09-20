@@ -7,6 +7,8 @@ Version 1.1.1 - xx Sep 2013
 ---------------------------
 
 * strict Echo Timeout handling for the control channel
+* Data Channel KeepAlive messages are now RFC compliant, invalid
+  messages are still accepted
 
 Version 1.1.0 - 20 Sep 2013
 ---------------------------

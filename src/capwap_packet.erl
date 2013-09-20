@@ -33,8 +33,9 @@ decode(Type, <<0:4, 0:4,
 	{data, 0} ->
 	    {Header, PayLoad};
 	{data, 1} ->
+	    PayLoadLength = byte_size(PayLoad),
 	    case PayLoad of
-		<<MELength:16, ME:MELength/bytes, _/binary>> ->
+		<<PayLoadLength:16, ME/binary>> ->
 		    {Header, decode_elements(ME, [])};
 		_ ->
 		    %% FIXME: workarround for broken OpenCAPWAP encoding
@@ -205,21 +206,15 @@ encode_element(Type, Value) ->
 encode_vendor_element({Vendor, Type}, Value) ->
     encode_element(37, <<Vendor:32, Type:16, Value/binary>>).
 
-encode_data_keep_alive(#capwap_header{wb_id = WBID,
-				      radio_mac = RadioMAC,
-				      wireless_spec_info = WirelessSpecInfo},
-		       MessageElements) ->
-    FragmentId = 0,
-    FragmentOffset = 0,
-    {W, WirelessSpecInfoBin} = encode_header(WirelessSpecInfo),
-    {M, RadioMACbin} = encode_header(RadioMAC),
+encode_data_keep_alive(#capwap_header{}, MessageElements) ->
+    %%   In the CAPWAP Data Channel Keep-Alive packet, all of the fields in
+    %%   the CAPWAP Header, except the HLEN field and the 'K' bit, are set to
+    %%   zero upon transmission.
     PayLoad = << <<(encode_element(X))/binary>> || X <- MessageElements>>,
-    HLen = (8 + byte_size(RadioMACbin) + byte_size(WirelessSpecInfoBin)) div 4,
-    <<0:4, 0:4, HLen:5, 0:5, WBID:5,
-      0:1, 0:1, 0:1, W:1, M:1, 1:1, 0:3,
-      FragmentId:16, FragmentOffset:13, 0:3,
-      RadioMACbin/binary, WirelessSpecInfoBin/binary,
-%%      (byte_size(PayLoad) + 3):16,
+    <<0:4, 0:4, 2:5, 0:5, 0:5,
+      0:1, 0:1, 0:1, 0:1, 0:1, 1:1, 0:3,
+      0:16, 0:13, 0:3,
+      (byte_size(PayLoad) + 2):16,
       PayLoad/binary>>.
 
 encode_data_packet(#capwap_header{radio_id = RID,
