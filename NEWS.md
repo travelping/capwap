@@ -3,6 +3,11 @@ capwap
 
 Erlang CAPWAP AC implementation.
 
+Version 1.1.2 - 27 Sep 2013
+---------------------------
+
+* handle wtp version decoding errors in discovery gracefully
+
 Version 1.1.1 - 20 Sep 2013
 ---------------------------
 

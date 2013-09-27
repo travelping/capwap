@@ -808,17 +808,22 @@ split_version(Value) ->
     [s2i(V) || V <- string:tokens(binary_to_list(Value), ".-")].
 
 get_wtp_version(Elements) ->
-    case lists:keyfind(wtp_descriptor, 1, Elements) of
-	#wtp_descriptor{sub_elements=SubElements} ->
-	    case lists:keyfind({18681,0}, 1, SubElements) of
-		{_, Value} ->
-		    [Major, Minor, Patch|AddOn] = split_version(Value),
-		    {Major * 65536 + Minor * 256 + Patch, AddOn};
-		_ ->
-		    {0, undefined}
-	    end;
-	_ ->
-	    {0, undefined}
+    try
+	case lists:keyfind(wtp_descriptor, 1, Elements) of
+	    #wtp_descriptor{sub_elements=SubElements} ->
+		case lists:keyfind({18681,0}, 1, SubElements) of
+		    {_, Value} ->
+			[Major, Minor, Patch|AddOn] = split_version(Value),
+			{Major * 65536 + Minor * 256 + Patch, AddOn};
+		    _ ->
+			{0, undefined}
+		end;
+	    _ ->
+		{0, undefined}
+	end
+    catch
+	_:_ ->
+		{0, undefined}
     end.
 
 wtp_accounting_infos([], Acc) ->
