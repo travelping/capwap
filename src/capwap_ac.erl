@@ -70,31 +70,36 @@ start_link(Peer) ->
     gen_fsm:start_link(?MODULE, [Peer], ?SERVER_OPTS).
 
 handle_packet(_Address, _Port, Packet) ->
-    try	capwap_packet:decode(control, Packet) of
-	{Header, {discovery_request, 1, Seq, Elements}} ->
-	    Answer = answer_discover(Seq, Elements, Header),
-	    {reply, Answer};
-	{Header, {join_request, 1, Seq, Elements}} ->
-	    handle_plain_join(Seq, Elements, Header);
-	Pkt ->
-	    lager:warning("unexpected CAPWAP packet: ~p", [Pkt]),
-	    {error, not_capwap}
+    try
+	case capwap_packet:decode(control, Packet) of
+	    {Header, {discovery_request, 1, Seq, Elements}} ->
+		Answer = answer_discover(Seq, Elements, Header),
+		{reply, Answer};
+	    {Header, {join_request, 1, Seq, Elements}} ->
+		handle_plain_join(Seq, Elements, Header);
+	    Pkt ->
+		lager:warning("unexpected CAPWAP packet: ~p", [Pkt]),
+		{error, not_capwap}
+	end
     catch
 	Class:Error ->
-	    lager:error("failure: ~p:~p", [Class, Error]),
+	    lager:debug("failure: ~p:~p", [Class, Error]),
 	    {error, not_capwap}
     end.
 
 handle_data(FlowSwitch, Sw, Address, Port, Packet) ->
-    lager:debug("capwap_data: ~p, ~p, ~p~n", [Address, Port, Packet]),
-    try	capwap_packet:decode(data, Packet) of
-	{Header, PayLoad} ->
-	    KeepAlive = proplists:get_bool('keep-alive', Header#capwap_header.flags),
-	    handle_capwap_data(FlowSwitch, Sw, Address, Port, Header, KeepAlive, PayLoad);
-	_ ->
-	    {error, not_capwap}
+    try
+	lager:debug("capwap_data: ~p, ~p, ~p~n", [Address, Port, Packet]),
+	case capwap_packet:decode(data, Packet) of
+	    {Header, PayLoad} ->
+		KeepAlive = proplists:get_bool('keep-alive', Header#capwap_header.flags),
+		handle_capwap_data(FlowSwitch, Sw, Address, Port, Header, KeepAlive, PayLoad);
+	    _ ->
+		{error, not_capwap}
+	end
     catch
-	_:_ ->
+	Class:Error ->
+	    lager:debug("failure: ~p:~p", [Class, Error]),
 	    {error, not_capwap}
     end.
 
@@ -808,22 +813,25 @@ split_version(Value) ->
     [s2i(V) || V <- string:tokens(binary_to_list(Value), ".-")].
 
 get_wtp_version(Elements) ->
-    try
-	case lists:keyfind(wtp_descriptor, 1, Elements) of
-	    #wtp_descriptor{sub_elements=SubElements} ->
-		case lists:keyfind({18681,0}, 1, SubElements) of
-		    {_, Value} ->
-			[Major, Minor, Patch|AddOn] = split_version(Value),
-			{Major * 65536 + Minor * 256 + Patch, AddOn};
-		    _ ->
-			{0, undefined}
-		end;
-	    _ ->
-		{0, undefined}
-	end
-    catch
-	_:_ ->
-		{0, undefined}
+    case lists:keyfind(wtp_descriptor, 1, Elements) of
+	#wtp_descriptor{sub_elements=SubElements} ->
+	    case lists:keyfind({18681,0}, 1, SubElements) of
+		{_, <<123456:64/integer>>} ->
+		    %% old, broken version encoding
+		    {16#010103, []};
+		{_, Value} ->
+		    case split_version(Value) of
+			[Major, Minor, Patch|AddOn]
+			  when is_integer(Major), is_integer(Minor), is_integer(Patch) ->
+			    {Major * 65536 + Minor * 256 + Patch, AddOn};
+			_ ->
+			    {0, undefined}
+		    end;
+		_ ->
+		    {0, undefined}
+	    end;
+	_ ->
+	    {0, undefined}
     end.
 
 wtp_accounting_infos([], Acc) ->
