@@ -211,7 +211,7 @@ idle({discovery_request, Seq, Elements, #capwap_header{
 				radio_id = RadioId, wb_id = WBID, flags = Flags}},
      State) ->
     lager:debug("discover_request: ~p~n", [[lager:pr(E, ?MODULE) || E <- Elements]]),
-    RespElements = ac_info(Elements),
+    RespElements = ac_info(discover, Elements),
     Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
     State1 = send_response(Header, discovery_response, Seq, RespElements, State),
     next_state(idle, State1);
@@ -229,7 +229,7 @@ idle({join_request, Seq, Elements, #capwap_header{
     TunnelModes = ie(wtp_frame_tunnel_mode, Elements),
     State1 = State0#state{mac_types = MacTypes, tunnel_modes = TunnelModes, version = Version},
 
-    RespElements = ac_info_version(Version) ++ [#result_code{result_code = 0}],
+    RespElements = ac_info_version(join, Version) ++ [#result_code{result_code = 0}],
     Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
     State = send_response(Header, join_response, Seq, RespElements, State1),
     SessionOpts = wtp_accounting_infos(Elements, [{'TP-CAPWAP-Radio-Id', RadioId}]),
@@ -847,17 +847,17 @@ wtp_accounting_descriptor_infos([{{18681,0}, Version}|Elements], Acc)
 wtp_accounting_descriptor_infos([_|Elements], Acc) ->
     wtp_accounting_descriptor_infos(Elements, Acc).
 
-ac_info(Elements) ->
+ac_info(Request, Elements) ->
     Version = get_wtp_version(Elements),
     lager:debug("ac_info version: ~p", [Version]),
-    ac_info_version(Version).
+    ac_info_version(Request, Version).
 
-ac_info_version({Version, _AddOn}) ->
+ac_info_version(Request, {Version, _AddOn}) ->
     App = capwap,
     Versions = application:get_env(App, versions, []),
-    AcList = if Version > 16#010104 ->
+    AcList = if (Version > 16#010104 andalso Request == discover)
+		orelse Version >= 16#010200 ->
 		     [map_aalwp(I) || I <- application:get_env(App, ac_address_list_with_prio, [])];
-
 		true -> []
 	     end,
     [#ac_descriptor{stations    = 0,
@@ -978,7 +978,7 @@ process_ifopt([_|Rest], Acc) ->
 answer_discover(Seq, Elements, #capwap_header{
 		       radio_id = RadioId, wb_id = WBID, flags = Flags}) ->
     lager:debug("discover_request: ~p~n", [[lager:pr(E, ?MODULE) || E <- Elements]]),
-    RespElems = ac_info(Elements),
+    RespElems = ac_info(discover, Elements),
     Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
     capwap_packet:encode(control, {Header, {discovery_response, Seq, RespElems}}).
 
