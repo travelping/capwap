@@ -3,11 +3,12 @@ capwap
 
 Erlang CAPWAP AC implementation.
 
-Version 1.1.3 - xx Sep 2013
+Version 1.1.3 - 16 Oct 2013
 ---------------------------
 
 * Robuster main socket handling, make sure unexpected incomming data
   is unable to crash the AC
+* Handling misinterpretation of ac list element in older versions of WTP
 
 Version 1.1.2 - 27 Sep 2013
 ---------------------------
