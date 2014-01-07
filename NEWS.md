@@ -3,6 +3,11 @@ capwap
 
 Erlang CAPWAP AC implementation.
 
+Version 1.1.4 - 07 Jan 2014
+---------------------------
+
+* fix decoding of wireless binding data
+
 Version 1.1.3 - 16 Oct 2013
 ---------------------------
 

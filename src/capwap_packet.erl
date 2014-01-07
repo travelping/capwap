@@ -97,7 +97,7 @@ pad_to(Width, Binary) ->
 
 extract_header(0, Header) ->
     {undefined, Header};
-extract_header(1, <<Len:8/integer, Field:Len/bytes, _>> = Header) ->
+extract_header(1, <<Len:8/integer, Field:Len/bytes, _/binary>> = Header) ->
     PLen = Len + pad_length(4, Len + 1),
     <<_:PLen/bytes, Next/binary>> = Header,
     {Field, Next}.
