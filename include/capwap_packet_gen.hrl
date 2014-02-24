@@ -491,3 +491,44 @@
         value = <<>>
 }).
 
+-record(wtp_apn_settings, {
+        apn = <<>>,
+        username = <<>>,
+        password = <<>>
+}).
+
+-record(wtp_administrator_password_settings, {
+        password = <<>>
+}).
+
+-record(firmware_download_information, {
+        sha256_image_hash = <<>>,
+        download_uri = <<>>
+}).
+
+-record(firmware_download_status, {
+        status = reserved,
+        bytes_downloaded = 0,
+        bytes_remaining = 0
+}).
+
+-record(ieee_802_11_tp_wlan, {
+        radio_id = 0,
+        wlan_id = 0,
+        capability = [],
+        key_index = 0,
+        key_status = per_station,
+        key = <<>>,
+        group_tsc = <<0,0,0,0,0,0>>,
+        qos = best_effort,
+        auth_type = open_system,
+        mac_mode = local_mac,
+        tunnel_mode = local_bridge,
+        suppress_ssid = 0,
+        ssid = <<>>
+}).
+
+-record(apply_confirmation_timeout, {
+        apply_confirmation_timeout = 0
+}).
+

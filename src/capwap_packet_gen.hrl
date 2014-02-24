@@ -58,50 +58,6 @@ message_type({13277, 1}) -> ieee_802_11_wlan_configuration_request;
 message_type({13277, 2}) -> ieee_802_11_wlan_configuration_response;
 message_type({Vendor, Type}) when is_integer(Vendor), is_integer(Type) -> {Vendor, Type}.
 
-enum_type(receiver) -> 0;
-enum_type(transmitter) -> 1;
-enum_type(0) -> receiver;
-enum_type(1) -> transmitter.
-
-enum_short_preamble(unsupported) -> 0;
-enum_short_preamble(supported) -> 1;
-enum_short_preamble(0) -> unsupported;
-enum_short_preamble(1) -> supported.
-
-enum_key_status(per_station) -> 0;
-enum_key_status(static_wep) -> 1;
-enum_key_status(begin_rekeying) -> 2;
-enum_key_status(completed_rekeying) -> 3;
-enum_key_status(0) -> per_station;
-enum_key_status(1) -> static_wep;
-enum_key_status(2) -> begin_rekeying;
-enum_key_status(3) -> completed_rekeying.
-
-enum_current_cca(edonly) -> 1;
-enum_current_cca(csonly) -> 2;
-enum_current_cca(edandcs) -> 4;
-enum_current_cca(cswithtimer) -> 8;
-enum_current_cca(hrcsanded) -> 16;
-enum_current_cca(1) -> edonly;
-enum_current_cca(2) -> csonly;
-enum_current_cca(4) -> edandcs;
-enum_current_cca(8) -> cswithtimer;
-enum_current_cca(16) -> hrcsanded.
-
-enum_combiner(left) -> 1;
-enum_combiner(right) -> 2;
-enum_combiner(omni) -> 3;
-enum_combiner(mimo) -> 4;
-enum_combiner(1) -> left;
-enum_combiner(2) -> right;
-enum_combiner(3) -> omni;
-enum_combiner(4) -> mimo.
-
-enum_diversity(disabled) -> 0;
-enum_diversity(enabled) -> 1;
-enum_diversity(0) -> disabled;
-enum_diversity(1) -> enabled.
-
 enum_tunnel_mode(local_bridge) -> 0;
 enum_tunnel_mode('802_3_tunnel') -> 1;
 enum_tunnel_mode('802_11_tunnel') -> 2;
@@ -127,6 +83,59 @@ enum_qos(0) -> best_effort;
 enum_qos(1) -> video;
 enum_qos(2) -> voice;
 enum_qos(3) -> backgroung.
+
+enum_key_status(per_station) -> 0;
+enum_key_status(static_wep) -> 1;
+enum_key_status(begin_rekeying) -> 2;
+enum_key_status(completed_rekeying) -> 3;
+enum_key_status(0) -> per_station;
+enum_key_status(1) -> static_wep;
+enum_key_status(2) -> begin_rekeying;
+enum_key_status(3) -> completed_rekeying.
+
+enum_status(reserved) -> 0;
+enum_status(in_progress) -> 1;
+enum_status(download_finished_successfully) -> 2;
+enum_status(download_failed) -> 3;
+enum_status(0) -> reserved;
+enum_status(1) -> in_progress;
+enum_status(2) -> download_finished_successfully;
+enum_status(3) -> download_failed.
+
+enum_type(receiver) -> 0;
+enum_type(transmitter) -> 1;
+enum_type(0) -> receiver;
+enum_type(1) -> transmitter.
+
+enum_short_preamble(unsupported) -> 0;
+enum_short_preamble(supported) -> 1;
+enum_short_preamble(0) -> unsupported;
+enum_short_preamble(1) -> supported.
+
+enum_current_cca(edonly) -> 1;
+enum_current_cca(csonly) -> 2;
+enum_current_cca(edandcs) -> 4;
+enum_current_cca(cswithtimer) -> 8;
+enum_current_cca(hrcsanded) -> 16;
+enum_current_cca(1) -> edonly;
+enum_current_cca(2) -> csonly;
+enum_current_cca(4) -> edandcs;
+enum_current_cca(8) -> cswithtimer;
+enum_current_cca(16) -> hrcsanded.
+
+enum_combiner(left) -> 1;
+enum_combiner(right) -> 2;
+enum_combiner(omni) -> 3;
+enum_combiner(mimo) -> 4;
+enum_combiner(1) -> left;
+enum_combiner(2) -> right;
+enum_combiner(3) -> omni;
+enum_combiner(4) -> mimo.
+
+enum_diversity(disabled) -> 0;
+enum_diversity(enabled) -> 1;
+enum_diversity(0) -> disabled;
+enum_diversity(1) -> enabled.
 
 enum_last_failure_type(unsuported) -> 0;
 enum_last_failure_type(ac_initiated) -> 1;
@@ -897,6 +906,74 @@ decode_vendor_element({18681,7}, <<M_priority:8/integer,
                                  type = M_type,
                                  value = M_value};
 
+decode_vendor_element({18681,8}, <<M_apn_len:8/integer, M_apn:M_apn_len/bytes,
+                                   M_username_len:8/integer, M_username:M_username_len/bytes,
+                                   M_password_len:8/integer, M_password:M_password_len/bytes>>) ->
+    #wtp_apn_settings{apn = M_apn,
+                      username = M_username,
+                      password = M_password};
+
+decode_vendor_element({18681,9}, <<M_password/binary>>) ->
+    #wtp_administrator_password_settings{password = M_password};
+
+decode_vendor_element({18681,10}, <<M_sha256_image_hash:256/binary,
+                                    M_download_uri/binary>>) ->
+    #firmware_download_information{sha256_image_hash = M_sha256_image_hash,
+                                   download_uri = M_download_uri};
+
+decode_vendor_element({18681,11}, <<M_status:16/integer,
+                                    _:16,
+                                    M_bytes_downloaded:32/integer,
+                                    M_bytes_remaining:32/integer>>) ->
+    #firmware_download_status{status = enum_status(M_status),
+                              bytes_downloaded = M_bytes_downloaded,
+                              bytes_remaining = M_bytes_remaining};
+
+decode_vendor_element({18681,13}, <<M_radio_id:8/integer,
+                                    M_wlan_id:8/integer,
+                                    M_capability_ess:1,
+                                    M_capability_ibss:1,
+                                    M_capability_cf_pollable:1,
+                                    M_capability_cf_poll_request:1,
+                                    M_capability_privacy:1,
+                                    M_capability_short_preamble:1,
+                                    M_capability_pbcc:1,
+                                    M_capability_channel_agility:1,
+                                    M_capability_spectrum_management:1,
+                                    M_capability_qos:1,
+                                    M_capability_short_slot_time:1,
+                                    M_capability_apsd:1,
+                                    M_capability_reserved:1,
+                                    M_capability_dsss_ofdm:1,
+                                    M_capability_delayed_block_ack:1,
+                                    M_capability_immediate_block_ack:1,
+                                    M_key_index:8/integer,
+                                    M_key_status:8/integer,
+                                    M_key_len:16/integer, M_key:M_key_len/bytes,
+                                    M_group_tsc:6/bytes,
+                                    M_qos:8/integer,
+                                    M_auth_type:8/integer,
+                                    M_mac_mode:8/integer,
+                                    M_tunnel_mode:8/integer,
+                                    M_suppress_ssid:8/integer,
+                                    M_ssid/binary>>) ->
+    #ieee_802_11_tp_wlan{radio_id = M_radio_id,
+                         wlan_id = M_wlan_id,
+                         capability = [ 'ess' || M_capability_ess =/= 0 ] ++ [ 'ibss' || M_capability_ibss =/= 0 ] ++ [ 'cf-pollable' || M_capability_cf_pollable =/= 0 ] ++ [ 'cf-poll-request' || M_capability_cf_poll_request =/= 0 ] ++ [ 'privacy' || M_capability_privacy =/= 0 ] ++ [ 'short_preamble' || M_capability_short_preamble =/= 0 ] ++ [ 'pbcc' || M_capability_pbcc =/= 0 ] ++ [ 'channel_agility' || M_capability_channel_agility =/= 0 ] ++ [ 'spectrum_management' || M_capability_spectrum_management =/= 0 ] ++ [ 'qos' || M_capability_qos =/= 0 ] ++ [ 'short_slot_time' || M_capability_short_slot_time =/= 0 ] ++ [ 'apsd' || M_capability_apsd =/= 0 ] ++ [ 'reserved' || M_capability_reserved =/= 0 ] ++ [ 'dsss_ofdm' || M_capability_dsss_ofdm =/= 0 ] ++ [ 'delayed_block_ack' || M_capability_delayed_block_ack =/= 0 ] ++ [ 'immediate_block_ack' || M_capability_immediate_block_ack =/= 0 ],
+                         key_index = M_key_index,
+                         key_status = enum_key_status(M_key_status),
+                         key = M_key,
+                         group_tsc = M_group_tsc,
+                         qos = enum_qos(M_qos),
+                         auth_type = enum_auth_type(M_auth_type),
+                         mac_mode = enum_mac_mode(M_mac_mode),
+                         tunnel_mode = enum_tunnel_mode(M_tunnel_mode),
+                         suppress_ssid = M_suppress_ssid,
+                         ssid = M_ssid};
+
+decode_vendor_element({18681,12}, <<M_apply_confirmation_timeout:16/integer>>) ->
+    #apply_confirmation_timeout{apply_confirmation_timeout = M_apply_confirmation_timeout};
+
 decode_vendor_element(Tag, Value) ->
         {Tag, Value}.
 
@@ -1624,6 +1701,80 @@ encode_element(#tp_ac_address_with_priority{
     encode_vendor_element({18681,7}, <<M_priority:8,
                                        M_type:8,
                                        M_value/binary>>);
+
+encode_element(#wtp_apn_settings{
+                    apn = M_apn,
+                    username = M_username,
+                    password = M_password}) ->
+    encode_vendor_element({18681,8}, <<(byte_size(M_apn)):8/integer, M_apn/binary,
+                                       (byte_size(M_username)):8/integer, M_username/binary,
+                                       (byte_size(M_password)):8/integer, M_password/binary>>);
+
+encode_element(#wtp_administrator_password_settings{
+                    password = M_password}) ->
+    encode_vendor_element({18681,9}, <<M_password/binary>>);
+
+encode_element(#firmware_download_information{
+                    sha256_image_hash = M_sha256_image_hash,
+                    download_uri = M_download_uri}) ->
+    encode_vendor_element({18681,10}, <<M_sha256_image_hash:256,
+                                        M_download_uri/binary>>);
+
+encode_element(#firmware_download_status{
+                    status = M_status,
+                    bytes_downloaded = M_bytes_downloaded,
+                    bytes_remaining = M_bytes_remaining}) ->
+    encode_vendor_element({18681,11}, <<(enum_status(M_status)):16/integer,
+                                        0:16,
+                                        M_bytes_downloaded:32,
+                                        M_bytes_remaining:32>>);
+
+encode_element(#ieee_802_11_tp_wlan{
+                    radio_id = M_radio_id,
+                    wlan_id = M_wlan_id,
+                    capability = M_capability,
+                    key_index = M_key_index,
+                    key_status = M_key_status,
+                    key = M_key,
+                    group_tsc = M_group_tsc,
+                    qos = M_qos,
+                    auth_type = M_auth_type,
+                    mac_mode = M_mac_mode,
+                    tunnel_mode = M_tunnel_mode,
+                    suppress_ssid = M_suppress_ssid,
+                    ssid = M_ssid}) ->
+    encode_vendor_element({18681,13}, <<M_radio_id:8,
+                                        M_wlan_id:8,
+                                        (encode_flag('ess', M_capability)):1,
+                                        (encode_flag('ibss', M_capability)):1,
+                                        (encode_flag('cf-pollable', M_capability)):1,
+                                        (encode_flag('cf-poll-request', M_capability)):1,
+                                        (encode_flag('privacy', M_capability)):1,
+                                        (encode_flag('short_preamble', M_capability)):1,
+                                        (encode_flag('pbcc', M_capability)):1,
+                                        (encode_flag('channel_agility', M_capability)):1,
+                                        (encode_flag('spectrum_management', M_capability)):1,
+                                        (encode_flag('qos', M_capability)):1,
+                                        (encode_flag('short_slot_time', M_capability)):1,
+                                        (encode_flag('apsd', M_capability)):1,
+                                        (encode_flag('reserved', M_capability)):1,
+                                        (encode_flag('dsss_ofdm', M_capability)):1,
+                                        (encode_flag('delayed_block_ack', M_capability)):1,
+                                        (encode_flag('immediate_block_ack', M_capability)):1,
+                                        M_key_index:8,
+                                        (enum_key_status(M_key_status)):8/integer,
+                                        (byte_size(M_key)):16/integer, M_key/binary,
+                                        M_group_tsc:6/bytes,
+                                        (enum_qos(M_qos)):8/integer,
+                                        (enum_auth_type(M_auth_type)):8/integer,
+                                        (enum_mac_mode(M_mac_mode)):8/integer,
+                                        (enum_tunnel_mode(M_tunnel_mode)):8/integer,
+                                        M_suppress_ssid:8,
+                                        M_ssid/binary>>);
+
+encode_element(#apply_confirmation_timeout{
+                    apply_confirmation_timeout = M_apply_confirmation_timeout}) ->
+    encode_vendor_element({18681,12}, <<M_apply_confirmation_timeout:16>>);
 
 encode_element({Tag = {Vendor, Type}, Value}) when is_integer(Vendor), is_integer(Type), is_binary(Value) ->
     encode_vendor_element(Tag, Value);

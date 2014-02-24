@@ -2,6 +2,24 @@
 %% -*- erlang -*-
 %%! -smp enable
 
+wlan_attr(Id, Name) ->
+    {Id, Name,
+      [{"Radio ID", 8, integer},
+       {"WLAN ID", 8, integer},
+       {"Capability", {flags, ["ess", "ibss", "cf-pollable", "cf-poll-request", "privacy", "short_preamble", "pbcc",
+                   "channel_agility", "spectrum_management", "qos", "short_slot_time", "apsd", "reserved",
+                   "dsss_ofdm", "delayed_block_ack", "immediate_block_ack"]}},
+       {"Key Index", 8, integer},
+       {"Key Status", 8, {enum, [per_station, static_wep, begin_rekeying, completed_rekeying]}},
+       {"Key", 16, length_binary},
+       {"Group TSC", 6, bytes},
+       {"QoS", 8, {enum, [best_effort, video, voice, backgroung]}},
+       {"Auth Type", 8, {enum, [open_system, wep_shared_key]}},
+       {"MAC Mode", 8, {enum, [local_mac, split_mac]}},
+       {"Tunnel Mode", 8, {enum, [local_bridge, '802_3_tunnel', '802_11_tunnel']}},
+       {"Suppress SSID", 8, integer},
+       {"SSID", 0, binary}]}.
+
 ies() ->
     [{1, "AC Descriptor",
       [{"Stations", 16, integer},
@@ -160,23 +178,7 @@ ies() ->
        {"Netmask", 4, bytes},
        {"Gateway", 4, bytes},
        {"Static", 8, integer}]},
-
-     {1024, "IEEE 802.11 Add WLAN",
-      [{"Radio ID", 8, integer},
-       {"WLAN ID", 8, integer},
-       {"Capability", {flags, ["ess", "ibss", "cf-pollable", "cf-poll-request", "privacy", "short_preamble", "pbcc",
-			       "channel_agility", "spectrum_management", "qos", "short_slot_time", "apsd", "reserved",
-			       "dsss_ofdm", "delayed_block_ack", "immediate_block_ack"]}},
-       {"Key Index", 8, integer},
-       {"Key Status", 8, {enum, [per_station, static_wep, begin_rekeying, completed_rekeying]}},
-       {"Key", 16, length_binary},
-       {"Group TSC", 6, bytes},
-       {"QoS", 8, {enum, [best_effort, video, voice, backgroung]}},
-       {"Auth Type", 8, {enum, [open_system, wep_shared_key]}},
-       {"MAC Mode", 8, {enum, [local_mac, split_mac]}},
-       {"Tunnel Mode", 8, {enum, [local_bridge, '802_3_tunnel', '802_11_tunnel']}},
-       {"Suppress SSID", 8, integer},
-       {"SSID", 0, binary}]},
+     wlan_attr(1024, "IEEE 802.11 Add WLAN"),
      {1025, "IEEE 802.11 Antenna",
       [{"Radio ID", 8, integer},
        {"Diversity", 8, {enum, [disabled, enabled]}},
@@ -368,7 +370,24 @@ vendor_ies() ->
      {{18681, 7}, "TP AC Address with Priority",
       [{"Priority", 8, integer},
        {"Type", 8, integer},
-       {"Value", 0, binary}]}
+       {"Value", 0, binary}]},
+     {{18681, 8}, "WTP APN Settings",
+      [{"APN", 8, length_binary},
+       {"Username", 8, length_binary},
+       {"Password", 8, length_binary}]},
+     {{18681, 9}, "WTP Administrator Password Settings",
+      [{"Password", 0, binary}]},
+     {{18681, 10}, "Firmware Download Information",
+      [{"SHA256 Image Hash", 256, binary},
+       {"Download URI", 0, binary}]},
+     {{18681, 11}, "Firmware Download Status",
+      [{"Status", 16, {enum, [reserved, in_progress, download_finished_successfully, download_failed]}},
+       {'_', 16},
+       {"Bytes downloaded", 32, integer},
+       {"Bytes remaining", 32, integer}]},
+     wlan_attr({18681, 13}, "IEEE 802.11 TP WLAN"),
+     {{18681, 12}, "Apply Confirmation Timeout",
+      [{"Apply Confirmation Timeout", 16, integer}]}
     ].
 
 msgs() ->

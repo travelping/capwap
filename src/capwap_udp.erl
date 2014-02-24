@@ -40,7 +40,7 @@
 %% API
 %%===================================================================
 start_link(Port, Options) ->
-    gen_server:start_link({local, ?SERVER}, ?MODULE, [self(), Port, Options], 
+    gen_server:start_link({local, ?SERVER}, ?MODULE, [self(), Port, Options],
                           ?SERVER_OPTS).
 
 %%===================================================================

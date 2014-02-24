@@ -5,6 +5,9 @@
 %% API
 -export([start_link/1, accept/3, get_peer_data/1, take_over/1, new_station/3]).
 
+%% Extern API
+-export([firmware_download/3]).
+
 %% gen_fsm callbacks
 -export([init/1, listen/2, idle/2, join/2, configure/2, data_check/2, run/2,
 	 idle/3, join/3, configure/3, data_check/3, run/3,
@@ -116,6 +119,18 @@ new_station(WTP, BSS, SA) ->
     gen_fsm:sync_send_event(WTP, {new_station, BSS, SA}).
 
 %%%===================================================================
+%%% extern APIs
+%%%===================================================================
+
+firmware_download(CommonName, DownloadLink, Sha) ->
+    case capwap_wtp_reg:lookup(CommonName) of
+        {ok, Pid} ->
+            gen_fsm:send_event(Pid, {firmware_download, DownloadLink, Sha});
+        not_found ->
+            {error, not_found}
+    end.
+
+%%%===================================================================
 %%% gen_fsm callbacks
 %%%===================================================================
 
@@ -164,6 +179,7 @@ listen({accept, dtls, Socket}, State) ->
     case ssl:ssl_accept(Socket, mk_ssl_opts(Session), ?SSL_ACCEPT_TIMEOUT) of
         {ok, SslSocket} ->
             lager:info("ssl_accept: ~p~n", [SslSocket]),
+            {ok, {Address, _Port}} = ssl:peername(SslSocket),
             ssl:setopts(SslSocket, [{active, true}, {mode, binary}]),
 
             {ok, Cert} = ssl:peercert(SslSocket),
@@ -185,7 +201,7 @@ listen({accept, dtls, Socket}, State) ->
                 _ ->
                     ok
             end,
-            capwap_wtp_reg:register(CommonName),
+            capwap_wtp_reg:register_args(CommonName, Address),
 
             EventLogBasePath = application:get_env(capwap, event_log_base_path, "."),
             EventLogPath = filename:join([EventLogBasePath, ["events-", erlang:binary_to_list(CommonName), ".log"]]),
@@ -382,6 +398,20 @@ run({station_configuration_response, _Seq,
     State1 = reset_echo_request_timer(State),
     next_state(run, State1);
 
+run({configuration_update_responce, _Seq,
+     Elements, _Header}, State) ->
+    %% TODO: timeout and Error handling, e.g. shut the station process down when the Add Station failed
+    case proplists:get_value(result_code, Elements) of
+    0 ->
+        lager:debug("Configuration Update ok"),
+        ok;
+    Code ->
+        lager:warning("Configuration Update failed with ~w~n", [Code]),
+        ok
+    end,
+    State1 = reset_echo_request_timer(State),
+    next_state(run, State1);
+
 run(configure, State = #state{id = WtpId}) ->
     lager:debug("configure WTP: ~p", [WtpId]),
     RadioId = 1,
@@ -456,6 +486,15 @@ run({wtp_event_request, Seq, Elements, RequestHeader =
     ok = file:write(State#state.event_log, EventData),
     State3 = reset_echo_request_timer(State2),
     next_state(run, State3);
+
+run({firmware_download, DownloadLink, Sha}, State) ->
+    Flags = [{frame,'802.3'}],
+    ReqElements = [#firmware_download_information{
+        sha256_image_hash = Sha,
+        download_uri = DownloadLink}],
+    Header1 = #capwap_header{radio_id = 1, wb_id = 1, flags = Flags},
+    State1 = send_request(Header1, configuration_update_request, ReqElements, State),
+    next_state(run, State1);
 
 run(Event, State) ->
     lager:warning("in RUN got unexpexted: ~p~n", [Event]),

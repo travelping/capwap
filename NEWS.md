@@ -3,6 +3,13 @@ capwap
 
 Erlang CAPWAP AC implementation.
 
+Version 1.1.5 - 21 Feb 2014
+---------------------------
+
+* add new Travelping attributes
+* add initial capwap shell
+* add initial implementation of update firmware
+
 Version 1.1.4 - 07 Jan 2014
 ---------------------------
 
