@@ -387,7 +387,10 @@ vendor_ies() ->
        {"Bytes remaining", 32, integer}]},
      wlan_attr({18681, 13}, "IEEE 802.11 TP WLAN"),
      {{18681, 12}, "Apply Confirmation Timeout",
-      [{"Apply Confirmation Timeout", 16, integer}]}
+      [{"Apply Confirmation Timeout", 16, integer}]},
+     {{18681, 14}, "Power Save Mode",
+      [{"Idle Timeout", 32, integer},
+       {"Busy Timeout", 32, integer}]}
     ].
 
 msgs() ->

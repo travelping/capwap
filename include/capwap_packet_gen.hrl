@@ -532,3 +532,8 @@
         apply_confirmation_timeout = 0
 }).
 
+-record(power_save_mode, {
+        idle_timeout = 0,
+        busy_timeout = 0
+}).
+

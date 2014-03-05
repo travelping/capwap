@@ -974,6 +974,11 @@ decode_vendor_element({18681,13}, <<M_radio_id:8/integer,
 decode_vendor_element({18681,12}, <<M_apply_confirmation_timeout:16/integer>>) ->
     #apply_confirmation_timeout{apply_confirmation_timeout = M_apply_confirmation_timeout};
 
+decode_vendor_element({18681,14}, <<M_idle_timeout:32/integer,
+                                    M_busy_timeout:32/integer>>) ->
+    #power_save_mode{idle_timeout = M_idle_timeout,
+                     busy_timeout = M_busy_timeout};
+
 decode_vendor_element(Tag, Value) ->
         {Tag, Value}.
 
@@ -1775,6 +1780,12 @@ encode_element(#ieee_802_11_tp_wlan{
 encode_element(#apply_confirmation_timeout{
                     apply_confirmation_timeout = M_apply_confirmation_timeout}) ->
     encode_vendor_element({18681,12}, <<M_apply_confirmation_timeout:16>>);
+
+encode_element(#power_save_mode{
+                    idle_timeout = M_idle_timeout,
+                    busy_timeout = M_busy_timeout}) ->
+    encode_vendor_element({18681,14}, <<M_idle_timeout:32,
+                                        M_busy_timeout:32>>);
 
 encode_element({Tag = {Vendor, Type}, Value}) when is_integer(Vendor), is_integer(Type), is_binary(Value) ->
     encode_vendor_element(Tag, Value);
