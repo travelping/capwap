@@ -170,6 +170,7 @@ init([Peer]) ->
 listen({accept, udp, Socket}, State) ->
     capwap_udp:setopts(Socket, [{active, true}, {mode, binary}]),
     lager:info("udp_accept: ~p~n", [Socket]),
+
     next_state(idle, State#state{socket = {udp, Socket}, id = undefined});
 
 listen({accept, dtls, Socket}, State) ->
@@ -203,12 +204,8 @@ listen({accept, dtls, Socket}, State) ->
             end,
             capwap_wtp_reg:register_args(CommonName, Address),
 
-            EventLogBasePath = application:get_env(capwap, event_log_base_path, "."),
-            EventLogPath = filename:join([EventLogBasePath, ["events-", erlang:binary_to_list(CommonName), ".log"]]),
-            lager:info("EventLogP: ~w", [EventLogPath]),
-
-            ok = filelib:ensure_dir(EventLogPath),
-            {ok, EventLog} = file:open(EventLogPath, [append]),
+            EventLog = start_event_log(CommonName),
+	    
             State1 = State#state{event_log=EventLog, socket = {dtls, SslSocket}, session = Session, id = CommonName},
             %% TODO: find old connection instance, take over their StationState and stop them
             next_state(idle, State1);
@@ -216,6 +213,7 @@ listen({accept, dtls, Socket}, State) ->
             lager:error("ssl_accept failed: ~p~n", [Other]),
             {stop, normal, State#state{session=Session}}
     end;
+
 
 listen(timeout, State) ->
     {stop, normal, State}.
@@ -256,7 +254,15 @@ idle({join_request, Seq, Elements, #capwap_header{
     SessionOpts = wtp_accounting_infos(Elements, [{'TP-CAPWAP-Radio-Id', RadioId}]),
     lager:info("WTP Session Start Opts: ~p", [SessionOpts]),
     ctld_session:start(Session, SessionOpts),
-    next_state(join, State);
+    FinalState = case State#state.event_log of
+		     undefined ->
+			 %% next line starts an event-log for wtps which are not using dtls
+			 EventLog = start_event_log(erlang:integer_to_binary(SessionId)), 
+			 State#state{event_log = EventLog};
+		     EventLog ->
+			 State
+		 end,
+    next_state(join, FinalState);
 
 idle({Msg, Seq, Elements, Header}, State) ->
     lager:warning("in IDLE got unexpexted: ~p~n", [{Msg, Seq, Elements, Header}]),
@@ -1200,3 +1206,12 @@ tuple_to_ip({A, B, C, D}) ->
     <<A:8, B:8, C:8, D:8>>;
 tuple_to_ip({A, B, C, D, E, F, G, H}) ->
     <<A:16, B:16, C:16, D:16, E:16, F:16, G:16, H:16>>.
+
+start_event_log(CommonName) ->
+    EventLogBasePath = application:get_env(capwap, event_log_base_path, "."),
+    EventLogPath = filename:join([EventLogBasePath, ["events-", erlang:binary_to_list(CommonName), ".log"]]),
+    lager:info("EventLogP: ~w", [EventLogPath]),
+    
+    ok = filelib:ensure_dir(EventLogPath),
+    {ok, EventLog} = file:open(EventLogPath, [append]),
+    EventLog.

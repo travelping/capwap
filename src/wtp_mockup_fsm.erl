@@ -20,7 +20,9 @@
 	 send_discovery/1,
 	 send_join/1,
 	 send_config_status/1,
-	 send_change_state_event/1
+	 send_change_state_event/1,
+	 send_wwan_statistics/1,
+	 add_station/2
 	]).
 
 %% gen_fsm callbacks
@@ -35,7 +37,8 @@
 -define(SERVER, ?MODULE).
 
 -record(state, {control_socket, 
-		seqno}).
+		seqno,
+		stations}).
 
 %%%===================================================================
 %%% API
@@ -62,6 +65,12 @@ send_change_state_event(WTP_FSM) ->
 send_keep_alive(WTP_FSM) ->
     gen_fsm:sync_send_event(WTP_FSM, send_keep_alive).
 
+send_wwan_statistics(WTP_FSM) ->
+    gen_fsm:sync_send_event(WTP_FSM, send_wwan_statistics).
+
+add_station(WTP_FSM, Mac) ->
+    gen_fsm:sync_send_event(WTP_FSM, {add_station, Mac}).
+
 %%%===================================================================
 %%% gen_fsm callbacks
 %%%===================================================================
@@ -69,8 +78,9 @@ send_keep_alive(WTP_FSM) ->
 init([Port]) ->
     {ok, ControlSocket} = gen_udp:open(Port, [{active, false}, {mode, binary}]),
     {ok, idle, #state{control_socket = ControlSocket,
-		      seqno = 0}}.
-
+		      seqno = 0,
+		      stations = []}}.
+ 
 %%--------------------------------------------------------------------
 %% @private
 %% @doc
@@ -136,7 +146,7 @@ join(_Event, _From, State) ->
 configure(_Event, State) ->
     {next_state, configure, State}.
 
-configure(send_change_state_event, _From, State) ->
+configure(send_change_state_event, _From, State=#state{control_socket = CS}) ->
     IEs =[#radio_operational_state{state = enabled},
 	  #result_code{}
 	 ],
@@ -144,25 +154,21 @@ configure(send_change_state_event, _From, State) ->
 						    change_state_event_request, 
 						    data_check, 
 						    IEs),
-    % mock data socket through flsc
-    SeqNum = State1#state.seqno,
+    %% make control channel socket active    
+    inet:setopts(CS, [{active, true}]),
+    
+    %% mock data socket through flsc
     Header = create_header(),
     Header1 = Header#capwap_header{flags=['keep-alive', {frame,'802.3'}]},
     KeepAliveIEs=[#session_id{session_id = 329785637896618622174542098706248598340}
 	],
     Packet = capwap_packet:encode(data,
 				  {Header1, KeepAliveIEs}),
+    
     {reply, KeepAliveResp} = capwap_ac:handle_data(sw1, sw2, {127, 0, 0, 1}, 12345, Packet),
     DecKeepAliveResp = capwap_packet:decode(data, KeepAliveResp),
-    lager:info("got keep_alive response: ~p", [DecKeepAliveResp]),
-    
-    WlanConfigRequest = recv_capwap(State),
-    
-    DecWlanConfigRequest = capwap_packet:decode(control, WlanConfigRequest),
-    {#capwap_header{},  
-     {ieee_802_11_wlan_configuration_request, _, _, WlanConfigIEs}} = DecWlanConfigRequest,
-    lager:info("got expected wlan_config_request: ~p", [DecWlanConfigRequest]),
-    {reply, ok, run, State1};
+    lager:debug("got keep_alive response: ~p", [DecKeepAliveResp]),    
+    {reply, ok, run, bump_seqno(State)};
 
 configure(_Event, _From, State) ->
     {reply, {error, bad_event}, configure, State}.
@@ -170,18 +176,35 @@ configure(_Event, _From, State) ->
 run(_Event, State) ->
     {next_state, run, State}.
 
+run(send_wwan_statistics, _From, State) ->
+    IEs = [#tp_wtp_wwan_statistics{latency = 5,
+				   timestamp = timestamp()}
+	  ],
+    do_transition(State, wtp_event_request, run, IEs, async);
+
+run({add_station, Mac}, _From, State = #state{stations=Stations}) ->
+    IEs = [#add_station{mac = Mac}
+	  ],
+    
+    capwap_data_request(State, Flags, IEs).
+
+    
 run(_Event, _From, State) ->
     {reply, {error, bad_event}, run, State}.
-
 
 handle_event(_Event, StateName, State) ->
     {next_state, StateName, State}.
 
 handle_sync_event(_Event, _From, StateName, State) ->
-    Reply = ok,
-    {reply, Reply, StateName, State}.
+    {reply, ok, StateName, State}.
 
-handle_info(_Info, StateName, State) ->
+handle_info({udp, CS, _IP, _InPort, Packet}, run, State=#state{control_socket = CSS}) ->
+    
+    DecRequest = capwap_packet:decode(control, Packet),
+    handle_udp_run(DecRequest, State);
+
+handle_info(Info, StateName, State) ->
+    lager:debug("in state ~p received unhandled info: ~p", [StateName, Info]),    
     {next_state, StateName, State}.
 
 terminate(_Reason, _StateName, _State) ->
@@ -197,12 +220,23 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 bump_seqno(State = #state{seqno = SeqNo}) ->
     State#state{seqno = (SeqNo + 1) rem 256}.
 
+get_seqno(#state{seqno=SQNO}) ->
+    SQNO.
+
 send_capwap(#state{control_socket=CS}, Packet) ->
     gen_udp:send(CS, {127, 0, 0, 1}, 5246, Packet).
 
 recv_capwap(#state{control_socket=CS}) ->
     {ok, {_IP, _Port, Resp}} = gen_udp:recv(CS, 1000, 1000),
     Resp.
+
+capwap_send_data(State, Flags, IEs) ->
+    Header = create_header(),
+    Header1 = Header#capwap_header{flags=Flags},
+    Packet = capwap_packet:encode(data,
+				  {Header1, IEs}),
+    
+    capwap_ac:handle_data(sw1, sw2, {127, 0, 0, 1}, 12345, Packet),    .
 
 create_header() ->
     #capwap_header{radio_id = 0,
@@ -211,18 +245,25 @@ create_header() ->
 		   radio_mac = <<8,8,8,8,8,8>>,
 		   wireless_spec_info = undefined}.
 
-do_transition(State=#state{seqno = SeqNum}, ReqType, NextState, IEs) ->
+do_transition(State, ReqType, NextState, IEs) ->
+    do_transition(State, ReqType, NextState, IEs, sync).
+
+do_transition(State=#state{seqno = SeqNum}, ReqType, NextState, IEs, Mode) ->
     Header = create_header(),
     Packet = capwap_packet:encode(control,
 				  {Header,
 				   {ReqType, SeqNum, IEs}}),
     lager:info("~p to send: ~p", [ReqType, Packet]),
     send_capwap(State, Packet),
-    Resp = recv_capwap(State),
-    DecResp = capwap_packet:decode(control, Resp),
-    lager:info("got ~p response: ~p", [ReqType, DecResp]),
-    
-    {reply, ok, NextState, bump_seqno(State)}.
+    case Mode of
+	sync ->
+	    Resp = recv_capwap(State),
+	    DecResp = capwap_packet:decode(control, Resp),
+	    lager:info("got ~p response: ~p", [ReqType, DecResp]),
+	    {reply, ok, NextState, bump_seqno(State)};
+	async ->
+	    {reply, ok, NextState, bump_seqno(State)}
+    end.
 
 
 create_default_ies() ->
@@ -239,3 +280,21 @@ create_default_ies() ->
 				     {{23456,1},<<0,0,48,59>>},
 				     {{23456,2},<<0,18,214,136>>}]}
     ].
+
+timestamp() ->
+    {Mega, Secs, _} = now(),
+    Timestamp = Mega*1000000 + Secs.
+
+handle_udp_run({#capwap_header{},  
+		{ieee_802_11_wlan_configuration_request, _, _, _WlanConfigIEs}} = Req, 
+	       State) ->
+    lager:debug("got expected wlan_config_request: ~p", [Req]),
+    CRespPacket = capwap_packet:encode(control,
+				       {create_header(),
+					{ieee_802_11_wlan_configuration_response, get_seqno(State), []}}),
+    send_capwap(State, CRespPacket),
+    {next_state, run, bump_seqno(State)};
+
+handle_udp_run(PKT, State) ->
+    lager:debug("got unhandled CAPWAP request in run: ~p", [PKT]),
+    {next_state, run, State}.
