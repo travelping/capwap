@@ -254,15 +254,7 @@ idle({join_request, Seq, Elements, #capwap_header{
     SessionOpts = wtp_accounting_infos(Elements, [{'TP-CAPWAP-Radio-Id', RadioId}]),
     lager:info("WTP Session Start Opts: ~p", [SessionOpts]),
     ctld_session:start(Session, SessionOpts),
-    FinalState = case State#state.event_log of
-		     undefined ->
-			 %% next line starts an event-log for wtps which are not using dtls
-			 EventLog = start_event_log(erlang:integer_to_binary(SessionId)), 
-			 State#state{event_log = EventLog};
-		     EventLog ->
-			 State
-		 end,
-    next_state(join, FinalState);
+    next_state(join, State);
 
 idle({Msg, Seq, Elements, Header}, State) ->
     lager:warning("in IDLE got unexpexted: ~p~n", [{Msg, Seq, Elements, Header}]),
@@ -950,7 +942,7 @@ resend_response(#state{socket = Socket, last_response = {_, BinMsg}}) ->
     ok = socket_send(Socket, BinMsg).
 
 send_request(Header, MsgType, ReqElements,
-	     State = #state{socket = Socket, seqno = SeqNo}) ->
+	     State = #state{seqno = SeqNo}) ->
     lager:debug("send capwap request(~w): ~w~n", [SeqNo, MsgType]),
     BinMsg = capwap_packet:encode(control, {Header, {MsgType, SeqNo, ReqElements}}),
     State1 = send_request_queue(BinMsg, State),
