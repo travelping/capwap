@@ -40,7 +40,7 @@
 	  mac_mode,
 	  tunnel_mode,
 	  last_response,
-	  last_request,
+	  request_queue,
 	  retransmit_timer,
 	  retransmit_counter,
 	  echo_request_timer,
@@ -150,7 +150,7 @@ firmware_download(CommonName, DownloadLink, Sha) ->
 init([Peer]) ->
     process_flag(trap_exit, true),
     capwap_wtp_reg:register(Peer),
-    {ok, listen, #state{peer = Peer}, 5000}.
+    {ok, listen, #state{peer = Peer, request_queue = queue:new()}, 5000}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -759,7 +759,7 @@ handle_capwap_data(_FlowSwitch, Sw, Address, Port,
 
 handle_capwap_packet(Packet, StateName, State = #state{
 					  last_response = LastResponse,
-					  last_request = LastRequest}) ->
+					  request_queue = Queue}) ->
     try	capwap_packet:decode(control, Packet) of
 	{Header, {Msg, 1, Seq, Elements}} ->
 	    %% Request
@@ -777,13 +777,13 @@ handle_capwap_packet(Packet, StateName, State = #state{
 	{Header, {Msg, 0, Seq, Elements}} ->
 	    %% Response
 	    lager:debug("got capwap response: ~w~n", [Msg]),
-	    case LastRequest of
-		{Seq, _} ->
-		    State1 = ack_request(State),
-		    ?MODULE:StateName({Msg, Seq, Elements, Header}, State1);
-		_ ->
+	    case queue:peek(Queue) of
+            {value, {Seq, _}} ->
+                State1 = ack_request(State),
+                ?MODULE:StateName({Msg, Seq, Elements, Header}, State1);
+            _ ->
 		    %% invalid Seq, out-of-order packet, silently ignore,
-		    {next_state, StateName, State, ?IDLE_TIMEOUT}
+                {next_state, StateName, State, ?IDLE_TIMEOUT}
 	    end
     catch
 	Class:Error ->
@@ -953,38 +953,61 @@ send_request(Header, MsgType, ReqElements,
 	     State = #state{socket = Socket, seqno = SeqNo}) ->
     lager:debug("send capwap request(~w): ~w~n", [SeqNo, MsgType]),
     BinMsg = capwap_packet:encode(control, {Header, {MsgType, SeqNo, ReqElements}}),
-    ok = socket_send(Socket, BinMsg),
-    State1 = State#state{last_request = {SeqNo, BinMsg},
-			 retransmit_timer = send_info_after(?RetransmitInterval, retransmit),
-			 retransmit_counter = ?MaxRetransmit
-		   },
+    State1 = send_request_queue(BinMsg, State),
     bump_seqno(State1).
+
+send_request_queue(BinMsg, State = #state{socket = Socket, request_queue = Queue, seqno = SeqNo}) ->
+    NewState = queue_request(State, {SeqNo, BinMsg}),
+    case queue:is_empty(Queue) of
+        true ->
+            ok = socket_send(Socket, BinMsg),
+            init_retransmit(NewState);
+        false ->
+            NewState
+    end.
 
 resend_request(StateName, State = #state{retransmit_counter = 0}) ->
     lager:debug("Final Timeout in ~w, STOPPING~n", [StateName]),
     {stop, normal, State};
 resend_request(StateName,
 	       State = #state{socket = Socket,
-			      last_request = {_, BinMsg},
-			      retransmit_counter = MaxRetransmit}) ->
+                          request_queue = Queue,
+                          retransmit_counter = MaxRetransmit}) ->
     lager:warning("resend capwap request~n", []),
+    {value, {_, BinMsg}} = queue:peek(Queue),
     ok = socket_send(Socket, BinMsg),
     State1 = State#state{retransmit_timer = send_info_after(?RetransmitInterval, retransmit),
 			 retransmit_counter = MaxRetransmit - 1
 			},
     {next_state, StateName, State1, ?IDLE_TIMEOUT}.
 
+init_retransmit(State) ->
+    State#state{retransmit_timer = send_info_after(?RetransmitInterval, retransmit),
+                retransmit_counter = ?MaxRetransmit}.
 
 %% Stop Timer, clear LastRequest
-ack_request(State0) ->
-    State1 = State0#state{last_request = undefined},
-    cancel_retransmit(State1).
+ack_request(State0 = #state{socket = Socket}) ->
+    State1 = cancel_retransmit(State0),
+    case dequeue_request_next(State1) of
+        {{value, {_, BinMsg}}, State2} ->
+            ok = socket_send(Socket, BinMsg),
+            init_retransmit(State2);
+        {empty, State2} ->
+            State2
+    end.
 
 cancel_retransmit(State = #state{retransmit_timer = undefined}) ->
     State;
 cancel_retransmit(State = #state{retransmit_timer = Timer}) ->
     gen_fsm:cancel_timer(Timer),
     State#state{retransmit_timer = undefined}.
+
+queue_request(State = #state{request_queue = Queue}, {SeqNo, BinMsg}) ->
+    State#state{request_queue = queue:in({SeqNo, BinMsg}, Queue)}.
+
+dequeue_request_next(State = #state{request_queue = Queue0}) ->
+    Queue1 = queue:drop(Queue0),
+    {queue:peek(Queue1), State#state{request_queue = Queue1}}.
 
 control_addresses(App) ->
     case application:get_env(App, control_ips) of
