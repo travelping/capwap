@@ -44,7 +44,8 @@ discovery(Config) ->
     ok = wtp_mockup_fsm:send_config_status(CS),
     ok = wtp_mockup_fsm:send_change_state_event(CS),
     ok = wtp_mockup_fsm:send_wwan_statistics(CS),
-    ok = wtp_mockup_fsm:add_station(CS, <<144,39,228,64,185,19>>).
+    ok = wtp_mockup_fsm:add_station(CS, <<144,39,228,64,185,19>>),
+    timer:sleep(5000).
 
 setup_applications() ->
     {ok, CWD} = file:get_cwd(),

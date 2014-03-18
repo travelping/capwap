@@ -5,6 +5,8 @@
 %% API
 -export([start_link/7, handle_ieee80211_frame/2, handle_ieee802_3_frame/2,
          set_out_action/3, get_out_action/2, take_over/7]).
+%% For testing
+-export([frame_type/1]).
 
 %% gen_fsm callbacks
 -export([init/1,

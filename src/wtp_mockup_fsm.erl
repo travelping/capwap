@@ -183,14 +183,36 @@ run(send_wwan_statistics, _From, State) ->
     do_transition(State, wtp_event_request, run, IEs, async);
 
 run({add_station, Mac}, _From, State = #state{stations=Stations}) ->
-    IEs = [#add_station{mac = Mac}
-	  ],
+    Unknown = 0,
+    FromDS = 0,
+    ToDS=0,
+    {Type, SubType} = ieee80211_station:frame_type('Association Request'),
+    FrameControl = <<SubType:4, Type:2, 0:2, Unknown:6, FromDS:1, ToDS:1>>,
+    Duration = 0,
+    DA = <<0:48>>,
+    SA = <<1:48>>,
+    BSS = <<0:48>>,
+    SequenceControl = 0,
+    Frame = <<0:8>>,
+    Payload = <<FrameControl:2/bytes,
+		Duration:16, DA:6/bytes, SA:6/bytes, BSS:6/bytes,
+		SequenceControl:16/little-integer, Frame/binary>>,
     
-    capwap_data_request(State, Flags, IEs).
+    Flags=[{frame, native}],
+    capwap_send_data(State, Flags, Payload),
 
-    
+    {TypeDis, SubTypeDis} = ieee80211_station:frame_type('Disassociation'),
+    FrameControlDis = <<SubTypeDis:4, TypeDis:2, 0:2, Unknown:6, FromDS:1, ToDS:1>>,
+    SequenceControlDis = SequenceControl + 1,
+    PayloadDis = <<FrameControlDis:2/bytes,
+		   Duration:16, DA:6/bytes, SA:6/bytes, BSS:6/bytes,
+		   SequenceControlDis:16/little-integer, Frame/binary>>,
+    capwap_send_data(State, Flags, PayloadDis),
+    {reply, ok, run, State};
+
 run(_Event, _From, State) ->
     {reply, {error, bad_event}, run, State}.
+
 
 handle_event(_Event, StateName, State) ->
     {next_state, StateName, State}.
@@ -236,7 +258,7 @@ capwap_send_data(State, Flags, IEs) ->
     Packet = capwap_packet:encode(data,
 				  {Header1, IEs}),
     
-    capwap_ac:handle_data(sw1, sw2, {127, 0, 0, 1}, 12345, Packet),    .
+    capwap_ac:handle_data(sw1, sw2, {127, 0, 0, 1}, 12345, Packet).
 
 create_header() ->
     #capwap_header{radio_id = 0,
@@ -268,7 +290,7 @@ do_transition(State=#state{seqno = SeqNum}, ReqType, NextState, IEs, Mode) ->
 
 create_default_ies() ->
     [#ieee_802_11_wtp_radio_information{radio_type = ['802.11g','802.11b']},
-     #wtp_mac_type{mac_type = split},
+     #wtp_mac_type{mac_type = local},
      #wtp_frame_tunnel_mode{mode = [native]},
      #wtp_board_data{vendor = 23456,
 		     board_data_sub_elements = [{0,<<0,1,226,64>>},
@@ -286,15 +308,29 @@ timestamp() ->
     Timestamp = Mega*1000000 + Secs.
 
 handle_udp_run({#capwap_header{},  
-		{ieee_802_11_wlan_configuration_request, _, _, _WlanConfigIEs}} = Req, 
+		{ieee_802_11_wlan_configuration_request, _, RemoteSeq, _WlanConfigIEs}} = Req, 
 	       State) ->
     lager:debug("got expected wlan_config_request: ~p", [Req]),
     CRespPacket = capwap_packet:encode(control,
 				       {create_header(),
-					{ieee_802_11_wlan_configuration_response, get_seqno(State), []}}),
+					{ieee_802_11_wlan_configuration_response, RemoteSeq, []}}),
     send_capwap(State, CRespPacket),
-    {next_state, run, bump_seqno(State)};
+    {next_state, run, State};
 
+handle_udp_run({#capwap_header{},  
+		{station_configuration_request, _, RemoteSeq, _StationConfigIEs}} = Req, 
+	       State) ->
+    lager:debug("got expected station_config_request: ~p", [Req]),
+    CRespPacket = capwap_packet:encode(control,
+				       {create_header(),
+					{station_configuration_response, RemoteSeq, [#result_code{}]}}),
+    send_capwap(State, CRespPacket),
+    {next_state, run, State};
+
+handle_udp_run({#capwap_header{},  
+		{wtp_event_response, _, _, _}} = Req, 
+	       State) ->
+    {next_state, run, State};
 handle_udp_run(PKT, State) ->
     lager:debug("got unhandled CAPWAP request in run: ~p", [PKT]),
     {next_state, run, State}.
