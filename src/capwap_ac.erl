@@ -167,11 +167,19 @@ init([Peer]) ->
 %%                   {stop, Reason, NewState}
 %% @end
 %%--------------------------------------------------------------------
-listen({accept, udp, Socket}, State) ->
+listen({accept, udp, Socket}, State0) ->
     capwap_udp:setopts(Socket, [{active, true}, {mode, binary}]),
     lager:info("udp_accept: ~p~n", [Socket]),
-
-    next_state(idle, State#state{socket = {udp, Socket}, id = undefined});
+    State1 = case application:get_env(capwap, dtls) of
+        {ok, false} ->
+            {ok, Session} = start_session(Socket, State0),
+            {ok, {Address, _Port}} = capwap_udp:peername(Socket),
+            State0#state{event_log = open_log(),
+                         session = Session};
+        _ ->
+            State0
+    end,
+    next_state(idle, State1#state{socket = {udp, Socket}, id = undefined});
 
 listen({accept, dtls, Socket}, State) ->
     lager:info("ssl_accept on: ~p~n", [Socket]),
@@ -183,30 +191,13 @@ listen({accept, dtls, Socket}, State) ->
             {ok, {Address, _Port}} = ssl:peername(SslSocket),
             ssl:setopts(SslSocket, [{active, true}, {mode, binary}]),
 
-            {ok, Cert} = ssl:peercert(SslSocket),
-            #'OTPCertificate'{
-               tbsCertificate =
-               #'OTPTBSCertificate'{
-                  subject = {rdnSequence, SubjectList}
-                 }} = public_key:pkix_decode_cert(Cert, otp),
-            Subject = [erlang:hd(S)|| S <- SubjectList],
-            {value, #'AttributeTypeAndValue'{value = {utf8String, CommonName}}} =
-            lists:keysearch(?'id-at-commonName', #'AttributeTypeAndValue'.type, Subject),
+            CommonName = common_name(SslSocket),
             lager:debug("ssl_cert: ~p~n", [CommonName]),
 
-            case capwap_wtp_reg:lookup(CommonName) of
-                {ok, OldPid} ->
-                    lager:info("take_over: ~p", [OldPid]),
-                    capwap_ac:take_over(OldPid),
-                    ok;
-                _ ->
-                    ok
-            end,
+            maybe_takeover(CommonName),
             capwap_wtp_reg:register_args(CommonName, Address),
 
-            EventLog = start_event_log(CommonName),
-	    
-            State1 = State#state{event_log=EventLog, socket = {dtls, SslSocket}, session = Session, id = CommonName},
+            State1 = State#state{event_log = open_log(), socket = {dtls, SslSocket}, session = Session, id = CommonName},
             %% TODO: find old connection instance, take over their StationState and stop them
             next_state(idle, State1);
         Other ->
@@ -468,7 +459,7 @@ run({del_station, #capwap_header{radio_id = RadioId, wb_id = WBID}, MAC}, State)
     next_state(run, State1);
 
 run({wtp_event_request, Seq, Elements, RequestHeader =
-	 #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags}}, State) ->
+	 #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags}}, State = #state{peer = Peer, id = Id}) ->
     ResponseHeader = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
     State1 = send_response(ResponseHeader, wtp_event_response, Seq, [], State),
     State2 = handle_wtp_event(Elements, RequestHeader, State1),
@@ -479,9 +470,9 @@ run({wtp_event_request, Seq, Elements, RequestHeader =
                                            {FStr ++ "~p(~p), ", FVars ++ [Key, Value]};
                                        (Record, {FStr, FVars}) ->
                                            {FStr ++ "~p, ", FVars ++ [Record]}
-                                   end, {"~p@~p: ", [State#state.id, Now]}, Elements),
+                                   end, {"~p(~p)@~p: ", [Peer, Id, Now]}, Elements),
     EventData = io_lib:format(FormatString ++ "~n", FormatVars),
-    ok = file:write(State#state.event_log, EventData),
+    ok = disk_log:blog(State#state.event_log, EventData),
     State3 = reset_echo_request_timer(State2),
     next_state(run, State3);
 
@@ -609,7 +600,7 @@ handle_info(Info, StateName, State) ->
 %% @end
 %%--------------------------------------------------------------------
 terminate(Reason, StateName,
-	  State = #state{peer_data = PeerId, event_log=EventLog,
+	  State = #state{peer_data = PeerId,
 			 flow_switch = FlowSwitch, socket = Socket,
 			 session = Session}) ->
     error_logger:info_msg("AC session terminating in state ~p with state ~p with reason ~p~n", [StateName, State, Reason]),
@@ -624,7 +615,6 @@ terminate(Reason, StateName,
        true -> ok
     end,
     socket_close(Socket),
-    stop_trace(EventLog),
     ok.
 
 %%--------------------------------------------------------------------
@@ -782,6 +772,24 @@ handle_capwap_packet(Packet, StateName, State = #state{
 	    lager:error([{capwap_packet, decode}, {class, Class}, {error, Error}], "Decode error ~p:~p", [Class, Error]),
 	    {next_state, StateName, State, ?IDLE_TIMEOUT}
     end.
+
+maybe_takeover(CommonName) ->
+    case capwap_wtp_reg:lookup(CommonName) of
+        {ok, OldPid} ->
+            lager:info("take_over: ~p", [OldPid]),
+            capwap_ac:take_over(OldPid);
+        _ ->
+            ok
+    end.
+
+open_log() ->
+    EventLogBasePath = application:get_env(capwap, event_log_base_path, "."),
+    EventLogPath = filename:join([EventLogBasePath, "events-capwap.log"]),
+    lager:info("EventLogP: ~s", [EventLogPath]),
+
+    ok = filelib:ensure_dir(EventLogPath),
+    {ok, EventLog} = disk_log:open([{name, capwap_ac_log}, {file, EventLogPath}, {format, external}, {type, halt}]),
+    EventLog.
 
 handle_wtp_event(Elements, Header, State = #state{session = Session}) ->
     SessionOptsList = lists:foldl(fun(Ev, SOptsList) -> handle_wtp_stats_event(Ev, Header, SOptsList) end, [], Elements),
@@ -1055,11 +1063,6 @@ socket_send({udp, Socket}, Data) ->
 socket_send({dtls, Socket}, Data) ->
     ssl:send(Socket, Data).
 
-stop_trace(undefined) ->
-    ok;
-stop_trace(Trace) ->
-    ok = file:close(Trace).
-
 socket_close({udp, Socket}) ->
     capwap_udp:close(Socket);
 socket_close({dtls, Socket}) ->
@@ -1069,6 +1072,18 @@ socket_close(undefined) ->
 socket_close(Socket) ->
     lager:warning("Got Close on: ~p~n", [Socket]),
     ok.
+
+common_name(SslSocket) ->
+    {ok, Cert} = ssl:peercert(SslSocket),
+    #'OTPCertificate'{
+       tbsCertificate =
+       #'OTPTBSCertificate'{
+          subject = {rdnSequence, SubjectList}
+         }} = public_key:pkix_decode_cert(Cert, otp),
+    Subject = [erlang:hd(S)|| S <- SubjectList],
+    {value, #'AttributeTypeAndValue'{value = {utf8String, CommonName}}} =
+        lists:keysearch(?'id-at-commonName', #'AttributeTypeAndValue'.type, Subject),
+    CommonName.
 
 user_lookup(srp, Username, _UserState) ->
     lager:debug("srp: ~p~n", [Username]),
@@ -1221,12 +1236,3 @@ tuple_to_ip({A, B, C, D}) ->
     <<A:8, B:8, C:8, D:8>>;
 tuple_to_ip({A, B, C, D, E, F, G, H}) ->
     <<A:16, B:16, C:16, D:16, E:16, F:16, G:16, H:16>>.
-
-start_event_log(CommonName) ->
-    EventLogBasePath = application:get_env(capwap, event_log_base_path, "."),
-    EventLogPath = filename:join([EventLogBasePath, ["events-", erlang:binary_to_list(CommonName), ".log"]]),
-    lager:info("EventLogP: ~w", [EventLogPath]),
-    
-    ok = filelib:ensure_dir(EventLogPath),
-    {ok, EventLog} = file:open(EventLogPath, [append]),
-    EventLog.

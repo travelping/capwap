@@ -3,6 +3,14 @@ capwap
 
 Erlang CAPWAP AC implementation.
 
+Version 1.1.6 - 20 Mar 2014
+---------------------------
+
+* internal tests throw a mock wtp implementation
+* implement request queue, allow only one outstanding request
+* add power save mode attribute to the coder
+* capwap ac logs only in one logfile
+
 Version 1.1.5 - 21 Feb 2014
 ---------------------------
 
