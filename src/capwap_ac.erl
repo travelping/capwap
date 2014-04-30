@@ -47,7 +47,8 @@
 	  echo_request_timeout,
 	  seqno = 0,
 	  version,
-	  event_log
+	  event_log,
+      station_count = 0
 }).
 
 -ifdef(debug).
@@ -179,8 +180,7 @@ listen({accept, udp, Socket}, State0) ->
         _ ->
             State0
     end,
-    State2 = State1#state{socket = {udp, Socket}, id = undefined},
-    next_state(idle, State2);
+    next_state(idle, State1#state{socket = {udp, Socket}, id = undefined});
 
 listen({accept, dtls, Socket}, State) ->
     lager:info("ssl_accept on: ~p~n", [Socket]),
@@ -324,26 +324,35 @@ data_check({Msg, Seq, Elements, Header}, State) ->
     next_state(data_check, State).
 
 run({new_station, BSS, SA}, _From, State = #state{peer_data = PeerId, flow_switch = FlowSwitch,
-                                                  mac_mode = MacMode, tunnel_mode = TunnelMode}) ->
+                                                  mac_mode = MacMode, tunnel_mode = TunnelMode,
+                                                  station_count  = StationCount}) ->
     lager:info("in RUN got new_station: ~p", [SA]),
 
     lager:debug("search for station ~p", [{self(), SA}]),
+    [MaxStations] = dyn_wtp_config_get(State, [{max_stations, max_stations, 'TP-CAPWAP-Max-WIFI-Clients', 100}]),
+    WTPFullPred = StationCount + 1 > MaxStations,
     %% we have to repeat the search again to avoid a race
-    Reply = case capwap_station_reg:lookup(self(), SA) of
-		not_found ->
-		    lager:debug("station not found: ~p", [{self(), SA}]),
-		    case capwap_station_reg:lookup(SA) of
-			not_found ->
-			    capwap_station_sup:new_station(self(), FlowSwitch, PeerId, BSS, SA, MacMode, TunnelMode);
-			{ok, Station0} ->
-			    lager:debug("TAKE-OVER: station ~p found as ~p", [{self(), SA}, Station0]),
-			    ieee80211_station:take_over(Station0, self(), FlowSwitch, PeerId, BSS, MacMode, TunnelMode)
-		    end;
-		Ok = {ok, Station0} ->
-		    lager:debug("station ~p found as ~p", [{self(), SA}, Station0]),
-		    Ok
-	    end,
-    reply(Reply, run, State);
+    {State0, Reply} =
+        case {capwap_station_reg:lookup(self(), SA),  WTPFullPred} of
+            {not_found, true} ->
+                lager:debug("Station ~p trying to associate, but wtp is full: ~p >= ~p~n", [SA, StationCount, MaxStations]),
+                {State, {error, too_many_clients}};
+            {not_found, false} ->
+                case capwap_station_reg:lookup(SA) of
+                    not_found ->
+                        lager:debug("starting station: ~p", [SA]),
+                        {State#state{station_count = StationCount + 1},
+                         capwap_station_sup:new_station(self(), FlowSwitch, PeerId, BSS, SA, MacMode, TunnelMode)};
+                    {ok, Station0} ->
+                        lager:debug("TAKE-OVER: station ~p found as ~p", [{self(), SA}, Station0]),
+                        {State#state{station_count = StationCount + 1},
+                         ieee80211_station:take_over(Station0, self(), FlowSwitch, PeerId, BSS, MacMode, TunnelMode)}
+                end;
+            {Ok = {ok, Station0}, _} ->
+                lager:debug("station ~p found as ~p", [{self(), SA}, Station0]),
+                {State, Ok}
+        end,
+    reply(Reply, run, State0);
 
 run({keep_alive, _FlowSwitch, Sw, _PeerId, Header, PayLoad}, _From, State) ->
     lager:debug("in RUN got expected keep_alive: ~p~n", [{Sw, Header, PayLoad}]),
@@ -1285,3 +1294,30 @@ read_local_config(#state{id = WtpId}) ->
     lager:debug("found config for wtp ~p: ~p", [WtpId, Cnf]),
     Cnf.
 
+get_session_attr(Session, Attr) ->
+    get_session_attr(Session, Attr, error).
+
+get_session_attr(Session, Attr, Default) ->
+    case ctld_session:get(Session, Attr) of
+        error ->
+            Default;
+        {ok, Val} ->
+            Val
+    end.
+
+%% AttrNamesAndDefaults = [{LocalName, RemoteName, Default}, ...]
+dyn_wtp_config_get(State, AttrNamesAndDefaults) when is_list(AttrNamesAndDefaults) ->
+    LocalCnf = read_local_config(State),
+    [dyn_wtp_config_get(State, LocalCnf, AttrSelector)
+     || AttrSelector <- AttrNamesAndDefaults].
+
+dyn_wtp_config_get(#state{session = Session} = State, LocalCnf, {DefaultName, LocalName, RemoteName, Default}) ->
+    LocalValue = dyn_wtp_config_get(State, LocalCnf, {DefaultName, LocalName, Default}),
+    get_session_attr(Session, RemoteName, LocalValue);
+
+dyn_wtp_config_get(State, LocalCnf, {DefaultName, LocalName, Default}) ->
+    DefaultValue = dyn_wtp_config_get(State, LocalCnf, {DefaultName, Default}),
+    proplists:get_value(LocalName, LocalCnf, DefaultValue);
+
+dyn_wtp_config_get(_, _, {DefaultName, Default}) ->
+    application:get_env(capwap, DefaultName, Default).

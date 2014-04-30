@@ -291,10 +291,12 @@ connected(Event, _From, State) ->
 %%
 shutdown(timeout, State) ->
     lager:debug("idle timeout in SHUTDOWN"),
+    gen_fsm:send_all_state_event(State#state.ac, station_terminating),
     {stop, normal, State}.
 
 shutdown(Event, _From, State) ->
     lager:warning("in SHUTDOWN got unexpexted: ~p", [Event]),
+    gen_fsm:send_all_state_event(State#state.ac, station_terminating),
     reply({error, unexpected}, shutdown, State).
 
 handle_event(_Event, StateName, State) ->
@@ -469,6 +471,7 @@ handle_take_over({take_over, AC, FlowSwitch, PeerId, RadioMAC, MacMode, TunnelMo
     erlang:demonitor(OldACMonitor, [flush]),
     ACMonitor = erlang:monitor(process, AC),
 
+    gen_fsm:send_all_state_event(OldAC, station_terminating),
     State = State0#state{ac = AC, ac_monitor = ACMonitor,
 			 flow_switch = FlowSwitch, peer_data = PeerId,
 			 radio_mac = RadioMAC, mac_mode = MacMode,
