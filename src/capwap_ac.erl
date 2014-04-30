@@ -179,7 +179,8 @@ listen({accept, udp, Socket}, State0) ->
         _ ->
             State0
     end,
-    next_state(idle, State1#state{socket = {udp, Socket}, id = undefined});
+    State2 = State1#state{socket = {udp, Socket}, id = undefined},
+    next_state(idle, State2);
 
 listen({accept, dtls, Socket}, State) ->
     lager:info("ssl_accept on: ~p~n", [Socket]),
@@ -259,7 +260,7 @@ join(timeout, State) ->
     lager:info("timeout in JOIN -> stop~n"),
     {stop, normal, State};
 
-join({configuration_status_request, Seq, _Elements, #capwap_header{
+join({configuration_status_request, Seq, Elements, #capwap_header{
 					   radio_id = RadioId, wb_id = WBID, flags = Flags}},
      State) ->
     App = capwap,
@@ -268,7 +269,7 @@ join({configuration_status_request, Seq, _Elements, #capwap_header{
     IdleTimeout = application:get_env(App, idle_timeout, 300),
     DataChannelDeadInterval = application:get_env(App, data_channel_dead_interval, 70),
     ACJoinTimeout = application:get_env(App, ac_join_timeout, 60),
-
+    AdminWlans = get_admin_wifi_updates(State, Elements),
     RespElements = [%%#ac_ipv4_list{ip_address = [<<0,0,0,0>>]},
 		    #timers{discovery = DiscoveryInterval,
 			    echo_request = EchoRequestInterval},
@@ -277,7 +278,8 @@ join({configuration_status_request, Seq, _Elements, #capwap_header{
 		    #decryption_error_report_period{
 			     radio_id = RadioId,
 			     report_interval = 15},
-		    #idle_timeout{timeout = IdleTimeout}],
+		    #idle_timeout{timeout = IdleTimeout}
+                    | AdminWlans],
     Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
     State1 = send_response(Header, configuration_status_response, Seq, RespElements, State),
 
@@ -406,16 +408,16 @@ run(configure, State = #state{id = WtpId}) ->
     RadioId = 1,
     App = capwap,
     DefaultSSID = application:get_env(App, default_ssid, <<"CAPWAP">>),
-    SSIDs = application:get_env(App, ssids, []),
+    SSIDs = wtp_config_get(State, ssids, []),
+    SSIDConf = proplists:get_value(RadioId, SSIDs),
     DynSSIDSuffixLen = application:get_env(App, dynamic_ssid_suffix_len, false),
-    SSID = case proplists:get_value({WtpId, RadioId}, SSIDs) of
-	       undefined
-		 when is_integer(DynSSIDSuffixLen), is_binary(WtpId) ->
+    SSID = case SSIDConf of
+               undefined
+                 when is_integer(DynSSIDSuffixLen), is_binary(WtpId) ->
                    binary:list_to_bin([DefaultSSID, $-, binary:part(WtpId, size(WtpId) - DynSSIDSuffixLen, DynSSIDSuffixLen)]);
-               WtpSSID
-		 when is_binary(WtpSSID) ->
+               WtpSSID when is_binary(WtpSSID) ->
                    WtpSSID;
-	       _ ->
+               _ ->
                    DefaultSSID
            end,
     WBID = 1,
@@ -1236,3 +1238,50 @@ tuple_to_ip({A, B, C, D}) ->
     <<A:8, B:8, C:8, D:8>>;
 tuple_to_ip({A, B, C, D, E, F, G, H}) ->
     <<A:16, B:16, C:16, D:16, E:16, F:16, G:16, H:16>>.
+
+get_admin_wifi_updates(State, IEs) ->
+    StartedWlans = [X || X <- IEs, element(1, X) == ieee_802_11_tp_wlan],
+    lager:debug("Found Admin Wlans started by the WTP: ~p", [StartedWlans]),
+    AdminSSIds = wtp_config_get(State, admin_ssids, []),
+    get_admin_wifi_update(StartedWlans, AdminSSIds).
+
+get_admin_wifi_update(Wlans, AdminSSIds) ->
+    get_admin_wifi_update(Wlans, AdminSSIds, []).
+
+get_admin_wifi_update([], _, Accu) ->
+    Accu;
+
+get_admin_wifi_update([#ieee_802_11_tp_wlan{radio_id = RadioId,
+                                            wlan_id = WlanId,
+                                            ssid = RemoteConfSSId,
+                                            key = RemoteConfKey} = Wlan | RestWlan],
+                      AdminSSIds, Accu) ->
+    {LocalConfSSId, LocalConfKey} =
+        case proplists:get_value({RadioId, WlanId}, AdminSSIds) of
+            {A, B} = V when is_binary(A), is_binary(B) ->
+                V;
+            A when is_binary(A) ->
+                {A, RemoteConfKey};
+            _ ->
+                {RemoteConfSSId, RemoteConfKey}
+        end,
+    if RemoteConfSSId == LocalConfSSId andalso RemoteConfKey == LocalConfKey ->
+            get_admin_wifi_update(RestWlan, AdminSSIds, Accu);
+       true ->
+            lager:debug("Sending ieee_802_11_tp_wlan to change a preconfigured Admin SSID: ~p->~p",
+                        [RemoteConfSSId, LocalConfSSId]),
+            UpdatedWlan = Wlan#ieee_802_11_tp_wlan{ssid = LocalConfSSId, key = LocalConfKey},
+            get_admin_wifi_update(RestWlan, AdminSSIds, [UpdatedWlan | Accu])
+    end.
+
+wtp_config_get(State, Key, Default) ->
+    WtpConfig = read_local_config(State),
+    proplists:get_value(Key, WtpConfig, Default).
+
+read_local_config(#state{id = WtpId}) ->
+    App = capwap,
+    Wtps = application:get_env(App, wtps, []),
+    Cnf = proplists:get_value(WtpId, Wtps, []),
+    lager:debug("found config for wtp ~p: ~p", [WtpId, Cnf]),
+    Cnf.
+

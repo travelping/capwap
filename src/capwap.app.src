@@ -29,11 +29,14 @@
                     {software, <<"SCG">>}]},
         {ac_name, <<"CAPWAP AC">>},
         {default_ssid, <<"DEV CAPWAP WIFI">>},
-        {ssids, []},
         {dynamic_ssid_suffix_len, false},
         {echo_request_interval, 10},
         {discovery_interval, 20},
-        {idle_timeout, 300}
+        {idle_timeout, 300},
+        {wtps, [{<<"id1">>, [{ssids, [{1, <<"SSID">>}]},
+                             {admin_ssids, [{{1,1}, <<"AdminSSID">>}]}]
+                }]
+        }
         %% {ac_ipv4_list, [{92,43,52,4}]}
         %% {ac_address_list_with_prio, [{1, {80,154,129,132}}]}
     ]}
