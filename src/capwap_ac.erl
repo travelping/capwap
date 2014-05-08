@@ -493,6 +493,7 @@ run({firmware_download, DownloadLink, Sha}, State) ->
         sha256_image_hash = Sha,
         download_uri = DownloadLink}],
     Header1 = #capwap_header{radio_id = 1, wb_id = 1, flags = Flags},
+    lager:debug("sending firmware download request: ~p~n", [ReqElements]),
     State1 = send_request(Header1, configuration_update_request, ReqElements, State),
     next_state(run, State1);
 

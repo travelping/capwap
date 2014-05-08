@@ -11,7 +11,7 @@ main(["list"]) ->
 main(["update", CommonName, Link, Hash]) ->
     case catch validate_hash(Hash) of
         {ok, BinaryHash} ->
-            Res = rpc(capwap_ac, firmware_download, [list_to_binary(CommonName), list_to_binary(Link), Hash]),
+            Res = rpc(capwap_ac, firmware_download, [list_to_binary(CommonName), list_to_binary(Link), BinaryHash]),
             io:format(user, "~p~n", [Res]);
         Error ->
             io:format("catch: ~p~n", [Error])
