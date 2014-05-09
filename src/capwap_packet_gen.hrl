@@ -916,7 +916,7 @@ decode_vendor_element({18681,8}, <<M_apn_len:8/integer, M_apn:M_apn_len/bytes,
 decode_vendor_element({18681,9}, <<M_password/binary>>) ->
     #wtp_administrator_password_settings{password = M_password};
 
-decode_vendor_element({18681,10}, <<M_sha256_image_hash:256/binary,
+decode_vendor_element({18681,10}, <<M_sha256_image_hash:32/bytes,
                                     M_download_uri/binary>>) ->
     #firmware_download_information{sha256_image_hash = M_sha256_image_hash,
                                    download_uri = M_download_uri};
@@ -1722,7 +1722,7 @@ encode_element(#wtp_administrator_password_settings{
 encode_element(#firmware_download_information{
                     sha256_image_hash = M_sha256_image_hash,
                     download_uri = M_download_uri}) ->
-    encode_vendor_element({18681,10}, <<M_sha256_image_hash:256,
+    encode_vendor_element({18681,10}, <<M_sha256_image_hash:32/bytes,
                                         M_download_uri/binary>>);
 
 encode_element(#firmware_download_status{

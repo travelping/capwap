@@ -502,7 +502,7 @@
 }).
 
 -record(firmware_download_information, {
-        sha256_image_hash = <<>>,
+        sha256_image_hash = <<0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0>>,
         download_uri = <<>>
 }).
 

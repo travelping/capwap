@@ -378,7 +378,7 @@ vendor_ies() ->
      {{18681, 9}, "WTP Administrator Password Settings",
       [{"Password", 0, binary}]},
      {{18681, 10}, "Firmware Download Information",
-      [{"SHA256 Image Hash", 256, binary},
+      [{"SHA256 Image Hash", 32, bytes},
        {"Download URI", 0, binary}]},
      {{18681, 11}, "Firmware Download Status",
       [{"Status", 16, {enum, [reserved, in_progress, download_finished_successfully, download_failed]}},
