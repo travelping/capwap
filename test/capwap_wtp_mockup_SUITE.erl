@@ -2,50 +2,46 @@
 -module(capwap_wtp_mockup_SUITE).
 
 -compile(export_all).
+-compile({parse_transform, lager_transform}).
 
 -include_lib("common_test/include/ct.hrl").
 
 suite() ->
-    [{timetrap,{seconds,30}}].
+    [{timetrap,{minutes,5}}].
 
 init_per_suite(Config) ->
     setup_applications(),
     Config.
 
-end_per_suite(_Config) ->
-    ok.
+all() ->
+    [load_local].
 
-init_per_group(_GroupName, Config) ->
-    Config.
 
-end_per_group(_GroupName, _Config) ->
-    ok.
+load_local(Config) ->
+    [WaitFor, KeepRunningFor, WtpCount, KeepAliveTimeout] =
+	get_config([{wait_for, 0},
+                {keep_running_for, 2000},
+                {multi_wtp_count, 10},
+                {keep_alive_timeout, 1}]),
+    CertDir = "",
+    RootCert = "",
 
-init_per_testcase(_TestCase, Config) ->
-    {ok, CS} = wtp_mockup_fsm:start_link(),
-    [{control_socket, CS} | Config].
+    StartTimeouts = [Index * 100 || Index <- lists:seq(1, WtpCount)],
+    IPs = generate_ip_addresses({127,0,0,1}, WtpCount),
+    TimeoutsAndIPs = lists:zip(StartTimeouts, IPs),
+    Helper = fun({StartTimeout, IP}) ->
+                     timer:sleep(StartTimeout),
+                     start_wtp({{127,0,0,1}, 5246}, CertDir, RootCert, WaitFor, IP, false, [{data_keep_alive_timeout, KeepAliveTimeout}])
+             end,
+    WTPs = pmap(Helper, TimeoutsAndIPs),
 
-end_per_testcase(_TestCase, _Config) ->
-    ok.
-
-groups() ->
-    [].
-
-all() -> 
-    [discovery].
-
-discovery() -> 
-    [].
-
-discovery(Config) -> 
-    CS = proplists:get_value(control_socket, Config),
-    ok = wtp_mockup_fsm:send_discovery(CS),
-    ok = wtp_mockup_fsm:send_join(CS),
-    ok = wtp_mockup_fsm:send_config_status(CS),
-    ok = wtp_mockup_fsm:send_change_state_event(CS),
-    ok = wtp_mockup_fsm:send_wwan_statistics(CS),
-    ok = wtp_mockup_fsm:add_station(CS, <<144,39,228,64,185,19>>),
-    timer:sleep(5000).
+    WTPsAndIPs = lists:zip(WTPs, IPs),
+    pmap(fun({WTP, {A, B, C, D}}) ->
+                 ok = wtp_mockup_fsm:add_station(WTP, <<144, 39, A, B, C, D>>)
+         end,
+         WTPsAndIPs),
+    timer:sleep(KeepRunningFor),
+    WTPs.
 
 setup_applications() ->
     {ok, CWD} = file:get_cwd(),
@@ -69,7 +65,7 @@ setup_applications() ->
 	    {capwap, [{server_ip, {127, 0, 0, 1}},
 		      {enforce_dtls_control, false},
 		      {ctld_provider, {ctld_mock, [{secret, <<"MySecret">>}]}},
-		      {server_socket_opts, [{netns, CWD ++ "/upstream"}, {recbuf, 1048576}, {sndbuf, 1048576}]}
+		      {server_socket_opts, [{recbuf, 1048576}, {sndbuf, 1048576}]}
 		     ]}
 	   ],
     [setup_application(A) || A <- Apps].
@@ -81,3 +77,71 @@ setup_application({Name, Env}) ->
 
 setup_application(Name) ->
     setup_application({Name, []}).
+
+start_wtp(SCG, CertDir, RootCert, WaitFor, IP, UseDtls) ->
+    start_wtp(SCG, CertDir, RootCert, WaitFor, IP, UseDtls, []).
+
+start_wtp(SCG, CertDir, RootCert, WaitFor, IP, UseDtls, Options) ->
+    {ok, CS} = wtp_mockup_fsm:start_link(SCG, IP, 5248, CertDir, RootCert, <<8,8,8,8,8,8>>, UseDtls, Options),
+    ok = wtp_mockup_fsm:send_discovery(CS),
+    timer:sleep(WaitFor),
+    ok = wtp_mockup_fsm:send_join(CS),
+    timer:sleep(WaitFor),
+    ok = wtp_mockup_fsm:send_config_status(CS),
+    timer:sleep(WaitFor),
+    ok = wtp_mockup_fsm:send_change_state_event(CS),
+    timer:sleep(WaitFor),
+    ok = wtp_mockup_fsm:send_wwan_statistics(CS),
+    CS.
+
+
+tuple_to_integer_ip({A, B, C, D}) ->
+    <<IP:32/integer>> = <<A:8, B:8, C:8, D:8>>,
+    IP;
+tuple_to_integer_ip({A, B, C, D, E, F, G, H}) ->
+    <<IP:128/integer>> = <<A:16, B:16, C:16, D:16, E:16, F:16, G:16, H:16>>,
+    IP.
+
+integer_ip_to_tuple(IP)
+  when IP < 16#100000000 ->
+    <<A:8, B:8, C:8, D:8>> = <<IP:32>>,
+    {A, B, C, D};
+integer_ip_to_tuple(IP) ->
+    <<A:16, B:16, C:16, D:16, E:16, F:16, G:16, H:16>> = <<IP:128>>,
+    {A, B, C, D, E, F, G, H}.
+
+%% generates the next Num ip-addresses, starting with FromIp
+generate_ip_addresses(Start, Count) ->
+    generate_ip_addresses(tuple_to_integer_ip(Start), Count, []).
+
+generate_ip_addresses(_, 0, Acc) ->
+    lists:reverse(Acc);
+generate_ip_addresses(IP, N, Acc) ->
+    generate_ip_addresses(IP + 1, N - 1, [integer_ip_to_tuple(IP)|Acc]).
+
+pmap(F, L) ->
+    pmap(F, L, infinity).
+
+pmap(F, L, Timeout) ->
+    Parent = self(),
+    Pids = [proc_lib:spawn(fun() -> Parent ! {self(), F(X)} end) || X <- L],
+    lists:map(
+        fun(Pid) ->
+            receive {Pid, Result} ->
+	            Result
+            after Timeout ->
+                      {error, timeout}
+            end
+        end, Pids).
+
+get_multi_cert_paths(undefined) ->
+    [];
+
+get_multi_cert_paths(MultiCertDir) ->
+    {ok, Filenames} = file:list_dir(MultiCertDir),
+    [filename:join(MultiCertDir, FN) || FN <- Filenames].
+
+get_config(KeyDefaults) when is_list(KeyDefaults) ->
+    Conf = [application:get_env(capwap, Key, Default) || {Key, Default} <- KeyDefaults],
+    lager:debug("reading config from fake application capwap_wtp_mockup : ~p", [Conf]),
+    Conf.

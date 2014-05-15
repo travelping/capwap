@@ -12,7 +12,6 @@
     ]},
     {mod, { capwap_app, []}},
     {env, [
-        {dtls, true},
         {server_ip, {172,28,0,1}},
         {server_socket_opts, [{netns, "/var/run/netns/upstream"}, {recbuf, 1048576}, {sndbuf, 1048576}]},
         %%  {ctld_provider, {ctld_mock, [{secret, <<"MySecret">>}]}}

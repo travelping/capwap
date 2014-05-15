@@ -171,15 +171,9 @@ init([Peer]) ->
 listen({accept, udp, Socket}, State0) ->
     capwap_udp:setopts(Socket, [{active, true}, {mode, binary}]),
     lager:info("udp_accept: ~p~n", [Socket]),
-    State1 = case application:get_env(capwap, dtls) of
-        {ok, false} ->
-            {ok, Session} = start_session(Socket, State0),
-            {ok, {Address, _Port}} = capwap_udp:peername(Socket),
-            State0#state{event_log = open_log(),
-                         session = Session};
-        _ ->
-            State0
-    end,
+    {ok, Session} = start_session(Socket, State0),
+    State1 = State0#state{event_log = open_log(),
+                          session = Session},
     next_state(idle, State1#state{socket = {udp, Socket}, id = undefined});
 
 listen({accept, dtls, Socket}, State) ->
