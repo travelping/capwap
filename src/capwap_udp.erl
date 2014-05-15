@@ -120,7 +120,7 @@ shutdown(Socket, How) ->
     call(Socket, shutdown, How).
 
 %% map UDP port info's to three-tupple format
-handle_ssl_info(Socket, {udp, Socket, _Address, _Port, Packet}) ->
+handle_ssl_info(Socket, {udp, Socket, _Address, _Port, <<0:4, 1:4, _:3/bytes, Packet/binary>>}) ->
     {next, {?PROTOCOL, Socket, Packet}};
 handle_ssl_info(_, Info) ->
     Info.
