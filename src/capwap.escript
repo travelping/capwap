@@ -17,6 +17,17 @@ main(["update", CommonName, Link, Hash]) ->
             io:format("catch: ~p~n", [Error])
     end;
 
+main(["set-ssid", CommonName, SSID]) ->
+    main(["set-ssid", CommonName, SSID, "1"]);
+
+main(["set-ssid", CommonName, SSID, RadioID]) ->
+    Res = rpc(capwap_ac, set_ssid, [list_to_binary(CommonName), list_to_binary(SSID), list_to_integer(RadioID)]),
+    io:format("~nResult: ~p~n", [Res]);
+
+main(["stop-radio", CommonName, RadioID]) ->
+    Res = rpc(capwap_ac, stop_radio, [list_to_binary(CommonName), list_to_integer(RadioID)]),
+    io:format("~nResult: ~p~n", [Res]);
+
 main(_) ->
     io:format("unknown command or arguments~n"),
     help().
@@ -25,8 +36,10 @@ help() ->
     SN = escript:script_name(),
     io:format("Usage: ~s <command> <args...>~n"
               "Commands:~n"
-              "  list                               → list all registered wtps~n"
-              "  update <common name> <link> <hash> → update wtp~n", [SN]).
+              "  list                                        → list all registered wtps~n"
+              "  update <common name> <link> <hash>          → update wtp~n"
+              "  set-ssid <common name> <SSID> [RadioID]     → set ssid~n"
+              "  stop-radio <common name> <RadioID>          → stop wifi radio~n", [SN]).
 
 rpc(Module, Function, Args) ->
     enit:call("capwap", [{match, true}], Module, Function, Args).

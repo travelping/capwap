@@ -6,7 +6,9 @@
 -export([start_link/1, accept/3, get_peer_data/1, take_over/1, new_station/3]).
 
 %% Extern API
--export([firmware_download/3]).
+-export([firmware_download/3,
+         set_ssid/3,
+         stop_radio/2]).
 
 %% gen_fsm callbacks
 -export([init/1, listen/2, idle/2, join/2, configure/2, data_check/2, run/2,
@@ -48,8 +50,16 @@
 	  seqno = 0,
 	  version,
 	  event_log,
-      station_count = 0
+          station_count = 0,
+          radios
 }).
+
+-record(radio, {
+          radio_id,
+          ssid,
+          started = false,
+          reply_to_after_start
+         }).
 
 -ifdef(debug).
 -define(SERVER_OPTS, [{debug, [trace]}]).
@@ -131,6 +141,22 @@ firmware_download(CommonName, DownloadLink, Sha) ->
             {error, not_found}
     end.
 
+set_ssid(CommonName, SSID, RadioID) ->
+    case capwap_wtp_reg:lookup(CommonName) of
+        {ok, Pid} ->
+            gen_fsm:sync_send_all_state_event(Pid, {set_ssid, SSID, RadioID});
+        not_found ->
+            {error, not_found}
+    end.
+
+stop_radio(CommonName, RadioID) ->
+    case capwap_wtp_reg:lookup(CommonName) of
+        {ok, Pid} ->
+            gen_fsm:sync_send_all_state_event(Pid, {stop_radio, RadioID});
+        not_found ->
+            {error, not_found}
+    end.
+
 %%%===================================================================
 %%% gen_fsm callbacks
 %%%===================================================================
@@ -151,7 +177,8 @@ firmware_download(CommonName, DownloadLink, Sha) ->
 init([Peer]) ->
     process_flag(trap_exit, true),
     capwap_wtp_reg:register(Peer),
-    {ok, listen, #state{peer = Peer, request_queue = queue:new()}, 5000}.
+    {ok, listen, #state{peer = Peer, request_queue = queue:new(),
+                        radios = []}, 5000}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -366,17 +393,26 @@ run({echo_request, Seq, Elements, #capwap_header{
     next_state(run, State2);
 
 run({ieee_802_11_wlan_configuration_response, _Seq,
-	   Elements, _Header}, State) ->
-    case proplists:get_value(result_code, Elements) of
-	0 ->
-	    lager:debug("IEEE 802.11 WLAN Configuration ok"),
-	    ok;
-	Code ->
-	    lager:warning("IEEE 802.11 WLAN Configuration failed with ~w~n", [Code]),
-	    ok
-    end,
-    State1 = reset_echo_request_timer(State),
-    next_state(run, State1);
+     Elements, _Header}, State = #state{}) ->
+    State1 =
+        case proplists:get_value(result_code, Elements) of
+            0 ->
+                lager:debug("IEEE 802.11 WLAN Configuration ok"),
+                case lists:keyfind(false, #radio.started, State#state.radios) of
+                    #radio{ssid = SSID, radio_id = RadioId,
+                           reply_to_after_start=From} ->
+                        State0 = internal_add_wlan(State, SSID, RadioId),
+                        gen_fsm:reply(From, ok),
+                        State0;
+                    _ ->
+                        State
+                end;
+            Code ->
+                lager:warning("IEEE 802.11 WLAN Configuration failed with ~w~n", [Code]),
+                State
+        end,
+    State2 = reset_echo_request_timer(State1),
+    next_state(run, State2);
 
 run({station_configuration_response, _Seq,
      Elements, _Header}, State) ->
@@ -423,24 +459,8 @@ run(configure, State = #state{id = WtpId}) ->
                _ ->
                    DefaultSSID
            end,
-    WBID = 1,
-    Flags = [{frame,'802.3'}],
-    MacMode = select_mac_mode(State#state.mac_types),
-    TunnelMode = select_tunnel_mode(State#state.tunnel_modes, MacMode),
-    ReqElements = [#ieee_802_11_add_wlan{
-    		      radio_id      = RadioId,
-    		      wlan_id       = 1,
-    		      capability    = [ess, short_slot_time],
-    		      auth_type     = open_system,
-    		      mac_mode      = MacMode,
-    		      tunnel_mode   = TunnelMode,
-    		      suppress_ssid = 1,
-		      ssid          = SSID
-    		     }],
-    Header1 = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
-    State1 = State#state{mac_mode = MacMode, tunnel_mode = TunnelMode},
-    State2 = send_request(Header1, ieee_802_11_wlan_configuration_request, ReqElements, State1),
-    next_state(run, State2);
+    State1 = internal_add_wlan(State, SSID, RadioId),
+    next_state(run, State1);
 
 run({add_station, #capwap_header{radio_id = RadioId, wb_id = WBID}, MAC}, State) ->
     Flags = [{frame,'802.3'}],
@@ -549,6 +569,33 @@ handle_event(_Event, StateName, State) ->
 %%                   {stop, Reason, Reply, NewState}
 %% @end
 %%--------------------------------------------------------------------
+handle_sync_event({set_ssid, SSID, RadioId}, From, run, State) ->
+    case get_radio(State, RadioId) of
+        false ->
+            State1 = internal_add_wlan(State, SSID, RadioId),
+            reply(ok, run, State1);
+        #radio{} ->
+            State1 = internal_del_wlan(State, RadioId),
+            State2 = set_radio(State1, #radio{started=false,
+                                              reply_to_after_start=From,
+                                              ssid = SSID,
+                                              radio_id = RadioId}),
+            next_state(run, State2)
+    end;
+
+handle_sync_event({stop_radio, RadioId}, _From, run, State) ->
+    case get_radio(State, RadioId) of
+        false ->
+            reply({error, not_active}, run, State);
+        #radio{} ->
+            State1 = internal_del_wlan(State, RadioId),
+            reply(ok, run, State1)
+    end;
+
+handle_sync_event({set_ssid, _SSID, _RadioId}, _From, StateName, State)
+  when StateName =/= run ->
+    reply({error, not_in_run_state}, StateName, State);
+
 handle_sync_event(get_peer_data, _From, run, State) ->
     Reply = {ok, State#state.peer_data},
     reply(Reply, run, State);
@@ -1242,6 +1289,53 @@ tuple_to_ip({A, B, C, D}) ->
     <<A:8, B:8, C:8, D:8>>;
 tuple_to_ip({A, B, C, D, E, F, G, H}) ->
     <<A:16, B:16, C:16, D:16, E:16, F:16, G:16, H:16>>.
+
+internal_add_wlan(State, SSID, RadioID) ->
+    WBID = 1,
+    Flags = [{frame,'802.3'}],
+    MacMode = select_mac_mode(State#state.mac_types),
+    TunnelMode = select_tunnel_mode(State#state.tunnel_modes, MacMode),
+    Header = #capwap_header{radio_id = RadioID, wb_id = WBID, flags = Flags},
+    State0 = State#state{mac_mode = MacMode, tunnel_mode = TunnelMode},
+    ReqElements = [#ieee_802_11_add_wlan{
+                      radio_id      = RadioID,
+                      wlan_id       = 1,
+                      capability    = [ess, short_slot_time],
+                      auth_type     = open_system,
+                      mac_mode      = MacMode,
+                      tunnel_mode   = TunnelMode,
+                      suppress_ssid = 1,
+                      ssid          = SSID
+                     }],
+    State1 = send_request(Header, ieee_802_11_wlan_configuration_request, ReqElements, State0),
+    set_radio(State1, #radio{radio_id = RadioID, ssid = SSID, started = true}).
+
+internal_del_wlan(State, RadioID) ->
+    WBID = 1,
+    Flags = [{frame,'802.3'}],
+    MacMode = select_mac_mode(State#state.mac_types),
+    TunnelMode = select_tunnel_mode(State#state.tunnel_modes, MacMode),
+    Header = #capwap_header{radio_id = RadioID, wb_id = WBID, flags = Flags},
+    State0 = State#state{mac_mode = MacMode, tunnel_mode = TunnelMode},
+    ReqElemDel = [#ieee_802_11_delete_wlan{
+                     radio_id = RadioID,
+                     wlan_id = 1}
+                 ],
+    State1 = send_request(Header, ieee_802_11_wlan_configuration_request, ReqElemDel, State0),
+    remove_radio(State1, RadioID).
+
+remove_radio(State = #state{radios = Radios}, RadioId) ->
+    LessRadios = lists:keydelete(RadioId, 2, Radios),
+    State#state{radios = LessRadios}.
+
+get_radio(#state{radios = Radios}, RadioId) ->
+    lists:keyfind(RadioId, #radio.radio_id, Radios).
+
+set_radio(State = #state{radios=Radios}, Radio = #radio{radio_id = RadioId})
+  when is_integer(RadioId), RadioId > 0 ->
+    Radios1 = lists:keystore(RadioId, #radio.radio_id, Radios, Radio),
+    State#state{radios = Radios1}.
+
 
 get_admin_wifi_updates(State, IEs) ->
     StartedWlans = [X || X <- IEs, element(1, X) == ieee_802_11_tp_wlan],
