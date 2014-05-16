@@ -199,9 +199,12 @@ listen({accept, udp, Socket}, State0) ->
     capwap_udp:setopts(Socket, [{active, true}, {mode, binary}]),
     lager:info("udp_accept: ~p~n", [Socket]),
     {ok, Session} = start_session(Socket, State0),
+
     State1 = State0#state{event_log = open_log(),
-                          session = Session},
-    next_state(idle, State1#state{socket = {udp, Socket}, id = undefined});
+                          session = Session,
+                          socket = {udp, Socket},
+                          id = undefined},
+    next_state(idle, State1);
 
 listen({accept, dtls, Socket}, State) ->
     lager:info("ssl_accept on: ~p~n", [Socket]),
@@ -284,23 +287,36 @@ join(timeout, State) ->
 join({configuration_status_request, Seq, Elements, #capwap_header{
 					   radio_id = RadioId, wb_id = WBID, flags = Flags}},
      State) ->
-    App = capwap,
-    EchoRequestInterval = application:get_env(App, echo_request_interval, 10),
-    DiscoveryInterval = application:get_env(App, discovery_interval, 20),
-    IdleTimeout = application:get_env(App, idle_timeout, 300),
-    DataChannelDeadInterval = application:get_env(App, data_channel_dead_interval, 70),
-    ACJoinTimeout = application:get_env(App, ac_join_timeout, 60),
+    SessionAttrs = ['TP-CAPWAP-Power-Save-Idle-Timeout',
+                    'TP-CAPWAP-Power-Save-Busy-Timeout',
+                    'CAPWAP-Echo-Request-Interval',
+                    'CAPWAP-Discovery-Interval',
+                    'CAPWAP-Idle-Timeout',
+                    'CAPWAP-Data-Channel-Dead-Interval',
+                    'CAPWAP-AC-Join-Timeout'],
+    [PSMIdleTimeout, PSMBusyTimeout, EchoRequestInterval, DiscoveryInterval,
+     IdleTimeout, DataChannelDeadInterval, ACJoinTimeout] =
+        [Val || {ok, Val} <- [ctld_session:get(State#state.session, Key) || Key <- SessionAttrs]],
+    %% only add admin pw when defined
+    AdminPwIE = case ctld_session:get(State#state.session, 'CAPWAP-Admin-PW') of
+                    {ok, Val} when is_binary(Val) ->
+                        [#wtp_administrator_password_settings{password = Val}];
+                    _ ->
+                        []
+                end,
     AdminWlans = get_admin_wifi_updates(State, Elements),
     RespElements = [%%#ac_ipv4_list{ip_address = [<<0,0,0,0>>]},
-		    #timers{discovery = DiscoveryInterval,
-			    echo_request = EchoRequestInterval},
-		    #tp_data_channel_dead_interval{data_channel_dead_interval = DataChannelDeadInterval},
-		    #tp_ac_join_timeout{ac_join_timeout = ACJoinTimeout},
-		    #decryption_error_report_period{
-			     radio_id = RadioId,
-			     report_interval = 15},
-		    #idle_timeout{timeout = IdleTimeout}
-                    | AdminWlans],
+                    #timers{discovery = DiscoveryInterval,
+                            echo_request = EchoRequestInterval},
+                    #tp_data_channel_dead_interval{data_channel_dead_interval = DataChannelDeadInterval},
+                    #tp_ac_join_timeout{ac_join_timeout = ACJoinTimeout},
+                    #decryption_error_report_period{
+                       radio_id = RadioId,
+                       report_interval = 15},
+                    #idle_timeout{timeout = IdleTimeout},
+                    #power_save_mode{idle_timeout = PSMIdleTimeout,
+                                     busy_timeout = PSMBusyTimeout}
+                    ] ++ AdminPwIE ++ AdminWlans,
     Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
     State1 = send_response(Header, configuration_status_response, Seq, RespElements, State),
 
@@ -346,13 +362,13 @@ data_check({Msg, Seq, Elements, Header}, State) ->
 
 run({new_station, BSS, SA}, _From, State = #state{peer_data = PeerId, flow_switch = FlowSwitch,
                                                   mac_mode = MacMode, tunnel_mode = TunnelMode,
-                                                  station_count  = StationCount}) ->
+                                                  station_count  = StationCount,
+                                                  session=Session}) ->
     lager:info("in RUN got new_station: ~p", [SA]),
-
-    lager:debug("search for station ~p", [{self(), SA}]),
-    [MaxStations] = dyn_wtp_config_get(State, [{max_stations, max_stations, 'TP-CAPWAP-Max-WIFI-Clients', 100}]),
+    MaxStations = ctld_session:get(Session, 'TP-CAPWAP-Max-WIFI-Clients'),
     WTPFullPred = StationCount + 1 > MaxStations,
     %% we have to repeat the search again to avoid a race
+    lager:debug("search for station ~p", [{self(), SA}]),
     {State0, Reply} =
         case {capwap_station_reg:lookup(self(), SA),  WTPFullPred} of
             {not_found, true} ->
@@ -442,23 +458,10 @@ run({configuration_update_responce, _Seq,
     State1 = reset_echo_request_timer(State),
     next_state(run, State1);
 
-run(configure, State = #state{id = WtpId}) ->
+run(configure, State = #state{id = WtpId, session = Session}) ->
     lager:debug("configure WTP: ~p", [WtpId]),
     RadioId = 1,
-    App = capwap,
-    DefaultSSID = application:get_env(App, default_ssid, <<"CAPWAP">>),
-    SSIDs = wtp_config_get(State, ssids, []),
-    SSIDConf = proplists:get_value(RadioId, SSIDs),
-    DynSSIDSuffixLen = application:get_env(App, dynamic_ssid_suffix_len, false),
-    SSID = case SSIDConf of
-               undefined
-                 when is_integer(DynSSIDSuffixLen), is_binary(WtpId) ->
-                   binary:list_to_bin([DefaultSSID, $-, binary:part(WtpId, size(WtpId) - DynSSIDSuffixLen, DynSSIDSuffixLen)]);
-               WtpSSID when is_binary(WtpSSID) ->
-                   WtpSSID;
-               _ ->
-                   DefaultSSID
-           end,
+    {ok, SSID} = ctld_session:get(Session, 'TP-CAPWAP-SSID'),
     State1 = internal_add_wlan(State, SSID, RadioId),
     next_state(run, State1);
 
@@ -1148,7 +1151,8 @@ user_lookup(psk, Username, Session) ->
     lager:debug("user_lookup: Username: ~p~n", [Username]),
     Opts = [{'Username', Username},
 	    {'Authentication-Method', {'TLS', 'Pre-Shared-Key'}}],
-    case ctld_session:authenticate(Session, Opts) of
+    WtpConfigOpts = create_initial_ctld_params(Username),
+    case ctld_session:authenticate(Session, [Opts | WtpConfigOpts]) of
 	success ->
 	    lager:info("AuthResult: success~n"),
 	    case ctld_session:get(Session, 'TLS-Pre-Shared-Key') of
@@ -1190,7 +1194,8 @@ verify_cert(#'OTPCertificate'{
 verify_cert_auth_cn(CommonName, Session) ->
     Opts = [{'Username', CommonName},
 	    {'Authentication-Method', {'TLS', 'X509-Subject-CN'}}],
-    case ctld_session:authenticate(Session, Opts) of
+    WtpConfigOpts = create_initial_ctld_params(CommonName),
+    case ctld_session:authenticate(Session, [Opts| WtpConfigOpts]) of
         success ->
             lager:info("AuthResult: success for ~p", [CommonName]),
             {valid, Session};
@@ -1290,6 +1295,60 @@ tuple_to_ip({A, B, C, D}) ->
 tuple_to_ip({A, B, C, D, E, F, G, H}) ->
     <<A:16, B:16, C:16, D:16, E:16, F:16, G:16, H:16>>.
 
+%% AttrNamesAndDefaults = [{LocalName, RemoteName, Default}, ...]
+wtp_config_get(CommonName, AttrNamesAndDefaults) when is_list(AttrNamesAndDefaults) ->
+    App = capwap,
+    Wtps = application:get_env(App, wtps, []),
+    LocalCnf = proplists:get_value(CommonName, Wtps, []),
+    lager:debug("found config for wtp ~p: ~p", [CommonName, LocalCnf]),
+
+    [wtp_config_get(LocalCnf, AttrSelector)
+     || AttrSelector <- AttrNamesAndDefaults];
+
+wtp_config_get(LocalCnf, {DefaultName, LocalName, Default}) ->
+    DefaultValue = wtp_config_get(LocalCnf, {DefaultName, Default}),
+    proplists:get_value(LocalName, LocalCnf, DefaultValue);
+
+wtp_config_get(_, {DefaultName, Default}) ->
+    application:get_env(capwap, DefaultName, Default).
+
+create_initial_ctld_params(CommonName) ->
+    [PsmIdle, PsmBusy, MaxWifi, SSIDs, DefaultSSID, DynSSIDSuffixLen, EchoRequestInterval,
+     DiscoveryInterval, IdleTimeout, DataChannelDeadInterval, ACJoinTimeout, AdminPW] =
+        wtp_config_get(CommonName,
+                       [{psm_idle_timeout, psm_idle_timeout, 30},
+                        {psm_busy_timeout, psm_busy_timeout, 300},
+                        {max_stations, max_stations, 100},
+                        {ssids, ssids, []},
+                        {default_ssid, <<"CAPWAP">>},
+                        {dynamic_ssid_suffix_len, false},
+                        {echo_request_interval, 10},
+                        {discovery_interval, 20},
+                        {idle_timeout, 300},
+                        {data_channel_dead_interval, 70},
+                        {ac_join_timeout, 60},
+                        {default_admin_pw, admin_pw, undefined}
+                       ]),
+    RadioId = 1,
+    SSID = proplists:get_value(RadioId, SSIDs),
+    SSID2 = case SSID of
+                undefined when is_integer(DynSSIDSuffixLen), is_binary(CommonName) ->
+                    binary:list_to_bin([DefaultSSID, $-, binary:part(CommonName, size(CommonName) - DynSSIDSuffixLen, DynSSIDSuffixLen)]);
+                undefined -> DefaultSSID;
+                _ -> SSID
+            end,
+    [{'TP-CAPWAP-Power-Save-Idle-Timeout', PsmIdle},
+     {'TP-CAPWAP-Power-Save-Busy-Timeout', PsmBusy},
+     {'TP-CAPWAP-Max-WIFI-Clients', MaxWifi},
+     {'TP-CAPWAP-SSID', SSID2},
+     {'CAPWAP-Echo-Request-Interval', EchoRequestInterval},
+     {'CAPWAP-Discovery-Interval', DiscoveryInterval},
+     {'CAPWAP-Idle-Timeout', IdleTimeout},
+     {'CAPWAP-Data-Channel-Dead-Interval', DataChannelDeadInterval},
+     {'CAPWAP-AC-Join-Timeout', ACJoinTimeout},
+     {'CAPWAP-Admin-PW', AdminPW}
+    ].
+
 internal_add_wlan(State, SSID, RadioID) ->
     WBID = 1,
     Flags = [{frame,'802.3'}],
@@ -1336,11 +1395,10 @@ set_radio(State = #state{radios=Radios}, Radio = #radio{radio_id = RadioId})
     Radios1 = lists:keystore(RadioId, #radio.radio_id, Radios, Radio),
     State#state{radios = Radios1}.
 
-
 get_admin_wifi_updates(State, IEs) ->
     StartedWlans = [X || X <- IEs, element(1, X) == ieee_802_11_tp_wlan],
     lager:debug("Found Admin Wlans started by the WTP: ~p", [StartedWlans]),
-    AdminSSIds = wtp_config_get(State, admin_ssids, []),
+    AdminSSIds = wtp_config_get(State#state.id, [{admin_ssids, admin_ssids, []}]),
     get_admin_wifi_update(StartedWlans, AdminSSIds).
 
 get_admin_wifi_update(Wlans, AdminSSIds) ->
@@ -1371,42 +1429,3 @@ get_admin_wifi_update([#ieee_802_11_tp_wlan{radio_id = RadioId,
             UpdatedWlan = Wlan#ieee_802_11_tp_wlan{ssid = LocalConfSSId, key = LocalConfKey},
             get_admin_wifi_update(RestWlan, AdminSSIds, [UpdatedWlan | Accu])
     end.
-
-wtp_config_get(State, Key, Default) ->
-    WtpConfig = read_local_config(State),
-    proplists:get_value(Key, WtpConfig, Default).
-
-read_local_config(#state{id = WtpId}) ->
-    App = capwap,
-    Wtps = application:get_env(App, wtps, []),
-    Cnf = proplists:get_value(WtpId, Wtps, []),
-    lager:debug("found config for wtp ~p: ~p", [WtpId, Cnf]),
-    Cnf.
-
-get_session_attr(Session, Attr) ->
-    get_session_attr(Session, Attr, error).
-
-get_session_attr(Session, Attr, Default) ->
-    case ctld_session:get(Session, Attr) of
-        error ->
-            Default;
-        {ok, Val} ->
-            Val
-    end.
-
-%% AttrNamesAndDefaults = [{LocalName, RemoteName, Default}, ...]
-dyn_wtp_config_get(State, AttrNamesAndDefaults) when is_list(AttrNamesAndDefaults) ->
-    LocalCnf = read_local_config(State),
-    [dyn_wtp_config_get(State, LocalCnf, AttrSelector)
-     || AttrSelector <- AttrNamesAndDefaults].
-
-dyn_wtp_config_get(#state{session = Session} = State, LocalCnf, {DefaultName, LocalName, RemoteName, Default}) ->
-    LocalValue = dyn_wtp_config_get(State, LocalCnf, {DefaultName, LocalName, Default}),
-    get_session_attr(Session, RemoteName, LocalValue);
-
-dyn_wtp_config_get(State, LocalCnf, {DefaultName, LocalName, Default}) ->
-    DefaultValue = dyn_wtp_config_get(State, LocalCnf, {DefaultName, Default}),
-    proplists:get_value(LocalName, LocalCnf, DefaultValue);
-
-dyn_wtp_config_get(_, _, {DefaultName, Default}) ->
-    application:get_env(capwap, DefaultName, Default).
