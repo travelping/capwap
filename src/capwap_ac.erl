@@ -754,10 +754,10 @@ handle_capwap_data(_FlowSwitch, Sw, Address, Port,
 			{add, RadioMAC, MAC, MacMode, TunnelMode} ->
 			    gen_fsm:send_event(AC, {add_station, Header, MAC}),
 			    lager:debug("MacMode: ~w, TunnelMode ~w~n", [MacMode, TunnelMode]),
-			    {add_flow, Sw, self(), Address, Port, RadioMAC, MAC, MacMode, TunnelMode};
+			    {add_flow, Sw, self(), Address, Port, RadioMAC, MAC, MacMode, TunnelMode, true};
 
 			{flow, RadioMAC, MAC, MacMode, TunnelMode} ->
-			    {add_flow, Sw, self(), Address, Port, RadioMAC, MAC, MacMode, TunnelMode};
+			    {add_flow, Sw, self(), Address, Port, RadioMAC, MAC, MacMode, TunnelMode, true};
 
 			Other ->
 			    Other
@@ -777,10 +777,10 @@ handle_capwap_data(_FlowSwitch, Sw, Address, Port,
 			{add, RadioMAC, MAC, MacMode, TunnelMode} ->
 			    gen_fsm:send_event(AC, {add_station, Header, MAC}),
 			    lager:debug("MacMode: ~w, TunnelMode ~w~n", [MacMode, TunnelMode]),
-			    {add_flow, Sw, self(), Address, Port, RadioMAC, MAC, MacMode, TunnelMode};
+			    {add_flow, Sw, self(), Address, Port, RadioMAC, MAC, MacMode, TunnelMode, false};
 
 			{flow, RadioMAC, MAC, MacMode, TunnelMode} ->
-			    {add_flow, Sw, self(), Address, Port, RadioMAC, MAC, MacMode, TunnelMode};
+			    {add_flow, Sw, self(), Address, Port, RadioMAC, MAC, MacMode, TunnelMode, false};
 
 			{del, RadioMAC, MAC, MacMode, TunnelMode} ->
 			    gen_fsm:send_event(AC, {del_station, Header, MAC}),
@@ -1001,8 +1001,8 @@ send_response(Header, MsgType, Seq, MsgElems,
     ok = socket_send(Socket, BinMsg),
     State#state{last_response = {Seq, BinMsg}}.
 
-resend_response(#state{socket = Socket, last_response = {_, BinMsg}}) ->
-    lager:warning("resend capwap response~n", []),
+resend_response(#state{socket = Socket, last_response = {SeqNo, BinMsg}}) ->
+    lager:warning("resend capwap response ~w~n", [SeqNo]),
     ok = socket_send(Socket, BinMsg).
 
 send_request(Header, MsgType, ReqElements,
