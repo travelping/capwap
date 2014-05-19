@@ -30,18 +30,14 @@
 -define(ECLOSED, {error, closed}).
 -define(ENOTCONN, {error, enotconn}).
 
--ifdef(debug).
--define(SERVER_OPTS, [{debug, [trace]}]).
--else.
--define(SERVER_OPTS, []).
--endif.
+-define(DEBUG_OPTS,[{install, {fun lager_sys_debug:lager_gen_fsm_trace/3, ?MODULE}}]).
 
 %%===================================================================
 %% API
 %%===================================================================
 start_link(Port, Options) ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [self(), Port, Options],
-                          ?SERVER_OPTS).
+                          [{debug, ?DEBUG_OPTS}]).
 
 %%===================================================================
 %% Transport Module Callbacks
@@ -82,8 +78,7 @@ accept(ListenSocket, Timeout) ->
     call(ListenSocket, accept, Timeout, infinity).
 
 listen(Port, Options) ->
-%%    gen_server:start_link(?MODULE, [Port, Options], [{debug, [trace]}]).
-    gen_server:start_link(?MODULE, [self(), Port, Options], []).
+    gen_server:start_link(?MODULE, [self(), Port, Options], [{debug, ?DEBUG_OPTS}]).
 
 controlling_process(Socket, Pid) when is_port(Socket) ->
     gen_udp:controlling_process(Socket, Pid);
@@ -161,7 +156,7 @@ callback_info() ->
 %%----------------------------------
 
 call(Socket, Request, Args) ->
-    ?DEBUG(?GREEN "call: ~p ~p~n", [Socket, Request]),
+    lager:debug(?GREEN "call: ~p ~p" ?WHITE, [Socket, Request]),
     call(Socket, Request, Args, 5000).
 
 call(Socket, Request, Args, Timeout) when is_pid(Socket) ->
@@ -355,15 +350,15 @@ handle_packet(Peer, Type, Packet, State) ->
 
 handle_packet(Peer, Type, undefined, Packet,
 	      State0 = #state{socket = Socket}) ->
-    ?DEBUG("handle_packet #4~n"),
+    lager:debug("handle_packet #4"),
     case handle_first_packet(Peer, Type, Packet, State0) of
         {reply, Data} ->
-            ?DEBUG("handle_packet #4-1~n"),
+            lager:debug("handle_packet #4-1"),
             send(Socket, Peer, Type, [Data]),
             State0;
 
         accept ->
-            ?DEBUG("handle_packet #4-2~n"),
+            lager:debug("handle_packet #4-2"),
             %% NOTE: the first request is decode twice, should this be changed?
             {ok, Owner} = get_wtp(Peer, State0),
 
@@ -372,27 +367,27 @@ handle_packet(Peer, Type, undefined, Packet,
             State;
 
         Other ->
-            ?DEBUG(?RED "handle_packet #4-3: ~p~n", [Other]),
+            lager:debug(?RED "handle_packet #4-3: ~p" ?WHITE, [Other]),
             %% silently ignore
             State0
     end;
 
 handle_packet(_Peer, _Type, CSocket0 = #capwap_socket{mode = passive, queue = Queue}, Packet, State) ->
-    ?DEBUG("handle_packet #5~n"),
+    lager:debug("handle_packet #5"),
     CSocket = CSocket0#capwap_socket{queue = queue:in(Packet, Queue)},
     update_csocket(CSocket, State);
 
 handle_packet(_Peer, _Type, #capwap_socket{id = CSocketId, mode = _Mode, owner = Owner}, Packet, State) ->
-    ?DEBUG("handle_packet #6~n"),
+    lager:debug("handle_packet #6"),
     Owner ! {?PROTOCOL, capwap_socket(CSocketId), Packet},
     State.
 
 handle_first_packet({Address, Port}, udp, Packet, _State) ->
-    ?DEBUG("handle_first_packet: plain CAPWAP~n~p~n", [Packet]),
+    lager:debug("handle_first_packet: plain CAPWAP~n~p", [Packet]),
     %% TODO: keep AC configuration in State and pass it to AC
     capwap_ac:handle_packet(Address, Port, Packet);
 handle_first_packet({Address, Port}, dtls, Packet, _State) ->
-    ?DEBUG(?BLUE "handle_first_packet: DTLS CAPWAP~n"),
+    lager:debug(?BLUE "handle_first_packet: DTLS CAPWAP" ?WHITE),
     try
         ssl_datagram:handle_packet(Address, Port, Packet)
     catch

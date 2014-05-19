@@ -222,7 +222,7 @@ configure(_Event, _From, State) ->
     {reply, {error, bad_event}, configure, State}.
 
 run(echo_timeout, State) ->
-    lager:debug("Echo Timeout in Run~n"),
+    lager:debug("Echo Timeout in Run"),
     do_transition(State, control, run, {echo_request, []});
 
 run(keep_alive_timeout, State = #state{capwap_wtp_session_id = CapwapWtpSessionId}) ->
@@ -260,7 +260,7 @@ run({add_station, Mac}, From, State = #state{mac = WTPMac,
 		Duration:16, DA:6/bytes, SA:6/bytes, BSS:6/bytes,
 		SequenceControl:16/little-integer, Frame/binary>>,
     Flags=[{frame, native}],
-    lager:info("in state run adding station: ~p~n", [Mac]),
+    lager:info("in state run adding station: ~p", [Mac]),
     do_transition(State, data, run, {Flags, Payload}, async, req, {add_station_resp, From});
 
     %% this transition provokes an error which occured before request queue was introduce into capwap_ac
@@ -286,22 +286,22 @@ handle_sync_event(_Event, _From, StateName, State) ->
 
 handle_info({ssl, Socket, Packet}, StateName, State = #state{control_socket = Socket}) ->
     DecRequest = capwap_packet:decode(control, Packet),
-    lager:debug("in state ~p got control DTLS: ~p~n", [StateName, DecRequest]),
+    lager:debug("in state ~p got control DTLS: ~p", [StateName, DecRequest]),
     handle_incoming(DecRequest, StateName, control, State);
 
 handle_info({udp, CS, _IP, _InPort, Packet}, StateName, State=#state{control_socket = CS}) ->
     DecRequest = capwap_packet:decode(control, Packet),
-    lager:debug("in state ~p got control udp: ~p~n", [StateName, DecRequest]),
+    lager:debug("in state ~p got control udp: ~p", [StateName, DecRequest]),
     handle_incoming(DecRequest, StateName, control, State);
 
 handle_info({udp, DS, _IP, _InPort, Packet}, StateName, State=#state{data_socket = DS}) ->
     DecRequest = capwap_packet:decode(data, Packet),
-    lager:debug("in state ~p got data udp: ~p~n", [StateName, DecRequest]),
+    lager:debug("in state ~p got data udp: ~p", [StateName, DecRequest]),
     handle_incoming(DecRequest, StateName, data, State);
 
 handle_info({ssl, DS, _IP, _InPort, Packet}, StateName, State=#state{data_socket = DS}) ->
     DecRequest = capwap_packet:decode(data, Packet),
-    lager:debug("in state ~p got data DTLS: ~p~n", [StateName, DecRequest]),
+    lager:debug("in state ~p got data DTLS: ~p", [StateName, DecRequest]),
     handle_incoming(DecRequest, StateName, data, State);
 
 handle_info(Info, StateName, State) ->
@@ -502,7 +502,7 @@ handle_incoming({_Header, {change_state_event_response, _, _, []}},
     %% State0 = case State#state.remote_mode of
     %% 		 true ->
     %% 		     %% {ok, DataSocket} = ssl:connect(UdpDataSocket, make_ssl_options(State1)),
-    %% 		     %% lager:info("successfull ssl handshake done for data socket~n", []),
+    %% 		     %% lager:info("successfull ssl handshake done for data socket", []),
     %% 		     %% ok = ssl:setopts(DataSocket, [{active, true}]),
     %% 		     State#state{data_socket = UdpDataSocket};
     %% 		 false ->
@@ -519,7 +519,7 @@ handle_incoming({Header, _} = Req, run, data, State) ->
     KeepAlive = proplists:get_bool('keep-alive', Header#capwap_header.flags),
     case KeepAlive of
 	true ->
-	    lager:debug("WTP ~p received keep-alive in RUN state! ~p~n", [State#state.ip, State#state.keep_alive_timeout]),
+	    lager:debug("WTP ~p received keep-alive in RUN state! ~p", [State#state.ip, State#state.keep_alive_timeout]),
 	    {next_state, run, State};
 	false ->
 	    lager:warning("in ~p received a data response not expected: ~p", [run, Req]),

@@ -6,6 +6,7 @@
         kernel,
         stdlib,
 	lager,
+	flower,
         ssl,
         regine,
         ctld

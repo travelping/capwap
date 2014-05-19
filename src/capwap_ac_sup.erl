@@ -18,9 +18,9 @@ start_link() ->
     supervisor:start_link({local, ?SERVER}, ?MODULE, []).
 
 new_wtp(Peer) ->
-    io:format("Stating new WTP: ~p~n", [Peer]),
+    lager:debug("Stating new WTP: ~p", [Peer]),
     R = supervisor:start_child(?SERVER, [Peer]),
-    io:format("Result: ~p~n", [R]),
+    lager:debug("Result: ~p", [R]),
     R.
 
 %%%===================================================================

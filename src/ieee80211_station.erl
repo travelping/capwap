@@ -42,17 +42,13 @@
 
 -record(auth_frame, {algo, seq_no, status, params}).
 
--ifdef(debug).
--define(SERVER_OPTS, [{debug, [trace]}]).
--else.
--define(SERVER_OPTS, []).
--endif.
+-define(DEBUG_OPTS,[{install, {fun lager_sys_debug:lager_gen_fsm_trace/3, ?MODULE}}]).
 
 %%%===================================================================
 %%% API
 %%%===================================================================
 start_link(AC, FlowSwitch, PeerId, RadioMAC, ClientMAC, MacMode, TunnelMode) ->
-    gen_fsm:start_link(?MODULE, [AC, FlowSwitch, PeerId, RadioMAC, ClientMAC, MacMode, TunnelMode], ?SERVER_OPTS).
+    gen_fsm:start_link(?MODULE, [AC, FlowSwitch, PeerId, RadioMAC, ClientMAC, MacMode, TunnelMode], [{debug, ?DEBUG_OPTS}]).
 
 handle_ieee80211_frame(AC, <<FrameControl:2/bytes,
 			      _Duration:16, DA:6/bytes, SA:6/bytes, BSS:6/bytes,

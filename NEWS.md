@@ -8,6 +8,7 @@ Version 1.2.1 - xx Mar 2014
 
 * cherry-pick from v1.1 branch: for add_flow response to flsc, add a
    parameter to control wether the current packet gets dropped or sent
+* cherry-pick from v1.1 branch: convert all debug logging to use lager
 
 Version 1.2.0 - 20 Mar 2014
 ---------------------------

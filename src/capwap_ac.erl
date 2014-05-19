@@ -61,11 +61,7 @@
           reply_to_after_start
          }).
 
--ifdef(debug).
--define(SERVER_OPTS, [{debug, [trace]}]).
--else.
--define(SERVER_OPTS, []).
--endif.
+-define(DEBUG_OPTS,[{install, {fun lager_sys_debug:lager_gen_fsm_trace/3, ?MODULE}}]).
 
 %%%===================================================================
 %%% API
@@ -81,7 +77,7 @@
 %% @end
 %%--------------------------------------------------------------------
 start_link(Peer) ->
-    gen_fsm:start_link(?MODULE, [Peer], ?SERVER_OPTS).
+    gen_fsm:start_link(?MODULE, [Peer], [{debug, ?DEBUG_OPTS}]).
 
 handle_packet(_Address, _Port, Packet) ->
     try
@@ -103,7 +99,7 @@ handle_packet(_Address, _Port, Packet) ->
 
 handle_data(FlowSwitch, Sw, Address, Port, Packet) ->
     try
-	lager:debug("capwap_data: ~p, ~p, ~p~n", [Address, Port, Packet]),
+	lager:debug("capwap_data: ~p, ~p, ~p", [Address, Port, Packet]),
 	case capwap_packet:decode(data, Packet) of
 	    {Header, PayLoad} ->
 		KeepAlive = proplists:get_bool('keep-alive', Header#capwap_header.flags),
@@ -197,7 +193,7 @@ init([Peer]) ->
 %%--------------------------------------------------------------------
 listen({accept, udp, Socket}, State0) ->
     capwap_udp:setopts(Socket, [{active, true}, {mode, binary}]),
-    lager:info("udp_accept: ~p~n", [Socket]),
+    lager:info("udp_accept: ~p", [Socket]),
     {ok, Session} = start_session(Socket, State0),
 
     State1 = State0#state{event_log = open_log(),
@@ -207,17 +203,17 @@ listen({accept, udp, Socket}, State0) ->
     next_state(idle, State1);
 
 listen({accept, dtls, Socket}, State) ->
-    lager:info("ssl_accept on: ~p~n", [Socket]),
+    lager:info("ssl_accept on: ~p", [Socket]),
 
     {ok, Session} = start_session(Socket, State),
     case ssl:ssl_accept(Socket, mk_ssl_opts(Session), ?SSL_ACCEPT_TIMEOUT) of
         {ok, SslSocket} ->
-            lager:info("ssl_accept: ~p~n", [SslSocket]),
+            lager:info("ssl_accept: ~p", [SslSocket]),
             {ok, {Address, _Port}} = ssl:peername(SslSocket),
             ssl:setopts(SslSocket, [{active, true}, {mode, binary}]),
 
             CommonName = common_name(SslSocket),
-            lager:debug("ssl_cert: ~p~n", [CommonName]),
+            lager:debug("ssl_cert: ~p", [CommonName]),
 
             maybe_takeover(CommonName),
             capwap_wtp_reg:register_args(CommonName, Address),
@@ -226,7 +222,7 @@ listen({accept, dtls, Socket}, State) ->
             %% TODO: find old connection instance, take over their StationState and stop them
             next_state(idle, State1);
         Other ->
-            lager:error("ssl_accept failed: ~p~n", [Other]),
+            lager:error("ssl_accept failed: ~p", [Other]),
             {stop, normal, State#state{session=Session}}
     end;
 
@@ -235,17 +231,17 @@ listen(timeout, State) ->
     {stop, normal, State}.
 
 idle({keep_alive, _FlowSwitch, _Sw, _PeerId, Header, PayLoad}, _From, State) ->
-    lager:warning("in IDLE got unexpected keep_alive: ~p~n", [{Header, PayLoad}]),
+    lager:warning("in IDLE got unexpected keep_alive: ~p", [{Header, PayLoad}]),
     reply({error, unexpected}, idle, State).
 
 idle(timeout, State) ->
-    lager:info("timeout in IDLE -> stop~n"),
+    lager:info("timeout in IDLE -> stop"),
     {stop, normal, State};
 
 idle({discovery_request, Seq, Elements, #capwap_header{
 				radio_id = RadioId, wb_id = WBID, flags = Flags}},
      State) ->
-    lager:debug("discover_request: ~p~n", [[lager:pr(E, ?MODULE) || E <- Elements]]),
+    lager:debug("discover_request: ~p", [[lager:pr(E, ?MODULE) || E <- Elements]]),
     RespElements = ac_info(discover, Elements),
     Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
     State1 = send_response(Header, discovery_response, Seq, RespElements, State),
@@ -254,7 +250,7 @@ idle({discovery_request, Seq, Elements, #capwap_header{
 idle({join_request, Seq, Elements, #capwap_header{
 			   radio_id = RadioId, wb_id = WBID, flags = Flags}},
      State0 = #state{peer = {Address, _}, session = Session}) ->
-    lager:info("Join-Request: ~p~n", [[lager:pr(E, ?MODULE) || E <- Elements]]),
+    lager:info("Join-Request: ~p", [[lager:pr(E, ?MODULE) || E <- Elements]]),
 
     Version = get_wtp_version(Elements),
     SessionId = proplists:get_value(session_id, Elements),
@@ -273,15 +269,15 @@ idle({join_request, Seq, Elements, #capwap_header{
     next_state(join, State);
 
 idle({Msg, Seq, Elements, Header}, State) ->
-    lager:warning("in IDLE got unexpexted: ~p~n", [{Msg, Seq, Elements, Header}]),
+    lager:warning("in IDLE got unexpexted: ~p", [{Msg, Seq, Elements, Header}]),
     next_state(idle, State).
 
 join({keep_alive, _FlowSwitch, _Sw, _PeerId, Header, PayLoad}, _From, State) ->
-    lager:warning("in JOIN got unexpected keep_alive: ~p~n", [{Header, PayLoad}]),
+    lager:warning("in JOIN got unexpected keep_alive: ~p", [{Header, PayLoad}]),
     reply({error, unexpected}, join, State).
 
 join(timeout, State) ->
-    lager:info("timeout in JOIN -> stop~n"),
+    lager:info("timeout in JOIN -> stop"),
     {stop, normal, State};
 
 join({configuration_status_request, Seq, Elements, #capwap_header{
@@ -324,15 +320,15 @@ join({configuration_status_request, Seq, Elements, #capwap_header{
     next_state(configure, State1#state{echo_request_timeout = EchoRequestTimeout});
 
 join({Msg, Seq, Elements, Header}, State) ->
-    lager:warning("in JOIN got unexpexted: ~p~n", [{Msg, Seq, Elements, Header}]),
+    lager:warning("in JOIN got unexpexted: ~p", [{Msg, Seq, Elements, Header}]),
     next_state(join, State).
 
 configure({keep_alive, _FlowSwitch, _Sw, _PeerId, Header, PayLoad}, _From, State) ->
-    lager:warning("in CONFIGURE got unexpected keep_alive: ~p~n", [{Header, PayLoad}]),
+    lager:warning("in CONFIGURE got unexpected keep_alive: ~p", [{Header, PayLoad}]),
     reply({error, unexpected}, configure, State).
 
 configure(timeout, State) ->
-    lager:info("timeout in CONFIGURE -> stop~n"),
+    lager:info("timeout in CONFIGURE -> stop"),
     {stop, normal, State};
 
 configure({change_state_event_request, Seq, _Elements, #capwap_header{
@@ -343,21 +339,21 @@ configure({change_state_event_request, Seq, _Elements, #capwap_header{
     next_state(data_check, State1);
 
 configure({Msg, Seq, Elements, Header}, State) ->
-    lager:debug("in configure got: ~p~n", [{Msg, Seq, Elements, Header}]),
+    lager:debug("in configure got: ~p", [{Msg, Seq, Elements, Header}]),
     next_state(configure, State).
 
 data_check({keep_alive, FlowSwitch, Sw, PeerId, Header, PayLoad}, _From, State) ->
-    lager:debug("in DATA_CHECK got expected keep_alive: ~p~n", [{Sw, Header, PayLoad}]),
+    lager:debug("in DATA_CHECK got expected keep_alive: ~p", [{Sw, Header, PayLoad}]),
     capwap_wtp_reg:register(PeerId),
     gen_fsm:send_event(self(), configure),
     reply({reply, {Header, PayLoad}}, run, State#state{peer_data = PeerId, flow_switch = FlowSwitch}).
 
 data_check(timeout, State) ->
-    lager:info("timeout in DATA_CHECK -> stop~n"),
+    lager:info("timeout in DATA_CHECK -> stop"),
     {stop, normal, State};
 
 data_check({Msg, Seq, Elements, Header}, State) ->
-    lager:warning("in DATA_CHECK got unexpexted: ~p~n", [{Msg, Seq, Elements, Header}]),
+    lager:warning("in DATA_CHECK got unexpexted: ~p", [{Msg, Seq, Elements, Header}]),
     next_state(data_check, State).
 
 run({new_station, BSS, SA}, _From, State = #state{peer_data = PeerId, flow_switch = FlowSwitch,
@@ -372,7 +368,7 @@ run({new_station, BSS, SA}, _From, State = #state{peer_data = PeerId, flow_switc
     {State0, Reply} =
         case {capwap_station_reg:lookup(self(), SA),  WTPFullPred} of
             {not_found, true} ->
-                lager:debug("Station ~p trying to associate, but wtp is full: ~p >= ~p~n", [SA, StationCount, MaxStations]),
+                lager:debug("Station ~p trying to associate, but wtp is full: ~p >= ~p", [SA, StationCount, MaxStations]),
                 {State, {error, too_many_clients}};
             {not_found, false} ->
                 case capwap_station_reg:lookup(SA) of
@@ -392,17 +388,17 @@ run({new_station, BSS, SA}, _From, State = #state{peer_data = PeerId, flow_switc
     reply(Reply, run, State0);
 
 run({keep_alive, _FlowSwitch, Sw, _PeerId, Header, PayLoad}, _From, State) ->
-    lager:debug("in RUN got expected keep_alive: ~p~n", [{Sw, Header, PayLoad}]),
+    lager:debug("in RUN got expected keep_alive: ~p", [{Sw, Header, PayLoad}]),
     reply({reply, {Header, PayLoad}}, run, State).
 
 run(echo_timeout, State) ->
-    lager:info("Echo Timeout in Run~n"),
+    lager:info("Echo Timeout in Run"),
     {stop, normal, State};
 
 run({echo_request, Seq, Elements, #capwap_header{
 			  radio_id = RadioId, wb_id = WBID, flags = Flags}},
     State) ->
-    lager:debug("EchoReq in Run got: ~p~n", [{Seq, Elements}]),
+    lager:debug("EchoReq in Run got: ~p", [{Seq, Elements}]),
     Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
     State1 = send_response(Header, echo_response, Seq, Elements, State),
     State2 = reset_echo_request_timer(State1),
@@ -424,7 +420,7 @@ run({ieee_802_11_wlan_configuration_response, _Seq,
                         State
                 end;
             Code ->
-                lager:warning("IEEE 802.11 WLAN Configuration failed with ~w~n", [Code]),
+                lager:warning("IEEE 802.11 WLAN Configuration failed with ~w", [Code]),
                 State
         end,
     State2 = reset_echo_request_timer(State1),
@@ -438,7 +434,7 @@ run({station_configuration_response, _Seq,
 	    lager:debug("Station Configuration ok"),
 	    ok;
 	Code ->
-	    lager:warning("Station Configuration failed with ~w~n", [Code]),
+	    lager:warning("Station Configuration failed with ~w", [Code]),
 	    ok
     end,
     State1 = reset_echo_request_timer(State),
@@ -452,7 +448,7 @@ run({configuration_update_responce, _Seq,
         lager:debug("Configuration Update ok"),
         ok;
     Code ->
-        lager:warning("Configuration Update failed with ~w~n", [Code]),
+        lager:warning("Configuration Update failed with ~w", [Code]),
         ok
     end,
     State1 = reset_echo_request_timer(State),
@@ -510,12 +506,12 @@ run({firmware_download, DownloadLink, Sha}, State) ->
         sha256_image_hash = Sha,
         download_uri = DownloadLink}],
     Header1 = #capwap_header{radio_id = 1, wb_id = 1, flags = Flags},
-    lager:debug("sending firmware download request: ~p~n", [ReqElements]),
+    lager:debug("sending firmware download request: ~p", [ReqElements]),
     State1 = send_request(Header1, configuration_update_request, ReqElements, State),
     next_state(run, State1);
 
 run(Event, State) ->
-    lager:warning("in RUN got unexpexted: ~p~n", [Event]),
+    lager:warning("in RUN got unexpexted: ~p", [Event]),
     next_state(run, State).
 
 %%--------------------------------------------------------------------
@@ -631,17 +627,17 @@ handle_sync_event(_Event, _From, StateName, State) ->
 -define(SEQ_LE(S1, S2), (S1 < S2 andalso (S2-S1) < 128) orelse (S1>S2 andalso (S1-S2) > 128)).
 
 handle_info({capwap_udp, Socket, Packet}, StateName, State = #state{socket = {_, Socket}}) ->
-    lager:debug("in State ~p got UDP: ~p~n", [StateName, Packet]),
+    lager:debug("in State ~p got UDP: ~p", [StateName, Packet]),
     handle_capwap_packet(Packet, StateName, State);
 
 handle_info({ssl, Socket, Packet}, StateName, State = #state{socket = {_, Socket}}) ->
-    lager:debug("in State ~p got DTLS: ~p~n", [StateName, Packet]),
+    lager:debug("in State ~p got DTLS: ~p", [StateName, Packet]),
     handle_capwap_packet(Packet, StateName, State);
 
 handle_info({timeout, _, retransmit}, StateName, State) ->
     resend_request(StateName, State);
 handle_info(Info, StateName, State) ->
-    lager:warning("in State ~p unexpected Info: ~p~n", [StateName, Info]),
+    lager:warning("in State ~p unexpected Info: ~p", [StateName, Info]),
     next_state(StateName, State).
 
 %%--------------------------------------------------------------------
@@ -717,7 +713,7 @@ handle_plain_join(Seq, _Elements, #capwap_header{
     end.
 
 handle_capwap_data(FlowSwitch, Sw, Address, Port, Header, true, PayLoad) ->
-    lager:debug("CAPWAP Data KeepAlive: ~p~n", [PayLoad]),
+    lager:debug("CAPWAP Data KeepAlive: ~p", [PayLoad]),
 
     SessionId = proplists:get_value(session_id, PayLoad),
     case capwap_wtp_reg:lookup_sessionid(Address, SessionId) of
@@ -739,11 +735,11 @@ handle_capwap_data(_FlowSwitch, Sw, Address, Port,
 		     flags = Flags,
 		     radio_id = RadioId, wb_id = WBID},
 		   false, Frame) ->
-    lager:debug("CAPWAP Data PayLoad:~n~p~n~p~n", [Header, Frame]),
+    lager:debug("CAPWAP Data PayLoad:~n~p~n~p", [Header, Frame]),
     PeerId = {Address, Port},
     case capwap_wtp_reg:lookup(PeerId) of
 	not_found ->
-	    lager:warning("AC for data session no found: ~p~n", [PeerId]),
+	    lager:warning("AC for data session no found: ~p", [PeerId]),
 	    {error, not_found};
 	{ok, AC} ->
 	    %% TODO: multiple highly redundant case to follow, find a way to simplify
@@ -753,7 +749,7 @@ handle_capwap_data(_FlowSwitch, Sw, Address, Port,
 		    case ieee80211_station:handle_ieee802_3_frame(AC, Frame) of
 			{add, RadioMAC, MAC, MacMode, TunnelMode} ->
 			    gen_fsm:send_event(AC, {add_station, Header, MAC}),
-			    lager:debug("MacMode: ~w, TunnelMode ~w~n", [MacMode, TunnelMode]),
+			    lager:debug("MacMode: ~w, TunnelMode ~w", [MacMode, TunnelMode]),
 			    {add_flow, Sw, self(), Address, Port, RadioMAC, MAC, MacMode, TunnelMode, true};
 
 			{flow, RadioMAC, MAC, MacMode, TunnelMode} ->
@@ -776,7 +772,7 @@ handle_capwap_data(_FlowSwitch, Sw, Address, Port,
 
 			{add, RadioMAC, MAC, MacMode, TunnelMode} ->
 			    gen_fsm:send_event(AC, {add_station, Header, MAC}),
-			    lager:debug("MacMode: ~w, TunnelMode ~w~n", [MacMode, TunnelMode]),
+			    lager:debug("MacMode: ~w, TunnelMode ~w", [MacMode, TunnelMode]),
 			    {add_flow, Sw, self(), Address, Port, RadioMAC, MAC, MacMode, TunnelMode, false};
 
 			{flow, RadioMAC, MAC, MacMode, TunnelMode} ->
@@ -801,7 +797,7 @@ handle_capwap_packet(Packet, StateName, State = #state{
     try	capwap_packet:decode(control, Packet) of
 	{Header, {Msg, 1, Seq, Elements}} ->
 	    %% Request
-	    lager:debug("got capwap request: ~w~n", [Msg]),
+	    lager:debug("got capwap request: ~w", [Msg]),
 	    case LastResponse of
 		{Seq, _} ->
 		    resend_response(State),
@@ -814,7 +810,7 @@ handle_capwap_packet(Packet, StateName, State = #state{
 	    end;
 	{Header, {Msg, 0, Seq, Elements}} ->
 	    %% Response
-	    lager:debug("got capwap response: ~w~n", [Msg]),
+	    lager:debug("got capwap response: ~w", [Msg]),
 	    case queue:peek(Queue) of
             {value, {Seq, _}} ->
                 State1 = ack_request(State),
@@ -996,18 +992,18 @@ bump_seqno(State = #state{seqno = SeqNo}) ->
 
 send_response(Header, MsgType, Seq, MsgElems,
 	   State = #state{socket = Socket}) ->
-    lager:debug("send capwap response(~w): ~w~n", [Seq, MsgType]),
+    lager:debug("send capwap response(~w): ~w", [Seq, MsgType]),
     BinMsg = capwap_packet:encode(control, {Header, {MsgType, Seq, MsgElems}}),
     ok = socket_send(Socket, BinMsg),
     State#state{last_response = {Seq, BinMsg}}.
 
 resend_response(#state{socket = Socket, last_response = {SeqNo, BinMsg}}) ->
-    lager:warning("resend capwap response ~w~n", [SeqNo]),
+    lager:warning("resend capwap response ~w", [SeqNo]),
     ok = socket_send(Socket, BinMsg).
 
 send_request(Header, MsgType, ReqElements,
 	     State = #state{seqno = SeqNo}) ->
-    lager:debug("send capwap request(~w): ~w~n", [SeqNo, MsgType]),
+    lager:debug("send capwap request(~w): ~w", [SeqNo, MsgType]),
     BinMsg = capwap_packet:encode(control, {Header, {MsgType, SeqNo, ReqElements}}),
     State1 = send_request_queue(BinMsg, State),
     bump_seqno(State1).
@@ -1023,13 +1019,13 @@ send_request_queue(BinMsg, State = #state{socket = Socket, request_queue = Queue
     end.
 
 resend_request(StateName, State = #state{retransmit_counter = 0}) ->
-    lager:debug("Final Timeout in ~w, STOPPING~n", [StateName]),
+    lager:debug("Final Timeout in ~w, STOPPING", [StateName]),
     {stop, normal, State};
 resend_request(StateName,
 	       State = #state{socket = Socket,
                           request_queue = Queue,
                           retransmit_counter = MaxRetransmit}) ->
-    lager:warning("resend capwap request~n", []),
+    lager:warning("resend capwap request", []),
     {value, {_, BinMsg}} = queue:peek(Queue),
     ok = socket_send(Socket, BinMsg),
     State1 = State#state{retransmit_timer = send_info_after(?RetransmitInterval, retransmit),
@@ -1109,7 +1105,7 @@ process_ifopt([_|Rest], Acc) ->
 
 answer_discover(Seq, Elements, #capwap_header{
 		       radio_id = RadioId, wb_id = WBID, flags = Flags}) ->
-    lager:debug("discover_request: ~p~n", [[lager:pr(E, ?MODULE) || E <- Elements]]),
+    lager:debug("discover_request: ~p", [[lager:pr(E, ?MODULE) || E <- Elements]]),
     RespElems = ac_info(discover, Elements),
     Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
     capwap_packet:encode(control, {Header, {discovery_response, Seq, RespElems}}).
@@ -1126,7 +1122,7 @@ socket_close({dtls, Socket}) ->
 socket_close(undefined) ->
     ok;
 socket_close(Socket) ->
-    lager:warning("Got Close on: ~p~n", [Socket]),
+    lager:warning("Got Close on: ~p", [Socket]),
     ok.
 
 common_name(SslSocket) ->
@@ -1142,29 +1138,29 @@ common_name(SslSocket) ->
     CommonName.
 
 user_lookup(srp, Username, _UserState) ->
-    lager:debug("srp: ~p~n", [Username]),
+    lager:debug("srp: ~p", [Username]),
     Salt = ssl:random_bytes(16),
     UserPassHash = crypto:hash(sha, [Salt, crypto:hash(sha, [Username, <<$:>>, <<"secret">>])]),
     {ok, {srp_1024, Salt, UserPassHash}};
 
 user_lookup(psk, Username, Session) ->
-    lager:debug("user_lookup: Username: ~p~n", [Username]),
+    lager:debug("user_lookup: Username: ~p", [Username]),
     Opts = [{'Username', Username},
 	    {'Authentication-Method', {'TLS', 'Pre-Shared-Key'}}],
     WtpConfigOpts = create_initial_ctld_params(Username),
     case ctld_session:authenticate(Session, [Opts | WtpConfigOpts]) of
 	success ->
-	    lager:info("AuthResult: success~n"),
+	    lager:info("AuthResult: success"),
 	    case ctld_session:get(Session, 'TLS-Pre-Shared-Key') of
 		{ok, PSK} ->
-		    lager:info("AuthResult: PSK: ~p~n", [PSK]),
+		    lager:info("AuthResult: PSK: ~p", [PSK]),
 		    {ok, PSK};
 		_ ->
-		    lager:info("AuthResult: NO PSK~n"),
+		    lager:info("AuthResult: NO PSK"),
 		    {error, "no PSK"}
 	    end;
 	Other ->
-	    lager:info("AuthResult: ~p~n", [Other]),
+	    lager:info("AuthResult: ~p", [Other]),
 	    {error, Other}
     end.
 
