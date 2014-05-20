@@ -1146,9 +1146,9 @@ user_lookup(srp, Username, _UserState) ->
 user_lookup(psk, Username, Session) ->
     lager:debug("user_lookup: Username: ~p", [Username]),
     Opts = [{'Username', Username},
-	    {'Authentication-Method', {'TLS', 'Pre-Shared-Key'}}],
-    WtpConfigOpts = create_initial_ctld_params(Username),
-    case ctld_session:authenticate(Session, [Opts | WtpConfigOpts]) of
+	    {'Authentication-Method', {'TLS', 'Pre-Shared-Key'}}
+            | create_initial_ctld_params(Username)],
+    case ctld_session:authenticate(Session, ctld_session:to_session(Opts)) of
 	success ->
 	    lager:info("AuthResult: success"),
 	    case ctld_session:get(Session, 'TLS-Pre-Shared-Key') of
@@ -1189,9 +1189,9 @@ verify_cert(#'OTPCertificate'{
 
 verify_cert_auth_cn(CommonName, Session) ->
     Opts = [{'Username', CommonName},
-	    {'Authentication-Method', {'TLS', 'X509-Subject-CN'}}],
-    WtpConfigOpts = create_initial_ctld_params(CommonName),
-    case ctld_session:authenticate(Session, [Opts| WtpConfigOpts]) of
+	    {'Authentication-Method', {'TLS', 'X509-Subject-CN'}}
+            | create_initial_ctld_params(CommonName)],
+    case ctld_session:authenticate(Session, ctld_session:to_session(Opts)) of
         success ->
             lager:info("AuthResult: success for ~p", [CommonName]),
             {valid, Session};
