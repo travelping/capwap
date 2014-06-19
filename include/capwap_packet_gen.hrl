@@ -537,3 +537,9 @@
         busy_timeout = 0
 }).
 
+-record(gps_last_acquired_position, {
+        timestamp = 0,
+        wwan_id = 0,
+        gpsatc = <<>>
+}).
+

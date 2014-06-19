@@ -979,6 +979,13 @@ decode_vendor_element({18681,14}, <<M_idle_timeout:32/integer,
     #power_save_mode{idle_timeout = M_idle_timeout,
                      busy_timeout = M_busy_timeout};
 
+decode_vendor_element({18681,15}, <<M_timestamp:32/integer,
+                                    M_wwan_id:8/integer,
+                                    M_gpsatc/binary>>) ->
+    #gps_last_acquired_position{timestamp = M_timestamp,
+                                wwan_id = M_wwan_id,
+                                gpsatc = M_gpsatc};
+
 decode_vendor_element(Tag, Value) ->
         {Tag, Value}.
 
@@ -1786,6 +1793,14 @@ encode_element(#power_save_mode{
                     busy_timeout = M_busy_timeout}) ->
     encode_vendor_element({18681,14}, <<M_idle_timeout:32,
                                         M_busy_timeout:32>>);
+
+encode_element(#gps_last_acquired_position{
+                    timestamp = M_timestamp,
+                    wwan_id = M_wwan_id,
+                    gpsatc = M_gpsatc}) ->
+    encode_vendor_element({18681,15}, <<M_timestamp:32,
+                                        M_wwan_id:8,
+                                        M_gpsatc/binary>>);
 
 encode_element({Tag = {Vendor, Type}, Value}) when is_integer(Vendor), is_integer(Type), is_binary(Value) ->
     encode_vendor_element(Tag, Value);

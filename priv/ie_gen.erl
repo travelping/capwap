@@ -390,7 +390,11 @@ vendor_ies() ->
       [{"Apply Confirmation Timeout", 16, integer}]},
      {{18681, 14}, "Power Save Mode",
       [{"Idle Timeout", 32, integer},
-       {"Busy Timeout", 32, integer}]}
+       {"Busy Timeout", 32, integer}]},
+     {{18681, 15}, "GPS Last Acquired Position",
+      [{"Timestamp", 32, integer},
+       {"WWAN Id", 8, integer},
+       {"GPSATC", 0, binary}]}
     ].
 
 msgs() ->
