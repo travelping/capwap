@@ -301,6 +301,7 @@ join({configuration_status_request, Seq, Elements, #capwap_header{
                         []
                 end,
     AdminWlans = get_admin_wifi_updates(State, Elements),
+    {ok, WlanHoldTime} = ctld_session:get(State#state.session, 'CAPWAP-Wlan-Hold-Time'),
     RespElements = [%%#ac_ipv4_list{ip_address = [<<0,0,0,0>>]},
                     #timers{discovery = DiscoveryInterval,
                             echo_request = EchoRequestInterval},
@@ -311,8 +312,11 @@ join({configuration_status_request, Seq, Elements, #capwap_header{
                        report_interval = 15},
                     #idle_timeout{timeout = IdleTimeout},
                     #power_save_mode{idle_timeout = PSMIdleTimeout,
-                                     busy_timeout = PSMBusyTimeout}
-                    ] ++ AdminPwIE ++ AdminWlans,
+                                     busy_timeout = PSMBusyTimeout},
+                    #tp_ieee_802_11_wlan_hold_time{radio_id  = RadioId,
+                                                   wlan_id   = 1,
+                                                   hold_time = WlanHoldTime}
+                   ] ++ AdminPwIE ++ AdminWlans,
     Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
     State1 = send_response(Header, configuration_status_response, Seq, RespElements, State),
 
@@ -1309,10 +1313,12 @@ wtp_config_get(_, {DefaultName, Default}) ->
     application:get_env(capwap, DefaultName, Default).
 
 create_initial_ctld_params(CommonName) ->
-    [PsmIdle, PsmBusy, MaxWifi, SSIDs, DefaultSSID, DynSSIDSuffixLen, EchoRequestInterval,
-     DiscoveryInterval, IdleTimeout, DataChannelDeadInterval, ACJoinTimeout, AdminPW] =
+    [WlanHoldTime, PsmIdle, PsmBusy, MaxWifi, SSIDs, DefaultSSID,
+     DynSSIDSuffixLen, EchoRequestInterval, DiscoveryInterval,
+     IdleTimeout, DataChannelDeadInterval, ACJoinTimeout, AdminPW] =
         wtp_config_get(CommonName,
-                       [{psm_idle_timeout, psm_idle_timeout, 30},
+                       [{wlan_hold_time, wlan_hold_time, 15},
+                        {psm_idle_timeout, psm_idle_timeout, 30},
                         {psm_busy_timeout, psm_busy_timeout, 300},
                         {max_stations, max_stations, 100},
                         {ssids, ssids, []},
@@ -1342,11 +1348,13 @@ create_initial_ctld_params(CommonName) ->
      {'CAPWAP-Idle-Timeout', IdleTimeout},
      {'CAPWAP-Data-Channel-Dead-Interval', DataChannelDeadInterval},
      {'CAPWAP-AC-Join-Timeout', ACJoinTimeout},
-     {'CAPWAP-Admin-PW', AdminPW}
+     {'CAPWAP-Admin-PW', AdminPW},
+     {'CAPWAP-Wlan-Hold-Time', WlanHoldTime}
     ].
 
 internal_add_wlan(State, SSID, RadioID) ->
     WBID = 1,
+    WlanId = 1,
     Flags = [{frame,'802.3'}],
     MacMode = select_mac_mode(State#state.mac_types),
     TunnelMode = select_tunnel_mode(State#state.tunnel_modes, MacMode),
@@ -1354,14 +1362,15 @@ internal_add_wlan(State, SSID, RadioID) ->
     State0 = State#state{mac_mode = MacMode, tunnel_mode = TunnelMode},
     ReqElements = [#ieee_802_11_add_wlan{
                       radio_id      = RadioID,
-                      wlan_id       = 1,
+                      wlan_id       = WlanId,
                       capability    = [ess, short_slot_time],
                       auth_type     = open_system,
                       mac_mode      = MacMode,
                       tunnel_mode   = TunnelMode,
                       suppress_ssid = 1,
                       ssid          = SSID
-                     }],
+                     }
+                  ],
     State1 = send_request(Header, ieee_802_11_wlan_configuration_request, ReqElements, State0),
     set_radio(State1, #radio{radio_id = RadioID, ssid = SSID, started = true}).
 
