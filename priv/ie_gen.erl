@@ -639,6 +639,9 @@ write_encoder(FunName, {Id, Name, Fields}) ->
 main(_) ->
     io:format("ies: ~p~n", [ies()]),
 
+    MsgDescription = string:join([io_lib:format("msg_description(~s) -> <<\"~s\">>", [s2a(X), X]) || {_, X} <- msgs()]
+				 ++ ["msg_description(X) -> io_lib:format(\"~p\", [X])"], ";\n") ++ ".\n",
+
     {FwdFuns, RevFuns} = gen_message_type(msgs(), {[], []}),
     WildFun = ["message_type({Vendor, Type}) when is_integer(Vendor), is_integer(Type) -> {Vendor, Type}"],
     MTypes = string:join(FwdFuns ++ RevFuns ++ WildFun, ";\n") ++ ".\n",
@@ -659,8 +662,8 @@ main(_) ->
                           [write_encoder("encode_vendor_element", X) || X <- vendor_ies()]
                           ++ [CatchAnyVendorEncoder, CatchAnyEncoder] , ";\n\n"),
 
-    ErlDecls = io_lib:format("%% This file is auto-generated. DO NOT EDIT~n~n~s~n~s~n~s.~n~n~s.~n~n~s.~n",
-			     [MTypes, Enums, Funs, VendorFuns, EncFuns]),
+    ErlDecls = io_lib:format("%% This file is auto-generated. DO NOT EDIT~n~n~s~n~s~n~s~n~s.~n~n~s.~n~n~s.~n",
+			     [MsgDescription, MTypes, Enums, Funs, VendorFuns, EncFuns]),
     io:format(ErlDecls),
     file:write_file("include/capwap_packet_gen.hrl", HrlRecs),
     file:write_file("src/capwap_packet_gen.hrl", ErlDecls).

@@ -1,6 +1,6 @@
 -module(capwap_packet).
 
--export([decode/2, encode/2]).
+-export([decode/2, encode/2, msg_description/1]).
 
 -include("capwap_packet.hrl").
 

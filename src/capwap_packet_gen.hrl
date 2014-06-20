@@ -1,5 +1,35 @@
 %% This file is auto-generated. DO NOT EDIT
 
+msg_description(discovery_request) -> <<"Discovery Request">>;
+msg_description(discovery_response) -> <<"Discovery Response">>;
+msg_description(join_request) -> <<"Join Request">>;
+msg_description(join_response) -> <<"Join Response">>;
+msg_description(configuration_status_request) -> <<"Configuration Status Request">>;
+msg_description(configuration_status_response) -> <<"Configuration Status Response">>;
+msg_description(configuration_update_request) -> <<"Configuration Update Request">>;
+msg_description(configuration_update_response) -> <<"Configuration Update Response">>;
+msg_description(wtp_event_request) -> <<"WTP Event Request">>;
+msg_description(wtp_event_response) -> <<"WTP Event Response">>;
+msg_description(change_state_event_request) -> <<"Change State Event Request">>;
+msg_description(change_state_event_response) -> <<"Change State Event Response">>;
+msg_description(echo_request) -> <<"Echo Request">>;
+msg_description(echo_response) -> <<"Echo Response">>;
+msg_description(image_data_request) -> <<"Image Data Request">>;
+msg_description(image_data_response) -> <<"Image Data Response">>;
+msg_description(reset_request) -> <<"Reset Request">>;
+msg_description(reset_response) -> <<"Reset Response">>;
+msg_description(primary_discovery_request) -> <<"Primary Discovery Request">>;
+msg_description(primary_discovery_response) -> <<"Primary Discovery Response">>;
+msg_description(data_transfer_request) -> <<"Data Transfer Request">>;
+msg_description(data_transfer_response) -> <<"Data Transfer Response">>;
+msg_description(clear_configuration_request) -> <<"Clear Configuration Request">>;
+msg_description(clear_configuration_response) -> <<"Clear Configuration Response">>;
+msg_description(station_configuration_request) -> <<"Station Configuration Request">>;
+msg_description(station_configuration_response) -> <<"Station Configuration Response">>;
+msg_description(ieee_802_11_wlan_configuration_request) -> <<"IEEE 802.11 WLAN Configuration Request">>;
+msg_description(ieee_802_11_wlan_configuration_response) -> <<"IEEE 802.11 WLAN Configuration Response">>;
+msg_description(X) -> io_lib:format("~p", [X]).
+
 message_type(discovery_request) -> {0, 1};
 message_type(discovery_response) -> {0, 2};
 message_type(join_request) -> {0, 3};
