@@ -6,6 +6,7 @@ Erlang CAPWAP AC implementation.
 Version 1.2.1 - xx Mar 2014
 ---------------------------
 
+* improve CAPWAP Request/Reply logging
 * forwarding gps_last_acquired_position data to ctld_session.
 * add wlan hold time element, default value is 15 seconds.
 * cherry-pick from v1.1 branch: for add_flow response to flsc, add a
