@@ -3,7 +3,7 @@ capwap
 
 Erlang CAPWAP AC implementation.
 
-Version 1.2.1 - xx Mar 2014
+Version 1.2.1 - 20 Jun 2014
 ---------------------------
 
 * improve CAPWAP Request/Reply logging
