@@ -864,10 +864,8 @@ open_log() ->
 
 handle_wtp_event(Elements, Header, State = #state{session = Session}) ->
     SessionOptsList = lists:foldl(fun(Ev, SOptsList) -> handle_wtp_stats_event(Ev, Header, SOptsList) end, [], Elements),
-    lager:debug("WTP Event Opts: ~p", [SessionOptsList]),
-    SessionOptsList1 = ctld_session:to_session(SessionOptsList),
     if length(SessionOptsList) /= 0 ->
-	    ctld_session:interim_batch(Session, SessionOptsList1);
+	    ctld_session:interim_batch(Session, SessionOptsList);
        true -> ok
     end,
     State.
@@ -878,12 +876,14 @@ handle_wtp_stats_event(#gps_last_acquired_position{timestamp = Timestamp,
                        _Header, SOptsList) ->
     case [string:strip(V) || V <- string:tokens(binary_to_list(GpsString), ",:")] of
         [_, _Timestamp, Latitude, Longitude, Hdop, Altitude, _Fix, _Cog, _Spkm, _Spkn, _Date, _Nsat] ->
-            [{'TP-CAPWAP-GPS-Timestamp', Timestamp},
-             {'TP-CAPWAP-GPS-Latitude', Latitude},
-             {'TP-CAPWAP-GPS-Longitude', Longitude},
-             {'TP-CAPWAP-GPS-Altitude', Altitude},
-             {'TP-CAPWAP-GPS-Hdop', Hdop}
-             | SOptsList];
+            Opts = [{'TP-CAPWAP-GPS-Timestamp', Timestamp},
+                    {'TP-CAPWAP-GPS-Latitude', Latitude},
+                    {'TP-CAPWAP-GPS-Longitude', Longitude},
+                    {'TP-CAPWAP-GPS-Altitude', Altitude},
+                    {'TP-CAPWAP-GPS-Hdop', Hdop}
+                   ],
+            lager:debug("WTP Event Opts: ~p", [Opts]),
+            [ctld_session:to_session(Opts) | SOptsList];
         _ ->
             lager:error("Unable to parse GPSATC string from WTP! String: ~p", [GpsString]),
             SOptsList
@@ -892,28 +892,30 @@ handle_wtp_stats_event(#gps_last_acquired_position{timestamp = Timestamp,
 handle_wtp_stats_event(#tp_wtp_wwan_statistics_0_9{timestamp = Timestamp, wwan_id = WWanId, rat = RAT,
 					     rssi = RSSi, lac = LAC, cell_id = CellId},
 		 _Header, SOptsList) ->
-    [{'TP-CAPWAP-Timestamp', Timestamp},
-     {'TP-CAPWAP-WWAN-Id',   WWanId},
-     {'TP-CAPWAP-WWAN-RAT',       RAT},
-     {'TP-CAPWAP-WWAN-RSSi',      RSSi},
-     {'TP-CAPWAP-WWAN-LAC',       LAC},
-     {'TP-CAPWAP-WWAN-Cell-Id',   CellId}
-     | SOptsList];
+    Opts = [{'TP-CAPWAP-Timestamp', Timestamp},
+            {'TP-CAPWAP-WWAN-Id',   WWanId},
+            {'TP-CAPWAP-WWAN-RAT',       RAT},
+            {'TP-CAPWAP-WWAN-RSSi',      RSSi},
+            {'TP-CAPWAP-WWAN-LAC',       LAC},
+            {'TP-CAPWAP-WWAN-Cell-Id',   CellId}],
+    lager:debug("WTP Event Opts: ~p", [Opts]),
+    [ctld_session:to_session(Opts) | SOptsList];
 handle_wtp_stats_event(#tp_wtp_wwan_statistics{timestamp = Timestamp, wwan_id = WWanId, rat = RAT,
 					 rssi = RSSi, creg = CREG, lac = LAC, latency = Latency,
 					 mcc = MCC, mnc = MNC, cell_id = CellId},
 		 _Header, SOptsList) ->
-    [{'TP-CAPWAP-Timestamp', Timestamp},
-     {'TP-CAPWAP-WWAN-Id',   WWanId},
-     {'TP-CAPWAP-WWAN-RAT',       RAT},
-     {'TP-CAPWAP-WWAN-RSSi',      RSSi},
-     {'TP-CAPWAP-WWAN-CREG',      CREG},
-     {'TP-CAPWAP-WWAN-LAC',       LAC},
-     {'TP-CAPWAP-WWAN-Latency',   Latency},
-     {'TP-CAPWAP-WWAN-MCC',       MCC},
-     {'TP-CAPWAP-WWAN-MNC',       MNC},
-     {'TP-CAPWAP-WWAN-Cell-Id',   CellId}
-     | SOptsList];
+    Opts = [{'TP-CAPWAP-Timestamp', Timestamp},
+            {'TP-CAPWAP-WWAN-Id',   WWanId},
+            {'TP-CAPWAP-WWAN-RAT',       RAT},
+            {'TP-CAPWAP-WWAN-RSSi',      RSSi},
+            {'TP-CAPWAP-WWAN-CREG',      CREG},
+            {'TP-CAPWAP-WWAN-LAC',       LAC},
+            {'TP-CAPWAP-WWAN-Latency',   Latency},
+            {'TP-CAPWAP-WWAN-MCC',       MCC},
+            {'TP-CAPWAP-WWAN-MNC',       MNC},
+            {'TP-CAPWAP-WWAN-Cell-Id',   CellId}],
+    lager:debug("WTP Event Opts: ~p", [Opts]),
+    [ctld_session:to_session(Opts) | SOptsList];
 handle_wtp_stats_event(_Event, _Header, SOptsList) ->
     SOptsList.
 

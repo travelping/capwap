@@ -3,6 +3,11 @@ capwap
 
 Erlang CAPWAP AC implementation.
 
+Version 1.2.2 -  4 Jul 2014
+---------------------------
+
+* Fixes an error with WTP interrim accounting
+
 Version 1.2.1 - 20 Jun 2014
 ---------------------------
 
