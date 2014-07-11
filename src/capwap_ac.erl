@@ -367,7 +367,7 @@ run({new_station, BSS, SA}, _From, State = #state{peer_data = PeerId, flow_switc
                                                   station_count  = StationCount,
                                                   session=Session}) ->
     lager:info("in RUN got new_station: ~p", [SA]),
-    MaxStations = ctld_session:get(Session, 'TP-CAPWAP-Max-WIFI-Clients'),
+    {ok, MaxStations} = ctld_session:get(Session, 'TP-CAPWAP-Max-WIFI-Clients'),
     WTPFullPred = StationCount + 1 > MaxStations,
     %% we have to repeat the search again to avoid a race
     lager:debug("search for station ~p", [{self(), SA}]),
