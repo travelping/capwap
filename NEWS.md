@@ -3,6 +3,12 @@ capwap
 
 Erlang CAPWAP AC implementation.
 
+Version 1.2.3 - 17 Jul 2014
+---------------------------
+
+* The statemachines which represent stations are actually stopped.
+* Station limitation per WTP fixed.
+
 Version 1.2.2 -  4 Jul 2014
 ---------------------------
 

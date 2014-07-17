@@ -123,7 +123,7 @@ init([AC, FlowSwitch, PeerId, RadioMAC, ClientMAC, MacMode, TunnelMode]) ->
 %%
 init_auth(timeout, State) ->
     lager:warning("idle timeout in INIT_AUTH"),
-    next_state(init_auth, State).
+    next_state(shutdown, State).
 
 init_auth(Event = {'Authentication', DA, SA, BSS, 0, 0, Frame}, _From, State) ->
     lager:debug("in INIT_AUTH got Authentication Request: ~p", [Event]),
@@ -151,10 +151,10 @@ init_auth(Event, _From, State) ->
 
 %%
 %% State 2
-%%
+%% 
 init_assoc(timeout, State) ->
     lager:warning("idle timeout in INIT_ASSOC"),
-    next_state(init_assoc, State).
+    next_state(shutdown, State).
 
 init_assoc(Event = {'Authentication', _DA, _SA, _BSS, 0, 0, _Frame}, _From, State)
   when State#state.mac_mode == local_mac ->
@@ -227,7 +227,7 @@ init_assoc(Event, _From, State) ->
 %%
 init_start(timeout, State) ->
     lager:warning("idle timeout in INIT_START"),
-    next_state(init_start, State).
+    next_state(shutdown, State).
 
 init_start(Event = {'Null', _DA, _SA, BSS, 0, 1, <<>>}, _From,
 	   State = #state{radio_mac = BSS, mac = MAC, mac_mode = MacMode, tunnel_mode = TunnelMode}) ->
@@ -287,12 +287,10 @@ connected(Event, _From, State) ->
 %%
 shutdown(timeout, State) ->
     lager:debug("idle timeout in SHUTDOWN"),
-    gen_fsm:send_all_state_event(State#state.ac, station_terminating),
     {stop, normal, State}.
 
 shutdown(Event, _From, State) ->
     lager:warning("in SHUTDOWN got unexpexted: ~p", [Event]),
-    gen_fsm:send_all_state_event(State#state.ac, station_terminating),
     reply({error, unexpected}, shutdown, State).
 
 handle_event(_Event, StateName, State) ->
@@ -340,13 +338,14 @@ handle_info(Info, StateName, State) ->
     lager:warning("in State ~p unexpected Info: ~p", [StateName, Info]),
     next_state(StateName, State).
 
-terminate(_Reason, StateName, #state{mac = MAC, peer_data = {WtpIp, _}}) ->
+terminate(_Reason, StateName, #state{ac = AC, mac = MAC, peer_data = {WtpIp, _}}) ->
     if StateName == connected ->
 	    {ok, {_, ProviderOpts}} = application:get_env(ctld_provider),
 	    ctld_station_session:disassociation(format_mac(MAC), WtpIp, ProviderOpts);
        true ->
 	    ok
     end,
+    capwap_ac:station_terminating(AC),
     lager:warning("Station ~s terminated in State ~w", [flower_tools:format_mac(MAC), StateName]),
     ok.
 
@@ -467,7 +466,6 @@ handle_take_over({take_over, AC, FlowSwitch, PeerId, RadioMAC, MacMode, TunnelMo
     erlang:demonitor(OldACMonitor, [flush]),
     ACMonitor = erlang:monitor(process, AC),
 
-    gen_fsm:send_all_state_event(OldAC, station_terminating),
     State = State0#state{ac = AC, ac_monitor = ACMonitor,
 			 flow_switch = FlowSwitch, peer_data = PeerId,
 			 radio_mac = RadioMAC, mac_mode = MacMode,
