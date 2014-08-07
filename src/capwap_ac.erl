@@ -997,8 +997,29 @@ wtp_accounting_descriptor_infos([], Acc) ->
     Acc;
 wtp_accounting_descriptor_infos([{{18681,0}, Version}|Elements], Acc)
   when is_binary(Version) ->
-    Acc1 = [{'TP-CAPWAP-WTP-Version', Version}|Acc],
+    Acc1 = [{'CAPWAP-WTP-Version', Version}|Acc],
     wtp_accounting_descriptor_infos(Elements, Acc1);
+
+wtp_accounting_descriptor_infos([{{0,0}, Version}|Elements], Acc)
+  when is_binary(Version) ->
+    Acc1 = [{'CAPWAP-Hardware-Version', Version}|Acc],
+    wtp_accounting_descriptor_infos(Elements, Acc1);
+
+wtp_accounting_descriptor_infos([{{0,1}, Version}|Elements], Acc)
+  when is_binary(Version) ->
+    Acc1 = [{'CAPWAP-Software-Version', Version}|Acc],
+    wtp_accounting_descriptor_infos(Elements, Acc1);
+
+wtp_accounting_descriptor_infos([{{0,2}, Version}|Elements], Acc)
+  when is_binary(Version) ->
+    Acc1 = [{'CAPWAP-Boot-Version', Version}|Acc],
+    wtp_accounting_descriptor_infos(Elements, Acc1);
+
+wtp_accounting_descriptor_infos([{{0,3}, Version}|Elements], Acc)
+  when is_binary(Version) ->
+    Acc1 = [{'CAPWAP-Other-Software-Version', Version}|Acc],
+    wtp_accounting_descriptor_infos(Elements, Acc1);
+
 wtp_accounting_descriptor_infos([_|Elements], Acc) ->
     wtp_accounting_descriptor_infos(Elements, Acc).
 
