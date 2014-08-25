@@ -3,6 +3,16 @@ capwap
 
 Erlang CAPWAP AC implementation.
 
+Version 1.2.5 - 21 Aug 2014
+---------------------------
+
+* fix decoding of GPS time information
+
+Version 1.2.4 - 07 Jun 2014
+---------------------------
+
+* send all WTP version attributes to ctld
+
 Version 1.2.3 - 17 Jul 2014
 ---------------------------
 

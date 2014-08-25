@@ -701,6 +701,15 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
+gpsutc_to_iso(GPSTime, GPSDate) ->
+    try
+	{ok, [Hour, Minute, Second], _} = io_lib:fread("~2s~2s~s", GPSTime),
+	{ok, [Day, Month, Year], _} = io_lib:fread("~2s~2s~2s", GPSDate),
+	lists:flatten(["20", Year, "-", Month, "-", Day, "T", Hour, ":", Minute, ":", Second, "Z"])
+    catch
+	_:_ -> "2000-01-01T00:00:00Z"
+    end.
+
 format_peer({IP, Port}) ->
     io_lib:format("~s:~w", [inet_parse:ntoa(IP), Port]);
 format_peer(IP) ->
@@ -882,13 +891,14 @@ handle_wtp_event(Elements, Header, State = #state{session = Session}) ->
     end,
     State.
 
-handle_wtp_stats_event(#gps_last_acquired_position{timestamp = Timestamp,
+handle_wtp_stats_event(#gps_last_acquired_position{timestamp = _EventTimestamp,
                                                    wwan_id = _WwanId,
                                                    gpsatc = GpsString},
                        _Header, SOptsList) ->
     case [string:strip(V) || V <- string:tokens(binary_to_list(GpsString), ",:")] of
-        [_, _Timestamp, Latitude, Longitude, Hdop, Altitude, _Fix, _Cog, _Spkm, _Spkn, _Date, _Nsat] ->
-            Opts = [{'TP-CAPWAP-GPS-Timestamp', Timestamp},
+        [_, GPSTime, Latitude, Longitude, Hdop, Altitude, _Fix, _Cog, _Spkm, _Spkn, GPSDate, _Nsat] ->
+	    GPSTimestamp = gpsutc_to_iso(GPSTime, GPSDate),
+            Opts = [{'TP-CAPWAP-GPS-Timestamp', GPSTimestamp},
                     {'TP-CAPWAP-GPS-Latitude', Latitude},
                     {'TP-CAPWAP-GPS-Longitude', Longitude},
                     {'TP-CAPWAP-GPS-Altitude', Altitude},
