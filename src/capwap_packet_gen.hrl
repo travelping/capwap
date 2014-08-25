@@ -891,9 +891,9 @@ decode_vendor_element({18681,1}, <<M_timestamp:32/integer,
                                    M_creg:8/integer,
                                    M_lac:16/integer,
                                    M_latency:16/integer,
-                                   M_mcc:8/integer,
-                                   M_mnc:8/integer,
-                                   _:16,
+                                   M_mcc:10/integer,
+                                   M_mnc:10/integer,
+                                   _:12,
                                    M_cell_id:32/integer>>) ->
     #tp_wtp_wwan_statistics{timestamp = M_timestamp,
                             wwan_id = M_wwan_id,
@@ -1703,9 +1703,9 @@ encode_element(#tp_wtp_wwan_statistics{
                                        M_creg:8,
                                        M_lac:16,
                                        M_latency:16,
-                                       M_mcc:8,
-                                       M_mnc:8,
-                                       0:16,
+                                       M_mcc:10,
+                                       M_mnc:10,
+                                       0:12,
                                        M_cell_id:32>>);
 
 encode_element(#tp_wtp_timestamp{

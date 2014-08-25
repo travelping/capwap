@@ -7,6 +7,7 @@ Version 1.2.5 - 21 Aug 2014
 ---------------------------
 
 * fix decoding of GPS time information
+* fix decoding of MCC and MNC in statistics element
 
 Version 1.2.4 - 07 Jun 2014
 ---------------------------
