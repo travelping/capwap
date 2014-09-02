@@ -1,14 +1,19 @@
 -module(capwap_packet).
 
--export([decode/2, encode/2, msg_description/1]).
+-export([decode/2, decode/3, encode/2, encode/4, msg_description/1]).
+-compile(export_all).
 
 -include("capwap_packet.hrl").
 
+%%%-------------------------------------------------------------------
+%%% decoder
+%%%-------------------------------------------------------------------
+
 decode(Type, <<0:4, 0:4,
-		  HLen:5/integer, RID:5/integer, WBID:5/integer,
-		  T:1, 0:1, 0:1, W:1, M:1, K:1, _:3,
-		  _FragmentId:16/integer, _FragmentOffset:13/integer, _:3,
-		  Rest/binary>>)
+	       HLen:5/integer, RID:5/integer, WBID:5/integer,
+	       T:1, F:1, L:1, W:1, M:1, K:1, _:3,
+	       FragmentId:16/integer, FragmentOffset:13/integer, _:3,
+	       Rest/binary>>)
   when Type == control; Type == data ->
     RestHeaderLen = (HLen - 2) * 4,
     <<RestHeader0:RestHeaderLen/bytes, PayLoad/binary>> = Rest,
@@ -27,53 +32,67 @@ decode(Type, <<0:4, 0:4,
 			    flags = F1,
 			    radio_mac = RadioMAC,
 			    wireless_spec_info = WirelessSpecInfo},
-    case {Type, K} of
-	{control, _} ->
-	    {Header, decode_control_msg(PayLoad)};
-	{data, 0} ->
-	    {Header, PayLoad};
-	{data, 1} ->
-	    PayLoadLength = byte_size(PayLoad),
-	    case PayLoad of
-		<<PayLoadLength:16, ME/binary>> ->
-		    {Header, decode_elements(ME, [])};
-		_ ->
-		    %% FIXME: workarround for broken OpenCAPWAP encoding
-		    {Header, decode_elements(PayLoad, [])}
-	    end
+
+    KeepAlive = decode_bool(K),
+    Last = decode_bool(L),
+
+    if F == 1 ->
+	    {fragment, Type, KeepAlive, FragmentId, FragmentOffset, FragmentOffset + size(PayLoad), Last, Header,  PayLoad};
+       true ->
+	    decode_packet(Type, KeepAlive , Header, PayLoad)
     end.
 
-encode(control, {Header, {MsgType, _, SeqNum, IEs}}) ->
-    encode(control, {Header, {MsgType, SeqNum, IEs}});
+decode(control, Header, PayLoad) ->
+    {Header, decode_control_msg(PayLoad)}.
+
+decode_packet(control, _, Header, PayLoad) ->
+    {Header, decode_control_msg(PayLoad)};
+decode_packet(data, false, Header, PayLoad) ->
+    {Header, PayLoad};
+decode_packet(data, true, Header, PayLoad) ->
+    PayLoadLength = byte_size(PayLoad),
+    case PayLoad of
+	<<PayLoadLength:16, ME/binary>> ->
+	    {Header, decode_elements(ME, [])};
+	_ ->
+	    %% FIXME: workarround for broken OpenCAPWAP encoding
+	    {Header, decode_elements(PayLoad, [])}
+    end.
+
+%%%-------------------------------------------------------------------
+%%% encoder
+%%%-------------------------------------------------------------------
+
+encode(Type, Msg) ->
+    encode(Type, Msg, 0, 1500).
+
+encode(control, {Header, {MsgType, _, SeqNum, IEs}}, FragId, MTU) ->
+    encode(control, {Header, {MsgType, SeqNum, IEs}}, FragId, MTU);
 
 encode(control, {#capwap_header{radio_id = RID,
 				wb_id = WBID,
 				flags = Flags,
 				radio_mac = RadioMAC,
 				wireless_spec_info = WirelessSpecInfo},
-		 {MsgType, SeqNum, IEs}}) ->
-    FragmentId = 0,
-    FragmentOffset = 0,
+		 {MsgType, SeqNum, IEs}}, FragId, MTU) ->
     T = encode_transport(proplists:get_value(frame, Flags, native)),
     {W, WirelessSpecInfoBin} = encode_header(WirelessSpecInfo),
     {M, RadioMACbin} = encode_header(RadioMAC),
     K = encode_flag('keep-alive', Flags),
     {Vendor, MType} = message_type(MsgType),
-    PayLoad = << <<(encode_element(X))/binary>> || X <- IEs>>,
-    HLen = (8 + byte_size(RadioMACbin) + byte_size(WirelessSpecInfoBin)) div 4,
-    <<0:4, 0:4, HLen:5, RID:5, WBID:5,
-      T:1, 0:1, 0:1, W:1, M:1, K:1, 0:3,
-      FragmentId:16, FragmentOffset:13, 0:3,
-      RadioMACbin/binary, WirelessSpecInfoBin/binary,
-      Vendor:24, MType:8, SeqNum:8, (byte_size(PayLoad) + 3):16, 0:8,
-      PayLoad/binary>>;
+    MsgElements = << <<(encode_element(X))/binary>> || X <- IEs>>,
+    PayLoad = <<Vendor:24, MType:8, SeqNum:8, (byte_size(MsgElements) + 3):16, 0:8, MsgElements/binary>>,
+    HeaderLen = (8 + byte_size(RadioMACbin) + byte_size(WirelessSpecInfoBin)),
+    HLen = HeaderLen div 4,
+    Header = {HLen, RID, WBID, T, W, M, K, <<RadioMACbin/binary, WirelessSpecInfoBin/binary>>},
+    encode_part(Header, FragId, 0, PayLoad, MTU - HeaderLen);
 
-encode(data, {Header = #capwap_header{flags = Flags}, PayLoad}) ->
+encode(data, {Header = #capwap_header{flags = Flags}, PayLoad}, FragId, MTU) ->
     case proplists:get_bool('keep-alive', Flags) of
 	true ->
-	    encode_data_keep_alive(Header, PayLoad);
+	    encode_data_keep_alive(Header, PayLoad, FragId, MTU);
 	_ ->
-	    encode_data_packet(Header, PayLoad)
+	    encode_data_packet(Header, PayLoad, FragId, MTU)
     end.
 
 %%%===================================================================
@@ -107,6 +126,26 @@ encode_header(undefined) ->
 encode_header(Bin) when is_binary(Bin) ->
     Len = byte_size(Bin),
     {1, pad_to(4, <<Len:8, Bin/binary>>)}.
+
+encode_part(Header, FragmentId, FragmentOffset, PayLoad, MTU)
+  when size(PayLoad) =< MTU ->
+    [encode_partbin(Header, 0, 0, FragmentId, FragmentOffset, PayLoad)];
+
+encode_part(Header, FragmentId, FragmentOffset, PayLoad, MTU) ->
+    encode_part(Header, FragmentId, FragmentOffset, PayLoad, MTU, []).
+
+encode_part(Header, FragmentId, FragmentOffset, PayLoad, MTU, Acc)
+  when size(PayLoad) =< MTU ->
+    lists:reverse([encode_partbin(Header, 1, 1, FragmentId, FragmentOffset, PayLoad)|Acc]);
+encode_part(Header, FragmentId, FragmentOffset, PayLoad, MTU, Acc) ->
+    <<Part:MTU/bytes, Rest/binary>> = PayLoad,
+    Acc1 = [encode_partbin(Header, 1, 0, FragmentId, FragmentOffset, Part)|Acc],
+    encode_part(Header, FragmentId, FragmentOffset + MTU, Rest, MTU, Acc1).
+
+encode_partbin(Header, F, L, FragmentId, FragmentOffset, PayLoad) ->
+    {HLen, RID, WBID, T, W, M, K, Tail} = Header,
+    <<0:4, 0:4, HLen:5, RID:5, WBID:5, T:1, F:1, L:1, W:1, M:1, K:1, 0:3,
+      FragmentId:16, FragmentOffset:13, 0:3, Tail/binary, PayLoad/binary>>.
 
 %%%-------------------------------------------------------------------
 %%% decoder
@@ -161,6 +200,9 @@ encode_transport(native)  -> 1.
 encode_bool(false) -> 0;
 encode_bool(_)     -> 1.
 
+decode_bool(0) -> false;
+decode_bool(_) -> true.
+
 encode_flag(Key, List) ->
     encode_bool(proplists:get_bool(Key, List)).
 
@@ -206,31 +248,25 @@ encode_element(Type, Value) ->
 encode_vendor_element({Vendor, Type}, Value) ->
     encode_element(37, <<Vendor:32, Type:16, Value/binary>>).
 
-encode_data_keep_alive(#capwap_header{}, MessageElements) ->
+encode_data_keep_alive(#capwap_header{}, IEs, FragId, MTU) ->
     %%   In the CAPWAP Data Channel Keep-Alive packet, all of the fields in
     %%   the CAPWAP Header, except the HLEN field and the 'K' bit, are set to
     %%   zero upon transmission.
-    PayLoad = << <<(encode_element(X))/binary>> || X <- MessageElements>>,
-    <<0:4, 0:4, 2:5, 0:5, 0:5,
-      0:1, 0:1, 0:1, 0:1, 0:1, 1:1, 0:3,
-      0:16, 0:13, 0:3,
-      (byte_size(PayLoad) + 2):16,
-      PayLoad/binary>>.
+    Header = {2, 0, 0, 0, 0, 0, 1, <<>>},
+    MsgElements = << <<(encode_element(X))/binary>> || X <- IEs>>,
+    PayLoad = <<(byte_size(MsgElements) + 2):16, MsgElements/binary>>,
+    encode_part(Header, FragId, 0, PayLoad, MTU - 8).
 
 encode_data_packet(#capwap_header{radio_id = RID,
 				  wb_id = WBID,
 				  flags = Flags,
 				  radio_mac = RadioMAC,
 				  wireless_spec_info = WirelessSpecInfo},
-		   PayLoad) ->
-    FragmentId = 0,
-    FragmentOffset = 0,
+		   PayLoad, FragId, MTU) ->
     T = encode_transport(proplists:get_value(frame, Flags, native)),
     {W, WirelessSpecInfoBin} = encode_header(WirelessSpecInfo),
     {M, RadioMACbin} = encode_header(RadioMAC),
-    HLen = (8 + byte_size(RadioMACbin) + byte_size(WirelessSpecInfoBin)) div 4,
-    <<0:4, 0:4, HLen:5, RID:5, WBID:5,
-      T:1, 0:1, 0:1, W:1, M:1, 0:1, 0:3,
-      FragmentId:16, FragmentOffset:13, 0:3,
-      RadioMACbin/binary, WirelessSpecInfoBin/binary,
-      PayLoad/binary>>.
+    HeaderLen = (8 + byte_size(RadioMACbin) + byte_size(WirelessSpecInfoBin)),
+    HLen = HeaderLen div 4,
+    Header = {HLen, RID, WBID, T, W, M, 0, <<RadioMACbin/binary, WirelessSpecInfoBin/binary>>},
+    encode_part(Header, FragId, 0, PayLoad, MTU - HeaderLen).

@@ -77,6 +77,78 @@ capwap_echo_request() ->
 capwap_echo_response() ->
     hexstr2bin("00100200000000000000000e05000300").
 
+capwap_wwan_stats_long() ->
+    Frag1 = hexstr2bin("00104280000000000000000905098E000025000A000048F9000256A506540025"
+		       "001A000048F900015406984D01011901484DFFFF418010000000760500250031"
+		       "000048F9000F5406984D01244750534143503A203030303030302E3030302C2C"
+		       "2C2C2C302C2C2C2C3030303030302C30300025001A000048F90001540698C401"
+		       "011901484DFFFF418010000000760500250031000048F9000F540698C4012447"
+		       "50534143503A203030303030302E3030302C2C2C2C2C302C2C2C2C3030303030"
+		       "302C30300025001A000048F900015406993C01011901484DFFFF418010000000"
+		       "760500250031000048F9000F5406993C01244750534143503A20303030303030"
+		       "2E3030302C2C2C2C2C302C2C2C2C30303030303030302E3030302C2C2C2C2C30"
+		       "2C2C2C2C3030303030302C30300025001A000048F9000154069AA40101190148"
+		       "4DFFFF418010000000760500250031000048F9000F54069AA401244750534143"
+		       "503A203030303030302E3030302C2C2C2C2C302C2C2C2C3030303030302C3030"
+		       "0025001A000048F9000154069B1C01011901484DFFFF41801000000076050025"
+		       "0031000048F9000F54069B1C01244750534143503A203030303030302E303030"
+		       "2C2C2C2C2C302C2C2C2C3030303030302C30300025001A000048F9000154069B"
+		       "9401011901484DFFFF418010000000760500250031000048F9000F54069B9401"
+		       "244750534143503A203030303030302E3030302C2C2C2C2C302C2C2C2C303030"
+		       "3030302C30300025001A000048F9000154069C0C01011901484DFFFF41801000"
+		       "0000760500250031000048F9000F54069C0C01244750534143503A2030303030"
+		       "30302E3030302C2C2C2C2C302C2C2C2C3030303030302C30300025001A000048"
+		       "F9000154069C8401011901484DFFFF418010000000760500250031000048F900"
+		       "0F54069C8401244750534143503A203030303030302E3030302C2C2C2C2C302C"
+		       "2C2C2C3030303030302C30300025001A000048F9000154069CFC01011901484D"
+		       "FFFF418010000000760500250031000048F9000F54069CFC0124475053414350"
+		       "3A203030303030302E3030302C2C2C2C2C302C2C2C2C3030303030302C303000"
+		       "25001A000048F9000154069D7401011901484DFFFF4180100000007605002500"
+		       "31000048F9000F54069D7401244750534143503A203030303030302E3030302C"
+		       "2C2C2C2C302C2C2C2C3030303030302C30300025001A000048F9000154069DEC"
+		       "01011901484DFFFF418010000000760500250031000048F9000F54069DEC0124"
+		       "4750534143503A203030303030302E3030302C2C2C2C2C302C2C2C2C30303030"
+		       "30302C30300025001A000048F9000154069E6401011901484DFFFF4180100000"
+		       "00760500250031000048F9000F54069E6401244750534143503A203030303030"
+		       "302E3030302C2C2C2C2C302C2C2C2C3030303030302C30300025001A000048F9"
+		       "000154069EDC01011901484D0000418010000000760500250031000048F9000F"
+		       "54069EDC01244750534143503A203030303030302E3030302C2C2C2C2C302C2C"
+		       "2C2C3030303030302C30300025001A000048F9000154069F5401011901484D00"
+		       "00418010000000760500250031000048F9000F54069F5401244750534143503A"
+		       "203030303030302E3030302C2C2C2C2C302C2C2C2C3030303030302C30300025"),
+    Frag2 = hexstr2bin("001042C000002A40001A000048F9000154069FCC01011901484DFFFF41801000"
+		       "000048F900015406A0BC01011901484D00004180100000007605002500310000"
+		       "48F9000F5406A0BC01244750534143503A203030303030302E3030302C2C2C2C"
+		       "2C302C2C2C2C3030303030302C30300025001A000048F900015406A134010119"
+		       "01484D0000418010000000760500250031000048F9000F5406A1340124475053"
+		       "4143503A203030303030302E3030302C2C2C2C2C302C2C2C2C3030303030302C"
+		       "30300025001A000048F900015406A1AC01011901484D00004180100000007605"
+		       "00250031000048F9000F5406A1AC01244750534143503A203030303030302E30"
+		       "30302C2C2C2C2C302C2C2C2C3030303030302C30300025001A000048F9000154"
+		       "06A22401011901484DFFFF418010000000760500250031000048F9000F5406A2"
+		       "2401244750534143503A203030303030302E3030302C2C2C2C2C302C2C2C2C30"
+		       "30303030302C30300025001A000048F900015406A29C01011901484DFFFF4180"
+		       "10000000760500250031000048F9000F5406A29C01244750534143503A203030"
+		       "303030302E3030302C2C2C2C2C302C2C2C2C3030303030302C30300025001A00"
+		       "0048F900015406A31401011901484DFFFF418010000000760500250031000048"
+		       "F9000F5406A31401244750534143503A203030303030302E3030302C2C2C2C2C"
+		       "302C2C2C2C3030303030302C30300025001A000048F900015406A38C01011901"
+		       "484DFFFF418010000000760500250031000048F9000F5406A38C012447505341"
+		       "43503A203030303030302E3030302C2C2C2C2C302C2C2C2C3030303030302C30"
+		       "300025001A000048F900015406A40401011901484DFFFF418010000000760500"
+		       "250031000048F9000F5406A40401244750534143503A203030303030302E3030"
+		       "302C2C2C2C2C302C2C2C2C3030303030302C30300025001A000048F900015406"
+		       "A47C01011901484DFFFF418010000000760500250031000048F9000F5406A47C"
+		       "01244750534143503A203030303030302E3030302C2C2C2C2C302C2C2C2C3030"
+		       "303030302C30300025001A000048F900015406A4F401011901484DFFFF418010"
+		       "000000760500250031000048F9000F5406A4F401244750534143503A20303030"
+		       "3030302E3030302C2C2C2C2C302C2C2C2C3030303030302C30300025001A0000"
+		       "48F900015406A53B01011901484D0000418010000000760500250031000048F9"
+		       "000F5406A53B01244750534143503A203030303030302E3030302C2C2C2C2C30"
+		       "2C2C2C2C3030303030302C303000250012000048F9000B000000000000000000"
+		       "000000"),
+    [Frag1, Frag2].
+
 % hexstr2bin
 hexstr2bin(S) ->
     list_to_binary(hexstr2list(S)).
@@ -105,97 +177,107 @@ test_discovery_request(_Config) ->
     Msg = capwap_discovery_request(),
     R = capwap_packet:decode(control, Msg),
     ct:pal("R: ~p~n", [R]),
-    ?equal(Msg, capwap_packet:encode(control, R)),
+    ?equal([Msg], capwap_packet:encode(control, R)),
     ok.
 
 test_discovery_reponse(_Config) ->
     Msg = capwap_discovery_response(),
     R = capwap_packet:decode(control, Msg),
     ct:pal("R: ~p~n", [R]),
-    ?equal(Msg, capwap_packet:encode(control, R)),
+    ?equal([Msg], capwap_packet:encode(control, R)),
     ok.
 
 test_join_request(_Config) ->
     Msg = capwap_join_request(),
     R = capwap_packet:decode(control, Msg),
     ct:pal("R: ~p~n", [R]),
-    ?equal(Msg, capwap_packet:encode(control, R)),
+    ?equal([Msg], capwap_packet:encode(control, R)),
     ok.
 
 test_join_response(_Config) ->
     Msg = capwap_join_response(),
     R = capwap_packet:decode(control, Msg),
     ct:pal("R: ~p~n", [R]),
-    ?equal(Msg, capwap_packet:encode(control, R)),
+    ?equal([Msg], capwap_packet:encode(control, R)),
     ok.
 
 test_configuration_status_request(_Config) ->
     Msg = capwap_configuration_status_request(),
     R = capwap_packet:decode(control, Msg),
     ct:pal("R: ~p~n", [R]),
-    ?equal(Msg, capwap_packet:encode(control, R)),
+    ?equal([Msg], capwap_packet:encode(control, R)),
     ok.
 
 test_configuration_status_response(_Config) ->
     Msg = capwap_configuration_status_response(),
     R = capwap_packet:decode(control, Msg),
     ct:pal("R: ~p~n", [R]),
-    ?equal(Msg, capwap_packet:encode(control, R)),
+    ?equal([Msg], capwap_packet:encode(control, R)),
     ok.
 
 test_change_state_request(_Config) ->
     Msg = capwap_change_state_request(),
     R = capwap_packet:decode(control, Msg),
     ct:pal("R: ~p~n", [R]),
-    ?equal(Msg, capwap_packet:encode(control, R)),
+    ?equal([Msg], capwap_packet:encode(control, R)),
     ok.
 
 test_change_state_response(_Config) ->
     Msg = capwap_change_state_response(),
     R = capwap_packet:decode(control, Msg),
     ct:pal("R: ~p~n", [R]),
-    ?equal(Msg, capwap_packet:encode(control, R)),
+    ?equal([Msg], capwap_packet:encode(control, R)),
     ok.
 
 test_wlan_configuration_request(_Config) ->
     Msg = capwap_wlan_configuration_request(),
     R = capwap_packet:decode(control, Msg),
     ct:pal("R: ~p~n", [R]),
-    ?equal(Msg, capwap_packet:encode(control, R)),
+    ?equal([Msg], capwap_packet:encode(control, R)),
     ok.
 
 test_wlan_configuration_response(_Config) ->
     Msg = capwap_wlan_configuration_response(),
     R = capwap_packet:decode(control, Msg),
     ct:pal("R: ~p~n", [R]),
-    ?equal(Msg, capwap_packet:encode(control, R)),
+    ?equal([Msg], capwap_packet:encode(control, R)),
     ok.
 
 test_station_configuration_request(_Config) ->
     Msg = capwap_station_configuration_request(),
     R = capwap_packet:decode(control, Msg),
     ct:pal("R: ~p~n", [R]),
-    ?equal(Msg, capwap_packet:encode(control, R)),
+    ?equal([Msg], capwap_packet:encode(control, R)),
     ok.
 
 test_station_configuration_response(_Config) ->
     Msg = capwap_station_configuration_response(),
     R = capwap_packet:decode(control, Msg),
     ct:pal("R: ~p~n", [R]),
-    ?equal(Msg, capwap_packet:encode(control, R)),
+    ?equal([Msg], capwap_packet:encode(control, R)),
     ok.
 
 test_echo_request(_Config) ->
     Msg = capwap_echo_request(),
     R = capwap_packet:decode(control, Msg),
     ct:pal("R: ~p~n", [R]),
-    ?equal(Msg, capwap_packet:encode(control, R)),
+    ?equal([Msg], capwap_packet:encode(control, R)),
     ok.
 test_echo_response(_Config) ->
     Msg = capwap_echo_response(),
     R = capwap_packet:decode(control, Msg),
     ct:pal("R: ~p~n", [R]),
-    ?equal(Msg, capwap_packet:encode(control, R)),
+    ?equal([Msg], capwap_packet:encode(control, R)),
+    ok.
+
+test_wwan_stats_long(_Config) ->
+    Msgs = capwap_wwan_stats_long(),
+    lists:foreach(fun(F) -> R = capwap_packet:decode(control, F),
+			    ct:pal("R: ~p~n", [R]),
+			    if element(1, R) == fragment -> ok;
+			       true -> ct:fail("unexpected return: ~p", [R])
+			    end
+		  end, Msgs),
     ok.
 
 all() ->
@@ -212,7 +294,8 @@ all() ->
      test_station_configuration_request,
      test_station_configuration_response,
      test_echo_request,
-     test_echo_response
+     test_echo_response,
+     test_wwan_stats_long
     ].
 
 init_per_suite(Config) ->

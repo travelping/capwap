@@ -3,6 +3,12 @@ capwap
 
 Erlang CAPWAP AC implementation.
 
+Version 1.3.0 - 05 Sep 2014
+---------------------------
+
+* add support for packet fragmentation (reassembly and fragment) for control
+  channel (fragmented data channel messages are not handled)
+
 Version 1.2.5 - 21 Aug 2014
 ---------------------------
 

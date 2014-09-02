@@ -1,4 +1,3 @@
-
 -module(capwap_wtp_mockup_SUITE).
 
 -compile(export_all).
@@ -10,12 +9,16 @@ suite() ->
     [{timetrap,{minutes,5}}].
 
 init_per_suite(Config) ->
-    setup_applications(),
-    Config.
+    case proplists:get_bool(run_mockup, Config) of
+	true ->
+	    setup_applications(),
+	    Config;
+	_ ->
+	    {skip, "disabled"}
+    end.
 
 all() ->
     [load_local].
-
 
 load_local(Config) ->
     [WaitFor, KeepRunningFor, WtpCount, KeepAliveTimeout] =
@@ -83,15 +86,15 @@ start_wtp(SCG, CertDir, RootCert, WaitFor, IP, UseDtls) ->
 
 start_wtp(SCG, CertDir, RootCert, WaitFor, IP, UseDtls, Options) ->
     {ok, CS} = wtp_mockup_fsm:start_link(SCG, IP, 5248, CertDir, RootCert, <<8,8,8,8,8,8>>, UseDtls, Options),
-    ok = wtp_mockup_fsm:send_discovery(CS),
+    {ok, _} = wtp_mockup_fsm:send_discovery(CS),
     timer:sleep(WaitFor),
-    ok = wtp_mockup_fsm:send_join(CS),
+    {ok, _} = wtp_mockup_fsm:send_join(CS),
     timer:sleep(WaitFor),
-    ok = wtp_mockup_fsm:send_config_status(CS),
+    {ok, _} = wtp_mockup_fsm:send_config_status(CS),
     timer:sleep(WaitFor),
-    ok = wtp_mockup_fsm:send_change_state_event(CS),
+    {ok, _} = wtp_mockup_fsm:send_change_state_event(CS),
     timer:sleep(WaitFor),
-    ok = wtp_mockup_fsm:send_wwan_statistics(CS),
+    {ok, _} = wtp_mockup_fsm:send_wwan_statistics(CS),
     CS.
 
 

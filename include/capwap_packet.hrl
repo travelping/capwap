@@ -9,4 +9,6 @@
 	  wireless_spec_info = undefined
 }).
 
+-record(fragment, {type, keepalive, fragmentid, fstart, fend, last, header, payload}).
+
 -include("capwap_packet_gen.hrl").

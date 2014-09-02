@@ -1,18 +1,20 @@
 -module(wtp_mockup_fsm).
+-compile([{parse_transform, lager_transform}]).
 
 -behaviour(gen_fsm).
 
--include("capwap_packet.hrl").
-
+-include("../include/capwap_packet.hrl").
 
 %% API
 -export([start_link/0,
 	 start_link/8,
+	 stop/1,
 	 send_discovery/1,
 	 send_join/1,
 	 send_config_status/1,
 	 send_change_state_event/1,
 	 send_wwan_statistics/1,
+	 send_wwan_statistics/2,
 	 add_station/2,
 	 send_keep_alive/1
 	]).
@@ -33,6 +35,8 @@
 
 -record(state, {control_socket,
 		data_socket,
+		ctrl_stream,
+		owner,
 		seqno,
 		stations,
 		remote_mode,
@@ -62,8 +66,15 @@ start_link() ->
     start_link(?Default_SCG, {127,0,0,1}, ?Default_Local_Control_Port, "./", "./root.pem", ?Default_WTP_MAC, false, []).
 
 start_link(SCG, IP, Port, CertDir, RootCert, Mac, RemoteMode, Options) ->
-    gen_fsm:start_link(?MODULE, [SCG, IP, Port, CertDir, RootCert, Mac, RemoteMode, Options], []).
+    gen_fsm:start_link(?MODULE, [SCG, IP, Port, CertDir, RootCert, Mac, RemoteMode, self(), Options], []).
 
+stop(WTP) ->
+    MonitorRef = monitor(process, WTP),
+    gen_fsm:sync_send_all_state_event(WTP, stop),
+    receive
+	{'DOWN', MonitorRef, _, _, _} ->
+	    ok
+    end.
 
 send_discovery(WTP_FSM) ->
     gen_fsm:sync_send_event(WTP_FSM, send_discovery).
@@ -83,6 +94,9 @@ send_keep_alive(WTP_FSM) ->
 send_wwan_statistics(WTP_FSM) ->
     gen_fsm:sync_send_event(WTP_FSM, send_wwan_statistics).
 
+send_wwan_statistics(WTP_FSM, NoIEs) ->
+    gen_fsm:sync_send_event(WTP_FSM, {send_wwan_statistics, NoIEs}).
+
 add_station(WTP_FSM, Mac) ->
     case gen_fsm:sync_send_event(WTP_FSM, {add_station, Mac}) of
 	wait_for_wifi ->
@@ -96,7 +110,7 @@ add_station(WTP_FSM, Mac) ->
 %%% gen_fsm callbacks
 %%%===================================================================
 
-init([SCG = {SCGIP, SCGControlPort}, IP, Port, CertDir, RootCert, Mac, RemoteMode, Options]) ->
+init([SCG = {SCGIP, SCGControlPort}, IP, Port, CertDir, RootCert, Mac, RemoteMode, Owner, Options]) ->
     {ok, ControlSocket} = capwap_udp:connect(SCGIP, SCGControlPort, [{active, false}, {mode, binary}, {ip, IP}]),
 
     DataSocket = case RemoteMode of
@@ -110,6 +124,8 @@ init([SCG = {SCGIP, SCGControlPort}, IP, Port, CertDir, RootCert, Mac, RemoteMod
 
     {ok, idle, #state{control_socket = ControlSocket,
 		      data_socket = DataSocket,
+		      ctrl_stream = capwap_stream:init(1500),
+		      owner = Owner,
 		      seqno = 0,
 		      stations = [],
 		      remote_mode = RemoteMode,
@@ -153,7 +169,7 @@ idle(send_discovery, _From, State) ->
 	  ] ++ create_default_ies(),
     {resp, Resp, State0} = do_transition(State, control, discovery, {discovery_request, IEs}, udp_sync, req, undefined),
     lager:debug("got discovery response:  ~p", [Resp]),
-    {reply, ok, discovery, State0};
+    {reply, {ok, Resp}, discovery, State0};
 
 idle(_Event, _From, State) ->
     {reply, {error, bad_event}, idle, State}.
@@ -235,9 +251,24 @@ run(_Event, State) ->
     {next_state, run, State}.
 
 run(send_wwan_statistics, From, State) ->
-    IEs = [#tp_wtp_wwan_statistics{latency = 5,
-				   timestamp = timestamp()}
-	  ],
+    TimeStamp = timestamp(),
+    IEs = [#tp_wtp_wwan_statistics{
+	      latency = 5,
+	      timestamp = TimeStamp},
+	   #gps_last_acquired_position{
+	      timestamp = TimeStamp,
+	      gpsatc = <<"$GPSACP: 154750.000,5207.6688N,01137.8028E,0.7,62.4,2,196.4,45.7,24.7,030914,09">>}],
+    do_transition(State, control, run, {wtp_event_request, IEs}, async, req, {wtp_event_response, From});
+
+run({send_wwan_statistics, NoIEs}, From, State) ->
+    TimeStamp = timestamp(),
+    IE = [#tp_wtp_wwan_statistics{
+	      latency = 5,
+	      timestamp = TimeStamp},
+	   #gps_last_acquired_position{
+	      timestamp = TimeStamp,
+	      gpsatc = <<"$GPSACP: 154750.000,5207.6688N,01137.8028E,0.7,62.4,2,196.4,45.7,24.7,030914,09">>}],
+    IEs = lists:flatten(lists:duplicate(NoIEs, IE)),
     do_transition(State, control, run, {wtp_event_request, IEs}, async, req, {wtp_event_response, From});
 
 run({add_station, _}, _From, State = #state{wifi_up = false}) ->
@@ -281,6 +312,8 @@ run(_Event, _From, State) ->
 handle_event(_Event, StateName, State) ->
     {next_state, StateName, State}.
 
+handle_sync_event(stop, _From, _StateName, State) ->
+    {stop, normal, ok, State};
 handle_sync_event(_Event, _From, StateName, State) ->
     {reply, ok, StateName, State}.
 
@@ -325,29 +358,43 @@ get_seqno(#state{seqno=SQNO}) ->
     SQNO.
 
 send_capwap(State = #state{data_socket=DS, remote_mode=true}, data, Packet) ->
+    ct:pal("send data capwap: ~p", [Packet]),
     gen_udp:send(DS, Packet),
     reset_keep_alive_timer(State);
 
+send_capwap(#state{remote_mode=false} = State, data, []) ->
+    reset_keep_alive_timer(State);
 send_capwap(#state{data_socket=DS, remote_mode=false,
 		   simulated_data_port = Port,
 		   scg = {SCGIP, _}, ip = IP,
 		  flow_switches = {SW1, SW2}
 		  } = State,
-	    data, Packet) ->
+	    data, [Packet|Rest]) ->
+    ct:pal("send simulated data capwap: ~p", [Packet]),
     case capwap_ac:handle_data(SW1, SW2, IP, Port, Packet) of
 	{reply, Resp}  ->
-	    self() ! {udp, DS, SCGIP, Port + 1, Resp};
+	    {udp, DS, SCGIP, Port + 1, Resp};
 	_ ->
 	    ok
     end,
-    reset_keep_alive_timer(State);
+    send_capwap(State, data, Rest);
 
 send_capwap(State = #state{control_socket=CS, remote_mode=true}, control, Packet) ->
-    ssl:send(CS, Packet),
+    ct:pal("send control ssl capwap: ~p", [Packet]),
+    if is_list(Packet) ->
+	    lists:foreach(fun(P) -> ok = ssl:send(CS, P) end, Packet);
+       true ->
+	    ok = ssl:send(CS, Packet)
+    end,
     reset_echo_request_timer(State);
 
 send_capwap(State = #state{control_socket=CS, remote_mode=false}, control, Packet) ->
-    gen_udp:send(CS, Packet),
+    ct:pal("send control udp capwap: ~p", [Packet]),
+    if is_list(Packet) ->
+	    lists:foreach(fun(P) -> ok = gen_udp:send(CS, P) end, Packet);
+       true ->
+	    ok = gen_udp:send(CS, Packet)
+    end,
     reset_echo_request_timer(State).
 
 recv_capwap(#state{control_socket=CS, remote_mode=true}) ->
@@ -373,12 +420,13 @@ do_transition(State, Type, NextState, Packet) ->
 do_transition(State, data, NextState, {Flags, IEs}, Mode, RespSeq, UserCallback)  when Flags =/= packet  ->
     Header = create_header(State),
     Header1 = Header#capwap_header{flags=Flags},
+    ct:pal("do data encode: ~p", [{Header1, IEs}]),
     Packet = capwap_packet:encode(data,
 				  {Header1, IEs}),
     do_transition(State, data, NextState, {packet, Packet}, Mode, RespSeq, UserCallback);
 
 %% Format packet for control channel
-do_transition(State = #state{seqno = SeqNum},
+do_transition(State = #state{ctrl_stream = CtrlStreamState0, seqno = SeqNum},
 	      control, NextState, {ReqType, IEs},
 	      Mode, RespSeq, UserCallback) when ReqType =/= packet ->
     Header = create_header(State),
@@ -389,12 +437,12 @@ do_transition(State = #state{seqno = SeqNum},
 			  SeqNum
 		  end,
 
-    Packet = capwap_packet:encode(control,
-				  {Header,
-				   {ReqType, SeqNumToUse, IEs}}),
+    Msg = {Header, {ReqType, SeqNumToUse, IEs}},
+    {Packet, CtrlStreamState1} = capwap_stream:encode(control, Msg, CtrlStreamState0),
     lager:debug("in do_transition, ~p to send: ~p", [ReqType, Packet]),
 
-    do_transition(State, control, NextState, {packet, Packet}, Mode, RespSeq, UserCallback);
+    do_transition(State#state{ctrl_stream = CtrlStreamState1}, control,
+		  NextState, {packet, Packet}, Mode, RespSeq, UserCallback);
 
 %% send packet and make state transition
 %% mode = async | udp_sync
@@ -448,32 +496,33 @@ timestamp() ->
     {Mega, Secs, _} = now(),
     Mega*1000000 + Secs.
 
-handle_incoming({#capwap_header{},
-		 {wtp_event_response, _, _RemoteSeq, _IEs}},
+handle_incoming(Response = {#capwap_header{},
+			    {wtp_event_response, _, _RemoteSeq, _IEs}},
 		run, control,
 		State = #state{request_pending={wtp_event_response, From}}) ->
-    reply_test(State, From, ok, run);
+    reply_test(State, From, {ok, Response}, run);
 
-handle_incoming({#capwap_header{},
-		 {join_response, _, _RemoteSeq, _IEs}},
+handle_incoming(Response = {#capwap_header{},
+			    {join_response, _, _RemoteSeq, _IEs}},
 		discovery, control,
 		State = #state{request_pending={join_response, From}}) ->
-    reply_test(State, From, ok, join);
+    reply_test(State, From, {ok, Response}, join);
 
-handle_incoming({#capwap_header{},
-                 {configuration_status_response, _, _RemoteSeq, IEs}},
+handle_incoming(Response = {#capwap_header{},
+			    {configuration_status_response, _, _RemoteSeq, IEs}},
                 join,
                 control,
                 State = #state{request_pending={configuration_status_response, From}}) ->
     #timers{echo_request = EchoTimer} = lists:keyfind(timers, 1, IEs),
-    reply_test(State#state{echo_request_timeout = EchoTimer}, From, ok, configure);
+    reply_test(State#state{echo_request_timeout = EchoTimer}, From, {ok, Response}, configure);
 
-handle_incoming({#capwap_header{},
-		 {ieee_802_11_wlan_configuration_request, _, RemoteSeq, _WlanConfigIEs}} = Req,
+handle_incoming(Request = {#capwap_header{},
+			   {ieee_802_11_wlan_configuration_request, _, RemoteSeq, _WlanConfigIEs}} = Req,
 		StateName,
 		control,
-		State = #state{request_pending = RP}) ->
+		State = #state{owner = Owner, request_pending = RP}) ->
     lager:debug("Got expected wlan_config_request in ~p: ~p", [StateName, Req]),
+    Owner ! Request,
     State0 = State#state{wifi_up = true},
     {next_state, StateName, State1} = do_transition(State0#state{request_pending = undefined},
 						    control, StateName,
@@ -481,18 +530,18 @@ handle_incoming({#capwap_header{},
 						    async, {resp, RemoteSeq}, undefined),
     {next_state, StateName, State1#state{request_pending = RP}};
 
-handle_incoming({#capwap_header{},
-		 {station_configuration_request, _, RemoteSeq, _StationConfigIEs}} = Req,
+handle_incoming(Request = {#capwap_header{},
+			   {station_configuration_request, _, RemoteSeq, _StationConfigIEs}} = Req,
 		run,
 		control,
 		State = #state{request_pending = {add_station_resp, From}}) ->
     lager:debug("got expected station_config_request: ~p", [Req]),
-    {next_state, run, State0} = reply_test(State, From, ok, run),
+    {next_state, run, State0} = reply_test(State, From, {ok, Request}, run),
     do_transition(State0, control, run,
 		  {station_configuration_response, [#result_code{}]},
 		  async, {resp, RemoteSeq}, undefined);
 
-handle_incoming({_Header, {change_state_event_response, _, _, []}},
+handle_incoming(Response = {_Header, {change_state_event_response, _, _, []}},
 		configure, control,
 		State= #state{capwap_wtp_session_id = CapwapWtpSessionId,
                       request_pending = {change_state_event_response, From},
@@ -508,7 +557,7 @@ handle_incoming({_Header, {change_state_event_response, _, _, []}},
     %% 		 false ->
     %% 		     State
     %% 	     end,
-    {next_state, run, State1} = reply_test(State, From, ok, run),
+    {next_state, run, State1} = reply_test(State, From, {ok, Response}, run),
 
     Flags = ['keep-alive', {frame,'802.3'}],
     KeepAliveIEs=[#session_id{session_id = CapwapWtpSessionId}],
