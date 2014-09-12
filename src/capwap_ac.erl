@@ -39,6 +39,7 @@
 	  peer_data,
 	  flow_switch,
 	  socket,
+	  ctrl_stream,
 	  session,
 	  mac_types,
 	  tunnel_modes,
@@ -183,6 +184,7 @@ init([Peer]) ->
     process_flag(trap_exit, true),
     capwap_wtp_reg:register(Peer),
     {ok, listen, #state{peer = Peer, request_queue = queue:new(),
+			ctrl_stream = capwap_stream:init(1500),
                         radios = []}, 5000}.
 
 %%--------------------------------------------------------------------
@@ -205,11 +207,26 @@ listen({accept, udp, Socket}, State0) ->
     lager:info("udp_accept: ~p", [Socket]),
     {ok, Session} = start_session(Socket, State0),
 
-    State1 = State0#state{event_log = open_log(),
-                          session = Session,
-                          socket = {udp, Socket},
-                          id = undefined},
-    next_state(idle, State1);
+    {ok, IP} = capwap_udp:peername(Socket),
+    PeerName = iolist_to_binary(format_peer(IP)),
+
+    Opts = [{'Username', PeerName},
+	    {'Authentication-Method', {'TLS', 'Pre-Shared-Key'}}
+            | create_initial_ctld_params(PeerName)],
+    case ctld_session:authenticate(Session, ctld_session:to_session(Opts)) of
+	success ->
+	    lager:info("AuthResult: success"),
+	    State1 = State0#state{event_log = open_log(),
+				  session = Session,
+				  socket = {udp, Socket},
+				  id = undefined},
+
+	    next_state(idle, State1);
+
+	Other ->
+	    lager:info("AuthResult: ~p", [Other]),
+	    {stop, normal, State0#state{session=Session}}
+    end;
 
 listen({accept, dtls, Socket}, State) ->
     lager:info("ssl_accept on: ~p", [Socket]),
@@ -748,7 +765,7 @@ handle_plain_join(Peer, Seq, _Elements, #capwap_header{
 	    RespElems = [#result_code{result_code = 18}],
 	    Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
 	    log_capwap_control(Peer, join_response, Seq, RespElems, Header),
-	    Answer = capwap_packet:encode(control, {Header, {join_response, Seq, RespElems}}),
+	    Answer = hd(capwap_packet:encode(control, {Header, {join_response, Seq, RespElems}})),
 	    {reply, Answer}
     end.
 
@@ -763,7 +780,7 @@ handle_capwap_data(FlowSwitch, Sw, Address, Port, Header, true, PayLoad) ->
 	    PeerId = {Address, Port},
 	    case gen_fsm:sync_send_event(AC, {keep_alive, FlowSwitch, Sw, PeerId, Header, PayLoad}) of
 		{reply, {RHeader, RPayLoad}} ->
-		    Data = capwap_packet:encode(data, {RHeader, RPayLoad}),
+		    Data = hd(capwap_packet:encode(data, {RHeader, RPayLoad})),
 		    {reply, Data};
 		Other ->
 		    Other
@@ -807,7 +824,7 @@ handle_capwap_data(_FlowSwitch, Sw, Address, Port,
 			      radio_id = RadioId,
 			      wb_id = WBID,
 			      flags = [{frame, 'native'}]},
-			    Data = capwap_packet:encode(data, {RHeader, Reply}),
+			    Data = hd(capwap_packet:encode(data, {RHeader, Reply})),
 			    {reply, Data};
 
 			{add, RadioMAC, MAC, MacMode, TunnelMode} ->
@@ -831,37 +848,44 @@ handle_capwap_data(_FlowSwitch, Sw, Address, Port,
 	    end
     end.
 
-handle_capwap_packet(Packet, StateName, State = #state{
-						   last_response = LastResponse,
-						   request_queue = Queue}) ->
-    try	capwap_packet:decode(control, Packet) of
-	{Header, {Msg, 1, Seq, Elements}} ->
-	    %% Request
-	    log_capwap_control(peer_log_str(State), Msg, Seq, Elements, Header),
-	    case LastResponse of
-		{Seq, _} ->
-		    resend_response(State),
-		    {next_state, StateName, State, ?IDLE_TIMEOUT};
-		{LastSeq, _} when ?SEQ_LE(Seq, LastSeq) ->
-		    %% old request, silently ignore
-		    {next_state, StateName, State, ?IDLE_TIMEOUT};
-		_ ->
-		    ?MODULE:StateName({Msg, Seq, Elements, Header}, State)
-	    end;
-	{Header, {Msg, 0, Seq, Elements}} ->
-	    %% Response
-	    log_capwap_control(peer_log_str(State), Msg, Seq, Elements, Header),
-	    case queue:peek(Queue) of
-            {value, {Seq, _}} ->
-                State1 = ack_request(State),
-                ?MODULE:StateName({Msg, Seq, Elements, Header}, State1);
-            _ ->
-		    %% invalid Seq, out-of-order packet, silently ignore,
-                {next_state, StateName, State, ?IDLE_TIMEOUT}
-	    end
-    catch
-	Class:Error ->
-	    lager:error([{capwap_packet, decode}, {class, Class}, {error, Error}], "Decode error ~p:~p", [Class, Error]),
+handle_capwap_packet(Packet, StateName, State = #state{ctrl_stream = CtrlStreamState0}) ->
+    case capwap_stream:recv(control, Packet, CtrlStreamState0) of
+	{ok, {Header, Msg}, CtrlStreamState1} ->
+	    handle_capwap_message(Header, Msg, StateName, State#state{ctrl_stream = CtrlStreamState1});
+
+	{ok, more, CtrlStreamState1} ->
+	    {next_state, StateName, State#state{ctrl_stream = CtrlStreamState1}, ?IDLE_TIMEOUT};
+
+	{error, Error} ->
+	    lager:error([{capwap_packet, decode}, {error, Error}], "Decode error ~p", [Error]),
+	    {next_state, StateName, State, ?IDLE_TIMEOUT}
+    end.
+
+handle_capwap_message(Header, {Msg, 1, Seq, Elements}, StateName,
+		      State = #state{last_response = LastResponse}) ->
+    %% Request
+    log_capwap_control(peer_log_str(State), Msg, Seq, Elements, Header),
+    case LastResponse of
+	{Seq, _} ->
+	    NewState = resend_response(State),
+	    {next_state, StateName, NewState, ?IDLE_TIMEOUT};
+	{LastSeq, _} when ?SEQ_LE(Seq, LastSeq) ->
+	    %% old request, silently ignore
+	    {next_state, StateName, State, ?IDLE_TIMEOUT};
+	_ ->
+	    ?MODULE:StateName({Msg, Seq, Elements, Header}, State)
+    end;
+
+handle_capwap_message(Header, {Msg, 0, Seq, Elements}, StateName,
+		      State = #state{request_queue = Queue}) ->
+    %% Response
+    log_capwap_control(peer_log_str(State), Msg, Seq, Elements, Header),
+    case queue:peek(Queue) of
+	{value, {Seq, _}} ->
+	    State1 = ack_request(State),
+	    ?MODULE:StateName({Msg, Seq, Elements, Header}, State1);
+	_ ->
+	    %% invalid Seq, out-of-order packet, silently ignore,
 	    {next_state, StateName, State, ?IDLE_TIMEOUT}
     end.
 
@@ -1071,59 +1095,51 @@ send_info_after(Time, Event) ->
 bump_seqno(State = #state{seqno = SeqNo}) ->
     State#state{seqno = (SeqNo + 1) rem 256}.
 
-send_response(Header, MsgType, Seq, MsgElems,
-	      State = #state{socket = Socket}) ->
+send_response(Header, MsgType, Seq, MsgElems, State) ->
     log_capwap_control(peer_log_str(State), MsgType, Seq, MsgElems, Header),
-    BinMsg = capwap_packet:encode(control, {Header, {MsgType, Seq, MsgElems}}),
-    ok = socket_send(Socket, BinMsg),
-    State#state{last_response = {Seq, BinMsg}}.
+    Msg = {Header, {MsgType, Seq, MsgElems}},
+    stream_send(Msg, State#state{last_response = {Seq, Msg}}).
 
-resend_response(#state{socket = Socket, last_response = {SeqNo, BinMsg}}) ->
+resend_response(State = #state{last_response = {SeqNo, Msg}}) ->
     lager:warning("resend capwap response ~w", [SeqNo]),
-    ok = socket_send(Socket, BinMsg).
+    stream_send(Msg, State).
 
-send_request(Header, MsgType, ReqElements, State = #state{seqno = SeqNo}) ->
-    log_capwap_control(peer_log_str(State), MsgType, SeqNo, ReqElements, Header),
-    BinMsg = capwap_packet:encode(control, {Header, {MsgType, SeqNo, ReqElements}}),
-    State1 = send_request_queue(BinMsg, State),
-    bump_seqno(State1).
-
-send_request_queue(BinMsg, State = #state{socket = Socket, request_queue = Queue, seqno = SeqNo}) ->
-    NewState = queue_request(State, {SeqNo, BinMsg}),
+send_request(Header, MsgType, ReqElements, State0 = #state{request_queue = Queue, seqno = SeqNo}) ->
+    log_capwap_control(peer_log_str(State0), MsgType, SeqNo, ReqElements, Header),
+    Msg = {Header, {MsgType, SeqNo, ReqElements}},
+    State1 = queue_request(State0, {SeqNo, Msg}),
+    State2 = bump_seqno(State1),
     case queue:is_empty(Queue) of
         true ->
-            ok = socket_send(Socket, BinMsg),
-            init_retransmit(NewState);
+            State3 = stream_send(Msg, State2),
+            init_retransmit(State3, ?MaxRetransmit);
         false ->
-            NewState
+            State2
     end.
 
 resend_request(StateName, State = #state{retransmit_counter = 0}) ->
     lager:debug("Final Timeout in ~w, STOPPING", [StateName]),
     {stop, normal, State};
 resend_request(StateName,
-	       State = #state{socket = Socket,
-                          request_queue = Queue,
-                          retransmit_counter = MaxRetransmit}) ->
+	       State0 = #state{request_queue = Queue,
+			       retransmit_counter = RetransmitCounter}) ->
     lager:warning("resend capwap request", []),
-    {value, {_, BinMsg}} = queue:peek(Queue),
-    ok = socket_send(Socket, BinMsg),
-    State1 = State#state{retransmit_timer = send_info_after(?RetransmitInterval, retransmit),
-			 retransmit_counter = MaxRetransmit - 1
-			},
-    {next_state, StateName, State1, ?IDLE_TIMEOUT}.
+    {value, {_, Msg}} = queue:peek(Queue),
+    State1 = stream_send(Msg, State0),
+    State2 = init_retransmit(State1, RetransmitCounter - 1),
+    {next_state, StateName, State2, ?IDLE_TIMEOUT}.
 
-init_retransmit(State) ->
+init_retransmit(State, Counter) ->
     State#state{retransmit_timer = send_info_after(?RetransmitInterval, retransmit),
-                retransmit_counter = ?MaxRetransmit}.
+                retransmit_counter = Counter}.
 
 %% Stop Timer, clear LastRequest
-ack_request(State0 = #state{socket = Socket}) ->
+ack_request(State0) ->
     State1 = cancel_retransmit(State0),
     case dequeue_request_next(State1) of
-        {{value, {_, BinMsg}}, State2} ->
-            ok = socket_send(Socket, BinMsg),
-            init_retransmit(State2);
+        {{value, {_, Msg}}, State2} ->
+	    State3 = stream_send(Msg, State2),
+            init_retransmit(State3, ?MaxRetransmit);
         {empty, State2} ->
             State2
     end.
@@ -1188,7 +1204,12 @@ answer_discover(Peer, Seq, Elements, #capwap_header{
     RespElems = ac_info(discover, Elements),
     Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
     log_capwap_control(Peer, discovery_response, Seq, RespElems, Header),
-    capwap_packet:encode(control, {Header, {discovery_response, Seq, RespElems}}).
+    hd(capwap_packet:encode(control, {Header, {discovery_response, Seq, RespElems}})).
+
+stream_send(Msg, State = #state{ctrl_stream = CtrlStreamState0, socket = Socket}) ->
+    {BinMsg, CtrlStreamState1} = capwap_stream:encode(control, Msg, CtrlStreamState0),
+    lists:foreach(fun(M) -> ok = socket_send(Socket, M) end, BinMsg),
+    State#state{ctrl_stream = CtrlStreamState1}.
 
 socket_send({udp, Socket}, Data) ->
     capwap_udp:send(Socket, Data);
