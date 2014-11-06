@@ -3,6 +3,11 @@ capwap
 
 Erlang CAPWAP AC implementation.
 
+Version 1.3.1 - 06 Nov 2014
+---------------------------
+
+* change station ctld reporting to include the WTP-Id and Session-Id
+
 Version 1.3.0 - 05 Sep 2014
 ---------------------------
 

@@ -3,8 +3,8 @@
 -behavior(gen_fsm).
 
 %% API
--export([start_link/7, handle_ieee80211_frame/2, handle_ieee802_3_frame/2,
-         set_out_action/3, get_out_action/2, take_over/7]).
+-export([start_link/9, handle_ieee80211_frame/2, handle_ieee802_3_frame/2,
+         set_out_action/3, get_out_action/2, take_over/9]).
 %% For testing
 -export([frame_type/1]).
 
@@ -33,6 +33,8 @@
           ac_monitor,
           flow_switch,
           peer_data,
+	  wtp_id,
+	  wtp_session_id,
           radio_mac,
           mac,
           mac_mode,
@@ -47,8 +49,8 @@
 %%%===================================================================
 %%% API
 %%%===================================================================
-start_link(AC, FlowSwitch, PeerId, RadioMAC, ClientMAC, MacMode, TunnelMode) ->
-    gen_fsm:start_link(?MODULE, [AC, FlowSwitch, PeerId, RadioMAC, ClientMAC, MacMode, TunnelMode], [{debug, ?DEBUG_OPTS}]).
+start_link(AC, FlowSwitch, PeerId, WtpId, SessionId, RadioMAC, ClientMAC, MacMode, TunnelMode) ->
+    gen_fsm:start_link(?MODULE, [AC, FlowSwitch, PeerId, WtpId, SessionId, RadioMAC, ClientMAC, MacMode, TunnelMode], [{debug, ?DEBUG_OPTS}]).
 
 handle_ieee80211_frame(AC, <<FrameControl:2/bytes,
 			      _Duration:16, DA:6/bytes, SA:6/bytes, BSS:6/bytes,
@@ -99,18 +101,19 @@ get_out_action(Sw, ClientMAC) ->
 	    not_found
     end.
 
-take_over(Pid, AC, FlowSwitch, PeerId, RadioMAC, MacMode, TunnelMode) ->
-    gen_fsm:sync_send_event(Pid, {take_over, AC, FlowSwitch, PeerId, RadioMAC, MacMode, TunnelMode}).
+take_over(Pid, AC, FlowSwitch, PeerId, WtpId, SessionId, RadioMAC, MacMode, TunnelMode) ->
+    gen_fsm:sync_send_event(Pid, {take_over, AC, FlowSwitch, PeerId, WtpId, SessionId, RadioMAC, MacMode, TunnelMode}).
 
 %%%===================================================================
 %%% gen_fsm callbacks
 %%%===================================================================
-init([AC, FlowSwitch, PeerId, RadioMAC, ClientMAC, MacMode, TunnelMode]) ->
+init([AC, FlowSwitch, PeerId, WtpId, SessionId, RadioMAC, ClientMAC, MacMode, TunnelMode]) ->
     lager:debug("Register station ~p as ~w", [{AC, RadioMAC, ClientMAC}, self()]),
     capwap_station_reg:register(ClientMAC),
     capwap_station_reg:register(AC, ClientMAC),
     ACMonitor = erlang:monitor(process, AC),
-    State = #state{ac = AC, ac_monitor = ACMonitor, flow_switch = FlowSwitch, peer_data = PeerId,
+    State = #state{ac = AC, ac_monitor = ACMonitor, flow_switch = FlowSwitch,
+		   peer_data = PeerId, wtp_id = WtpId, wtp_session_id = SessionId,
                    radio_mac = RadioMAC, mac = ClientMAC, mac_mode = MacMode, tunnel_mode = TunnelMode},
     {ok, initial_state(MacMode), State}.
 
@@ -163,7 +166,7 @@ init_assoc(Event = {'Authentication', _DA, _SA, _BSS, 0, 0, _Frame}, _From, Stat
 
 init_assoc(Event = {FrameType, _DA, _SA, BSS, 0, 0, _Frame}, _From,
 	   State = #state{radio_mac = BSS, mac = MAC, mac_mode = MacMode,
-                      peer_data = {WtpIp, _}, tunnel_mode = TunnelMode})
+			  tunnel_mode = TunnelMode})
   when MacMode == local_mac andalso
        (FrameType == 'Association Request' orelse FrameType == 'Reassociation Request') ->
     lager:debug("in INIT_ASSOC Local-MAC Mode got Association Request: ~p", [Event]),
@@ -179,8 +182,7 @@ init_assoc(Event = {FrameType, _DA, _SA, BSS, 0, 0, _Frame}, _From,
     %%   necessary, and upon receipt of a failed Association Response frame
     %%   from the AC, the WTP MUST send a Disassociation frame to the station.
 
-    {ok, {_, ProviderOpts}} = application:get_env(ctld_provider),
-    ctld_station_session:association(format_mac(MAC), WtpIp, ProviderOpts),
+    ctld_association(State),
 
     reply({add, BSS, MAC, MacMode, TunnelMode}, connected, State);
 
@@ -257,25 +259,22 @@ connected({'802.3', Data}, _From,
 
 connected(Event = {'Deauthentication', _DA, _SA, BSS, 0, 0, _Frame}, _From,
 	   State = #state{radio_mac = BSS, mac = MAC, mac_mode = MacMode,
-                      peer_data = {WtpIp, _}, tunnel_mode = TunnelMode}) ->
+			  tunnel_mode = TunnelMode}) ->
     lager:debug("in CONNECTED got Deauthentication: ~p", [Event]),
-    {ok, {_, ProviderOpts}} = application:get_env(ctld_provider),
-    ctld_station_session:disassociation(format_mac(MAC), WtpIp, ProviderOpts),
+    ctld_disassociation(State),
     reply({del, BSS, MAC, MacMode, TunnelMode}, shutdown, State);
 
 connected(Event = {'Disassociation', _DA, _SA, BSS, 0, 0, _Frame}, _From,
 	   State = #state{radio_mac = BSS, mac = MAC, mac_mode = MacMode,
-                      peer_data = {WtpIp, _}, tunnel_mode = TunnelMode}) ->
+			  tunnel_mode = TunnelMode}) ->
     lager:debug("in CONNECTED got Disassociation: ~p", [Event]),
-    {ok, {_, ProviderOpts}} = application:get_env(ctld_provider),
-    ctld_station_session:disassociation(format_mac(MAC), WtpIp, ProviderOpts),
+    ctld_disassociation(State),
     reply({del, BSS, MAC, MacMode, TunnelMode}, init_assoc, State);
 
-connected(Event, From, State = #state{mac = MAC, peer_data = {WtpIp, _}})
+connected(Event, From, State)
   when element(1, Event) == take_over ->
     lager:debug("in CONNECTED got TAKE-OVER: ~p", [Event]),
-    {ok, {_, ProviderOpts}} = application:get_env(ctld_provider),
-    ctld_station_session:disassociation(format_mac(MAC), WtpIp, ProviderOpts),
+    ctld_disassociation(State),
     handle_take_over(Event, From, State);
 
 connected(Event, _From, State) ->
@@ -338,10 +337,9 @@ handle_info(Info, StateName, State) ->
     lager:warning("in State ~p unexpected Info: ~p", [StateName, Info]),
     next_state(StateName, State).
 
-terminate(_Reason, StateName, #state{ac = AC, mac = MAC, peer_data = {WtpIp, _}}) ->
+terminate(_Reason, StateName, State = #state{ac = AC, mac = MAC}) ->
     if StateName == connected ->
-	    {ok, {_, ProviderOpts}} = application:get_env(ctld_provider),
-	    ctld_station_session:disassociation(format_mac(MAC), WtpIp, ProviderOpts);
+	    ctld_disassociation(State);
        true ->
 	    ok
     end,
@@ -446,7 +444,7 @@ ieee80211_request(_AC, FrameType, DA, SA, BSS, FromDS, ToDS, Frame) ->
     lager:warning("unhandled IEEE 802.11 Frame: ~p", [{FrameType, DA, SA, BSS, FromDS, ToDS, Frame}]),
     {error, unhandled}.
 
-handle_take_over({take_over, AC, FlowSwitch, PeerId, RadioMAC, MacMode, TunnelMode}, _From,
+handle_take_over({take_over, AC, FlowSwitch, PeerId, WtpId, SessionId, RadioMAC, MacMode, TunnelMode}, _From,
 		 State0 = #state{ac = OldAC, ac_monitor = OldACMonitor,
 				 flow_switch = _OldFlowSwitch,
 				 radio_mac = OldRadioMAC, mac = ClientMAC,
@@ -468,6 +466,7 @@ handle_take_over({take_over, AC, FlowSwitch, PeerId, RadioMAC, MacMode, TunnelMo
 
     State = State0#state{ac = AC, ac_monitor = ACMonitor,
 			 flow_switch = FlowSwitch, peer_data = PeerId,
+			 wtp_id = WtpId, wtp_session_id = SessionId,
 			 radio_mac = RadioMAC, mac_mode = MacMode,
 			 tunnel_mode = TunnelMode},
     reply({ok, self()}, initial_state(MacMode), State).
@@ -486,6 +485,18 @@ encode_auth_frame(#auth_frame{algo   = Algo, seq_no = SeqNo,
 			      status = Status, params = Params}) ->
     <<Algo:16/little-integer, SeqNo:16/little-integer,
       Status:16/little-integer, Params/binary>>.
+
+%% Accounting Support
+
+ctld_association(#state{mac = MAC, wtp_id = WtpId, wtp_session_id = WtpSessionId}) ->
+    {ok, {_, ProviderOpts}} = application:get_env(ctld_provider),
+    ctld_station_session:association(format_mac(MAC), WtpId, WtpSessionId, ProviderOpts),
+    ok.
+
+ctld_disassociation(#state{mac = MAC, wtp_id = WtpId, wtp_session_id = WtpSessionId}) ->
+    {ok, {_, ProviderOpts}} = application:get_env(ctld_provider),
+    ctld_station_session:disassociation(format_mac(MAC), WtpId, WtpSessionId, ProviderOpts),
+    ok.
 
 %% Management
 frame_type(2#00, 2#0000) -> 'Association Request';
