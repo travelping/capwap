@@ -371,9 +371,12 @@ configure({Msg, Seq, Elements, Header}, State) ->
     lager:debug("in configure got: ~p", [{Msg, Seq, Elements, Header}]),
     next_state(configure, State).
 
-data_check({keep_alive, FlowSwitch, Sw, PeerId, Header, PayLoad}, _From, State) ->
+data_check({keep_alive, FlowSwitch, Sw, PeerId, Header, PayLoad}, _From,
+	   State = #state{ctrl_stream = CtrlStreamState}) ->
     lager:info("in DATA_CHECK got expected keep_alive: ~p", [{Sw, Header, PayLoad}]),
     capwap_wtp_reg:register(PeerId),
+    MTU = capwap_stream:get_mtu(CtrlStreamState),
+    capwap_dp:add_wtp(PeerId, MTU),
     gen_fsm:send_event(self(), configure),
     reply({reply, {Header, PayLoad}}, run, State#state{peer_data = PeerId, flow_switch = FlowSwitch}).
 

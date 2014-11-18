@@ -5,6 +5,9 @@
 %% API
 -export([start_link/9, handle_ieee80211_frame/2, handle_ieee802_3_frame/2,
          set_out_action/3, get_out_action/2, take_over/9]).
+%% Helpers
+-export([format_mac/1]).
+
 %% For testing
 -export([frame_type/1]).
 
@@ -14,7 +17,6 @@
 	 init_assoc/2, init_assoc/3,
 	 init_start/2, init_start/3,
 	 connected/2, connected/3,
-	 shutdown/2, shutdown/3,
 	 handle_event/3, handle_sync_event/4,
 	 handle_info/3, terminate/3, code_change/4]).
 
@@ -126,7 +128,7 @@ init([AC, FlowSwitch, PeerId, WtpId, SessionId, RadioMAC, ClientMAC, MacMode, Tu
 %%
 init_auth(timeout, State) ->
     lager:warning("idle timeout in INIT_AUTH"),
-    next_state(shutdown, State).
+    {stop, normal, State}.
 
 init_auth(Event = {'Authentication', DA, SA, BSS, 0, 0, Frame}, _From, State) ->
     lager:debug("in INIT_AUTH got Authentication Request: ~p", [Event]),
@@ -136,11 +138,11 @@ init_auth(Event = {'Authentication', DA, SA, BSS, 0, 0, Frame}, _From, State) ->
 		    status = ?SUCCESS} ->
 	    %% send Auth OK
 	    Reply = gen_auth_ok(DA, SA, BSS, Frame),
-	    reply({reply, Reply}, init_assoc, State);
+	    {reply, {reply, Reply}, init_assoc, State, ?IDLE_TIMEOUT};
 	_ ->
 	    %% send Auth Fail
 	    Reply = gen_auth_fail(DA, SA, BSS, Frame),
-	    reply({reply, Reply}, init_auth, State)
+	    {reply, {reply, Reply}, init_auth, State, ?IDLE_TIMEOUT}
     end;
 
 init_auth(Event, From, State)
@@ -150,19 +152,19 @@ init_auth(Event, From, State)
 
 init_auth(Event, _From, State) ->
     lager:warning("in INIT_AUTH got unexpexted: ~p", [Event]),
-    reply({error, unexpected}, init_auth, State).
+    {reply, {error, unexpected}, init_auth, State, ?IDLE_TIMEOUT}.
 
 %%
 %% State 2
-%% 
+%%
 init_assoc(timeout, State) ->
     lager:warning("idle timeout in INIT_ASSOC"),
-    next_state(shutdown, State).
+    {stop, normal, State}.
 
 init_assoc(Event = {'Authentication', _DA, _SA, _BSS, 0, 0, _Frame}, _From, State)
   when State#state.mac_mode == local_mac ->
     lager:debug("in INIT_ASSOC Local-MAC Mode got Authentication Request: ~p", [Event]),
-    reply({ok, ignore}, init_assoc, State);
+    {reply, {ok, ignore}, init_assoc, State, ?IDLE_TIMEOUT};
 
 init_assoc(Event = {FrameType, _DA, _SA, BSS, 0, 0, _Frame}, _From,
 	   State = #state{radio_mac = BSS, mac = MAC, mac_mode = MacMode,
@@ -184,7 +186,7 @@ init_assoc(Event = {FrameType, _DA, _SA, BSS, 0, 0, _Frame}, _From,
 
     ctld_association(State),
 
-    reply({add, BSS, MAC, MacMode, TunnelMode}, connected, State);
+    {reply, {add, BSS, MAC, MacMode, TunnelMode}, connected, State, ?IDLE_TIMEOUT};
 
 init_assoc(Event = {'Authentication', _DA, _SA, _BSS, 0, 0, _Frame}, From, State) ->
     lager:debug("in INIT_ASSOC got Authentication Request: ~p", [Event]),
@@ -213,7 +215,7 @@ init_assoc(Event = {FrameType, DA, SA, BSS, 0, 0, _Frame}, _From, State)
 	      SA:6/bytes, DA:6/bytes, BSS:6/bytes,
 	      SequenceControl:16,
 	      Frame/binary>>,
-    reply({reply, Reply}, init_start, State);
+    {reply, {reply, Reply}, init_start, State, ?IDLE_TIMEOUT};
 
 init_assoc(Event, From, State)
   when element(1, Event) == take_over ->
@@ -222,19 +224,19 @@ init_assoc(Event, From, State)
 
 init_assoc(Event, _From, State) ->
     lager:warning("in INIT_ASSOC got unexpexted: ~p", [Event]),
-    reply({error, unexpected}, init_assoc, State).
+    {reply, {error, unexpected}, init_assoc, State, ?IDLE_TIMEOUT}.
 
 %%
 %% State 3
 %%
 init_start(timeout, State) ->
     lager:warning("idle timeout in INIT_START"),
-    next_state(shutdown, State).
+    {stop, normal, State}.
 
 init_start(Event = {'Null', _DA, _SA, BSS, 0, 1, <<>>}, _From,
 	   State = #state{radio_mac = BSS, mac = MAC, mac_mode = MacMode, tunnel_mode = TunnelMode}) ->
     lager:debug("in INIT_START got Null: ~p", [Event]),
-    reply({add, BSS, MAC, MacMode, TunnelMode}, connected, State);
+    {reply, {add, BSS, MAC, MacMode, TunnelMode}, connected, State, ?IDLE_TIMEOUT};
 
 init_start(Event, From, State)
   when element(1, Event) == take_over ->
@@ -243,33 +245,33 @@ init_start(Event, From, State)
 
 init_start(Event, _From, State) ->
     lager:warning("in INIT_START got unexpexted: ~p", [Event]),
-    reply({error, unexpected}, init_start, State).
+    {reply, {error, unexpected}, init_start, State, ?IDLE_TIMEOUT}.
 
 %%
 %% State 4
 %%
 connected(timeout, State) ->
     lager:warning("idle timeout in CONNECTED"),
-    next_state(connected, State).
+    {next_state, connected, State, ?IDLE_TIMEOUT}.
 
 connected({'802.3', Data}, _From,
 	  State = #state{radio_mac = BSS, mac = MAC, mac_mode = MacMode, tunnel_mode = TunnelMode}) ->
     lager:debug("in CONNECTED got 802.3 Data:~n~s", [flower_tools:hexdump(Data)]),
-    reply({flow, BSS, MAC, MacMode, TunnelMode}, connected, State);
+    {reply, {flow, BSS, MAC, MacMode, TunnelMode}, connected, State, ?IDLE_TIMEOUT};
 
 connected(Event = {'Deauthentication', _DA, _SA, BSS, 0, 0, _Frame}, _From,
 	   State = #state{radio_mac = BSS, mac = MAC, mac_mode = MacMode,
 			  tunnel_mode = TunnelMode}) ->
     lager:debug("in CONNECTED got Deauthentication: ~p", [Event]),
     ctld_disassociation(State),
-    reply({del, BSS, MAC, MacMode, TunnelMode}, shutdown, State);
+    {reply, {del, BSS, MAC, MacMode, TunnelMode}, initial_state(MacMode), State, ?SHUTDOWN_TIMEOUT};
 
 connected(Event = {'Disassociation', _DA, _SA, BSS, 0, 0, _Frame}, _From,
 	   State = #state{radio_mac = BSS, mac = MAC, mac_mode = MacMode,
 			  tunnel_mode = TunnelMode}) ->
     lager:debug("in CONNECTED got Disassociation: ~p", [Event]),
     ctld_disassociation(State),
-    reply({del, BSS, MAC, MacMode, TunnelMode}, init_assoc, State);
+    {reply, {del, BSS, MAC, MacMode, TunnelMode}, init_assoc, State, ?SHUTDOWN_TIMEOUT};
 
 connected(Event, From, State)
   when element(1, Event) == take_over ->
@@ -279,41 +281,30 @@ connected(Event, From, State)
 
 connected(Event, _From, State) ->
     lager:warning("in CONNECTED got unexpexted: ~p", [Event]),
-    reply({error, unexpected}, connected, State).
-
-%%
-%% keep process arround for a few seconds to deal with reorderd, pending frames (should not happen!)
-%%
-shutdown(timeout, State) ->
-    lager:debug("idle timeout in SHUTDOWN"),
-    {stop, normal, State}.
-
-shutdown(Event, _From, State) ->
-    lager:warning("in SHUTDOWN got unexpexted: ~p", [Event]),
-    reply({error, unexpected}, shutdown, State).
+    {reply, {error, unexpected}, connected, State, ?IDLE_TIMEOUT}.
 
 handle_event(_Event, StateName, State) ->
-    next_state(StateName, State).
+    {next_state, StateName, State, ?IDLE_TIMEOUT}.
 
 handle_sync_event({get_wtp_for_client_mac, _Sw}, _From, StateName,
                   State = #state{ac = AC, radio_mac = RadioMAC}) ->
     case capwap_ac:get_peer_data(AC) of
         {ok, {Address, Port}} ->
             Reply = {ok, Address, Port, RadioMAC},
-            reply(Reply, StateName, State);
+            {reply, Reply, StateName, State, ?IDLE_TIMEOUT};
         Other ->
-            reply(Other, StateName, State)
+            {reply, Other, StateName, State, ?IDLE_TIMEOUT}
     end;
 
 handle_sync_event({set_out_action, _Sw, Action}, _From, StateName, State) ->
-    reply(ok, StateName, State#state{out_action = Action});
+    {reply, ok, StateName, State#state{out_action = Action}, ?IDLE_TIMEOUT};
 
 handle_sync_event({get_out_action, _Sw}, _From, StateName, State) ->
-    reply(State#state.out_action, StateName, State);
+    {reply, State#state.out_action, StateName, State, ?IDLE_TIMEOUT};
 
 handle_sync_event(_Event, _From, StateName, State) ->
     Reply = ok,
-    reply(Reply, StateName, State).
+    {reply, Reply, StateName, State, ?IDLE_TIMEOUT}.
 
 handle_info({'DOWN', ACMonitor, process, AC, _Info}, StateName,
             State = #state{ac = AC, ac_monitor = ACMonitor,
@@ -323,9 +314,9 @@ handle_info({'DOWN', ACMonitor, process, AC, _Info}, StateName,
     lager:warning("AC died ~w", [AC]),
 
     if
-        StateName == connected; StateName == shutdown ->
-            %% if the AC dies in connected whe have to the Switch directly,
-            %% to avoid a race do it in shutdown as well
+        StateName == connected ->
+            %% if the AC dies in connected whe have to tell the Switch directly
+            %% to avoid a race
             FlowSwitch ! {station_down, PeerId, BSS, MAC, MacMode, TunnelMode};
         true ->
             ok
@@ -335,7 +326,7 @@ handle_info({'DOWN', ACMonitor, process, AC, _Info}, StateName,
 
 handle_info(Info, StateName, State) ->
     lager:warning("in State ~p unexpected Info: ~p", [StateName, Info]),
-    next_state(StateName, State).
+    {next_state, StateName, State, ?IDLE_TIMEOUT}.
 
 terminate(_Reason, StateName, State = #state{ac = AC, mac = MAC}) ->
     if StateName == connected ->
@@ -344,7 +335,7 @@ terminate(_Reason, StateName, State = #state{ac = AC, mac = MAC}) ->
 	    ok
     end,
     capwap_ac:station_terminating(AC),
-    lager:warning("Station ~s terminated in State ~w", [flower_tools:format_mac(MAC), StateName]),
+    lager:warning("Station ~s terminated in State ~w", [format_mac(MAC), StateName]),
     ok.
 
 code_change(_OldVsn, StateName, State, _Extra) ->
@@ -381,18 +372,6 @@ gen_auth_fail(DA, SA, BSS, _InFrame) ->
       SA:6/bytes, DA:6/bytes, BSS:6/bytes,
       SequenceControl:16,
       Frame/binary>>.
-
-next_state(NextStateName, State)
-  when NextStateName == shutdown ->
-     {next_state, NextStateName, State, ?SHUTDOWN_TIMEOUT};
-next_state(NextStateName, State) ->
-     {next_state, NextStateName, State, ?IDLE_TIMEOUT}.
-
-reply(Reply, NextStateName, State)
-  when NextStateName == shutdown ->
-    {reply, Reply, NextStateName, State, ?SHUTDOWN_TIMEOUT};
-reply(Reply, NextStateName, State) ->
-    {reply, Reply, NextStateName, State, ?IDLE_TIMEOUT}.
 
 ieee80211_request(_AC, _FrameType, _DA, SA, BSS, _FromDS, _ToDS, _Frame)
   when SA == BSS ->
@@ -469,7 +448,7 @@ handle_take_over({take_over, AC, FlowSwitch, PeerId, WtpId, SessionId, RadioMAC,
 			 wtp_id = WtpId, wtp_session_id = SessionId,
 			 radio_mac = RadioMAC, mac_mode = MacMode,
 			 tunnel_mode = TunnelMode},
-    reply({ok, self()}, initial_state(MacMode), State).
+    {reply, {ok, self()}, initial_state(MacMode), State, ?IDLE_TIMEOUT}.
 
 %% partially en/decode Authentication Frames
 decode_auth_frame(<<Algo:16/little-integer, SeqNo:16/little-integer,
