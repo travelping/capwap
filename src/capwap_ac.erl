@@ -35,6 +35,7 @@
 
 -record(state, {
 	  id,
+	  session_id,
 	  peer,
 	  peer_data,
 	  flow_switch,
@@ -281,7 +282,8 @@ idle({join_request, Seq, Elements, #capwap_header{
 
     MacTypes = ie(wtp_mac_type, Elements),
     TunnelModes = ie(wtp_frame_tunnel_mode, Elements),
-    State1 = State0#state{mac_types = MacTypes, tunnel_modes = TunnelModes, version = Version},
+    State1 = State0#state{session_id = SessionId, mac_types = MacTypes,
+			  tunnel_modes = TunnelModes, version = Version},
 
     RespElements = ac_info_version(join, Version) ++ [#result_code{result_code = 0}],
     Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
@@ -383,7 +385,8 @@ data_check({Msg, Seq, Elements, Header}, State) ->
     lager:warning("in DATA_CHECK got unexpexted: ~p", [{Msg, Seq, Elements, Header}]),
     next_state(data_check, State).
 
-run({new_station, BSS, SA}, _From, State = #state{peer_data = PeerId, flow_switch = FlowSwitch,
+run({new_station, BSS, SA}, _From, State = #state{id = WtpId, session_id = SessionId,
+						  peer_data = PeerId, flow_switch = FlowSwitch,
                                                   mac_mode = MacMode, tunnel_mode = TunnelMode,
                                                   station_count  = StationCount,
                                                   session=Session}) ->
@@ -402,11 +405,11 @@ run({new_station, BSS, SA}, _From, State = #state{peer_data = PeerId, flow_switc
                     not_found ->
                         lager:debug("starting station: ~p", [SA]),
                         {State#state{station_count = StationCount + 1},
-                         capwap_station_sup:new_station(self(), FlowSwitch, PeerId, BSS, SA, MacMode, TunnelMode)};
+                         capwap_station_sup:new_station(self(), FlowSwitch, PeerId, WtpId, SessionId, BSS, SA, MacMode, TunnelMode)};
                     {ok, Station0} ->
                         lager:debug("TAKE-OVER: station ~p found as ~p", [{self(), SA}, Station0]),
                         {State#state{station_count = StationCount + 1},
-                         ieee80211_station:take_over(Station0, self(), FlowSwitch, PeerId, BSS, MacMode, TunnelMode)}
+                         ieee80211_station:take_over(Station0, self(), FlowSwitch, PeerId, WtpId, SessionId, BSS, MacMode, TunnelMode)}
                 end;
             {Ok = {ok, Station0}, _} ->
                 lager:debug("station ~p found as ~p", [{self(), SA}, Station0]),
