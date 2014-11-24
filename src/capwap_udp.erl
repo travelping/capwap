@@ -179,7 +179,7 @@ capwap_socket(SslSocketId) ->
 %%===================================================================
 
 -record(state, {socket, owner, mode, state = init, accepting, connections, virtual_sockets}).
--record(capwap_socket, {id, type, peer, owner, mode, queue}).
+-record(capwap_socket, {id, type, peer, owner, monitor, mode, queue}).
 
 init([Owner, Port, Options0]) ->
     process_flag(trap_exit, true),
@@ -258,6 +258,8 @@ handle_call({setopts, undefined, Options}, _From, State = #state{socket = Socket
     {reply, Reply, State#state{mode = proplists:get_value(mode, Options, Mode)}};
 
 handle_call({controlling_process, undefined, {Old, New}}, _From, State = #state{owner = Old}) ->
+    unlink(Old),
+    link(New),
     {reply, ok, State#state{owner = New}};
 handle_call({controlling_process, undefined, _}, _From, State) ->
     {reply, {error, not_owner}, State};
@@ -334,6 +336,14 @@ handle_info({udp, Socket, IP, InPortNo, Packet},
 %% 	     end,
 %%     inet:setopts(Socket, [{active, once}]),
 %%     {noreply, State1};
+
+handle_info({'EXIT', Owner, _}, State = #state{owner = Owner}) ->
+    lager:info("owner process ~p exited", [Owner]),
+    {stop, normal, State#state{owner = undefined}};
+
+handle_info({'DOWN', _MonitorRef, _Type, Pid, _Info}, State0 = #state{virtual_sockets = VSockets}) ->
+    State = socket_owner_down(Pid, gb_trees:iterator(VSockets), State0),
+    {noreply, State};
 
 handle_info(Info, State) ->
     lager:warning("Unhandled info message: ~p", [Info]),
@@ -488,12 +498,20 @@ socket_getopts(_CSocket, _Args, _From, State) ->
 socket_peername(#capwap_socket{peer = Peer}, _, _From, State) ->
     {reply, {ok, Peer}, State}.
 
-socket_controlling_process(CSocket = #capwap_socket{owner = Old}, {Old, Pid}, _From, State0) ->
-    State = update_csocket(CSocket#capwap_socket{owner = Pid}, State0),
+socket_controlling_process(CSocket = #capwap_socket{owner = Old, monitor = OldMonRef}, {Old, Pid}, _From, State0) ->
+    catch(demonitor(process, OldMonRef)),
+    MonRef = monitor(process, Pid),
+    State = update_csocket(CSocket#capwap_socket{owner = Pid, monitor = MonRef}, State0),
     {reply, ok, State};
 socket_controlling_process(_, _, _From, State) ->
     {reply, {error, not_owner}, State}.
 
+socket_owner_down(_Pid, none, State) ->
+    State;
+socket_owner_down(Pid, {_Key, VSocket = #capwap_socket{owner = Pid}, _Iter}, State) ->
+    delete_csocket(VSocket, State);
+socket_owner_down(Pid, {_Key, _Value, Iter}, State) ->
+    socket_owner_down(Pid, gb_trees:next(Iter), State).
 
 %% =====================================================================================
 
@@ -509,7 +527,9 @@ get_wtp(Peer, _State) ->
 new_csocket(Peer, Type, Owner, Packet, State0 =
 	       #state{connections = Connections, virtual_sockets = VSockets}) ->
     CSocketId = make_ref(),
-    CSocket = #capwap_socket{id = CSocketId, type = Type, peer = Peer, owner = Owner,
+    MonRef = monitor(process, Owner),
+    CSocket = #capwap_socket{id = CSocketId, type = Type, peer = Peer,
+			     owner = Owner, monitor = MonRef,
 			     mode = passive, queue = queue:from_list([Packet])},
 
     State = State0#state{connections     = gb_trees:insert({Peer, Type}, CSocketId, Connections),
@@ -529,9 +549,10 @@ update_csocket(CSocket = #capwap_socket{id = CSocketId},
 	        State = #state{virtual_sockets = VSockets}) ->
     State#state{virtual_sockets = gb_trees:update(CSocketId, CSocket, VSockets)}.
 
-delete_csocket(#capwap_socket{id = CSocketId, type = Type, peer = Peer},
+delete_csocket(#capwap_socket{id = CSocketId, type = Type, peer = Peer, monitor = MonRef},
 	       State =
 		   #state{connections = Connections, virtual_sockets = VSockets}) ->
+    catch(demonitor(MonRef)),
     State#state{
       connections = gb_trees:delete_any({Peer, Type}, Connections),
       virtual_sockets = gb_trees:delete_any(CSocketId, VSockets)}.
