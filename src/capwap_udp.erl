@@ -541,6 +541,7 @@ open_socket(Port, Options) ->
         {value, {_, NetNs}, Opts} ->
             case gen_socket:raw_socketat(NetNs, inet, dgram, udp) of
                 {ok, Fd} ->
+                    gen_socket:setsockopt(Fd, sol_socket, reuseaddr, true),
                     Ret = case lists:keytake(ip, 1, Opts) of
                               {value, {_, IP}, _} ->
                                   gen_socket:bind(Fd, {inet4, IP, Port});
