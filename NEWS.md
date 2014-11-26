@@ -3,6 +3,12 @@ capwap
 
 Erlang CAPWAP AC implementation.
 
+Version 1.3.2 - 26 Nov 2014
+---------------------------
+
+* force SO_REUSEADDR on the CAPWAP socket
+* handle packet with invalid CAPWAP headers
+
 Version 1.3.1 - 06 Nov 2014
 ---------------------------
 
