@@ -342,7 +342,11 @@ handle_info(Info, State) ->
 handle_packet(Peer, <<0:4, 0:4, _/binary>> = Packet, State) ->
     handle_packet(Peer, udp, Packet, State);
 handle_packet(Peer, <<0:4, 1:4, _:3/bytes, Packet/binary>>, State) ->
-    handle_packet(Peer, dtls, Packet, State).
+    handle_packet(Peer, dtls, Packet, State);
+handle_packet(Peer, Packet, State) ->
+    lager:debug(?RED "invalid CAPWAP header from ~p: ~p" ?WHITE, [Peer, Packet]),
+    %% silently ignore
+    State.
 
 handle_packet(Peer, Type, Packet, State) ->
     CSocket = get_csocket(Peer, Type, State),
@@ -537,6 +541,7 @@ open_socket(Port, Options) ->
         {value, {_, NetNs}, Opts} ->
             case gen_socket:raw_socketat(NetNs, inet, dgram, udp) of
                 {ok, Fd} ->
+                    gen_socket:setsockopt(Fd, sol_socket, reuseaddr, true),
                     Ret = case lists:keytake(ip, 1, Opts) of
                               {value, {_, IP}, _} ->
                                   gen_socket:bind(Fd, {inet4, IP, Port});
