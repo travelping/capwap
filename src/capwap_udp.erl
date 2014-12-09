@@ -342,7 +342,7 @@ handle_info({'EXIT', Owner, _}, State = #state{owner = Owner}) ->
     {stop, normal, State#state{owner = undefined}};
 
 handle_info({'DOWN', _MonitorRef, _Type, Pid, _Info}, State0 = #state{virtual_sockets = VSockets}) ->
-    State = socket_owner_down(Pid, gb_trees:iterator(VSockets), State0),
+    State = socket_owner_down(Pid, gb_trees:next(gb_trees:iterator(VSockets)), State0),
     {noreply, State};
 
 handle_info(Info, State) ->
