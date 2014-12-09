@@ -6,7 +6,25 @@ main([]) ->
     help();
 
 main(["list"]) ->
-    [io:format("~s : ~s~n", [CommonName, inet_parse:ntoa(Address)]) || {CommonName, Address} <- rpc(capwap_wtp_reg, list_commonnames, [])];
+    WTPs = rpc(capwap, list_wtps, []),
+    [io:format("~s : ~s:~w~n", [CommonName, inet_parse:ntoa(Address), Port]) || {CommonName, {Address, Port}} <- WTPs];
+
+main(["station", "list"]) ->
+    Stations = rpc(capwap, list_stations, []),
+    lists:foreach(fun({{CommonName, {Address, Port}}, MACs}) ->
+			  io:format("~s : ~s:~w~n", [CommonName, inet_parse:ntoa(Address), Port]),
+			  lists:foreach(fun(Station) -> io:format("  ~s~n", [ieee80211_station:format_mac(Station)]) end, MACs)
+		  end, Stations);
+
+main(["station", "detach", MACStr]) ->
+    case mac_to_bin(MACStr) of
+	MAC when is_binary(MAC) ->
+	    R = rpc(capwap, detach_station, [MAC]),
+	    io:format("~p~n", [R]);
+
+	_ ->
+	    io:format("invalid MAC: '~s'~n", [MACStr])
+    end;
 
 main(["update", CommonName, Link, Hash]) ->
     case catch validate_hash(Hash) of
@@ -35,11 +53,15 @@ main(_) ->
 help() ->
     SN = escript:script_name(),
     io:format("Usage: ~s <command> <args...>~n"
-              "Commands:~n"
+              "WTP commands:~n"
               "  list                                        → list all registered wtps~n"
               "  update <common name> <link> <hash>          → update wtp~n"
               "  set-ssid <common name> <SSID> [RadioID]     → set ssid~n"
-              "  stop-radio <common name> <RadioID>          → stop wifi radio~n", [SN]).
+              "  stop-radio <common name> <RadioID>          → stop wifi radio~n"
+              "Station commands:~n"
+              "  station list                                → list all known stations~n"
+              "  station detach <Station MAC>                → detach station from WLAN~n",
+	      [SN]).
 
 rpc(Module, Function, Args) ->
     enit:call("capwap", [{match, true}], Module, Function, Args).
@@ -49,3 +71,9 @@ validate_hash(Hash) when length(Hash) == 64 -> {ok, << <<(hex2dec(C)):4>> || C <
 hex2dec(C) when C >= $a andalso C =< $f -> C - $a + 10;
 hex2dec(C) when C >= $A andalso C =< $F -> C - $A + 10;
 hex2dec(C) when C >= $0 andalso C =< $9 -> C - $0.
+
+mac_to_bin(MAC) ->
+        case io_lib:fread("~16u:~16u:~16u:~16u:~16u:~16u", MAC) of
+                {ok, Mlist, []} -> list_to_binary(Mlist);
+                _ -> undefined
+        end.

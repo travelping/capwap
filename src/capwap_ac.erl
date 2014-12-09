@@ -236,7 +236,7 @@ listen({accept, dtls, Socket}, State) ->
     case ssl:ssl_accept(Socket, mk_ssl_opts(Session), ?SSL_ACCEPT_TIMEOUT) of
         {ok, SslSocket} ->
             lager:info("ssl_accept: ~p", [SslSocket]),
-            {ok, {Address, _Port}} = ssl:peername(SslSocket),
+            {ok, Address} = ssl:peername(SslSocket),
             ssl:setopts(SslSocket, [{active, true}, {mode, binary}]),
 
             CommonName = common_name(SslSocket),

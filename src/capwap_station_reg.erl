@@ -5,9 +5,12 @@
 %% API
 -export([start_link/0]).
 -export([register/2, unregister/2, lookup/2, register/1, unregister/1, lookup/1]).
+-export([list_stations/0]).
 
 %% regine_server callbacks
 -export([init/1, handle_register/4, handle_unregister/3, handle_pid_remove/3, handle_death/3, terminate/2]).
+
+-include_lib("stdlib/include/ms_transform.hrl").
 
 -define(SERVER, ?MODULE).
 
@@ -44,6 +47,9 @@ lookup(AC, Station) ->
 	[] -> not_found;
 	[{_, Pid}] -> {ok, Pid}
     end.
+
+list_stations() ->
+    ets:select(?SERVER, ets:fun2ms(fun({{AC, MAC}, _}) when is_binary(MAC) -> {AC, MAC} end)).
 
 %%%===================================================================
 %%% regine_server functions
