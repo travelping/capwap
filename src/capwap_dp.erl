@@ -6,7 +6,7 @@
 -export([start_link/0]).
 
 %% C-Node wrapper
--export([bind/1, clear/0]).
+-export([bind/1, clear/0, get_stats/0]).
 -export([add_wtp/2, del_wtp/1, get_wtp/1, list_wtp/0]).
 -export([attach_station/2, detach_station/1]).
 -export([sendto/2]).
@@ -62,6 +62,9 @@ detach_station(STA) ->
 
 sendto(WTP, Msg) when is_binary(Msg) ->
     call({sendto, WTP, Msg}).
+
+get_stats() ->
+    call({get_stats}).
 
 call(Args) ->
     call(Args, infinity).
