@@ -19,8 +19,6 @@
 
 -export([handle_packet/3, handle_data/5]).
 
--compile({inline,log_capwap_control/5}).
-
 -include_lib("public_key/include/OTP-PUB-KEY.hrl").
 -include("capwap_debug.hrl").
 -include("capwap_packet.hrl").
@@ -68,6 +66,12 @@
 
 -define(DEBUG_OPTS,[{install, {fun lager_sys_debug:lager_gen_fsm_trace/3, ?MODULE}}]).
 
+-define(log_capwap_control(Id, MsgType, SeqNo, Elements, Header),
+	begin
+	    #capwap_header{radio_id = RadioId, wb_id = WBID} = Header,
+	    lager:info("~s: ~s(Seq: ~w, R-Id: ~w, WB-Id: ~w): ~p", [Id, capwap_packet:msg_description(MsgType), SeqNo, RadioId, WBID, [lager:pr(E, ?MODULE) || E <- Elements]])
+	end).
+
 %%%===================================================================
 %%% API
 %%%===================================================================
@@ -89,11 +93,11 @@ handle_packet(Address, Port, Packet) ->
 	Peer = format_peer({Address, Port}),
 	case capwap_packet:decode(control, Packet) of
 	    {Header, {discovery_request, 1, Seq, Elements}} ->
-		log_capwap_control(Peer, discovery_request, Seq, Elements, Header),
+		?log_capwap_control(Peer, discovery_request, Seq, Elements, Header),
 		Answer = answer_discover(Peer, Seq, Elements, Header),
 		{reply, Answer};
 	    {Header, {join_request, 1, Seq, Elements}} ->
-		log_capwap_control(Peer, join_request, Seq, Elements, Header),
+		?log_capwap_control(Peer, join_request, Seq, Elements, Header),
 		handle_plain_join(Peer, Seq, Elements, Header);
 	    Pkt ->
 		lager:warning("unexpected CAPWAP packet: ~p", [Pkt]),
@@ -743,10 +747,6 @@ peer_log_str(#state{id = undefined, peer = Peer}) ->
 peer_log_str(#state{id = Id, peer = Peer}) ->
     io_lib:format("~s[~s]", [Id, format_peer(Peer)]).
 
-log_capwap_control(Id, MsgType, SeqNo, Elements,
-		   #capwap_header{radio_id = RadioId, wb_id = WBID}) ->
-    lager:info("~s: ~s(Seq: ~w, R-Id: ~w, WB-Id: ~w): ~p", [Id, capwap_packet:msg_description(MsgType), SeqNo, RadioId, WBID, [lager:pr(E, ?MODULE) || E <- Elements]]).
-
 next_state(NextStateName, State)
   when NextStateName == idle; NextStateName == run ->
     {next_state, NextStateName, State};
@@ -770,7 +770,7 @@ handle_plain_join(Peer, Seq, _Elements, #capwap_header{
 	    lager:warning("Rejecting JOIN without DTLS from ~s", [Peer]),
 	    RespElems = [#result_code{result_code = 18}],
 	    Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
-	    log_capwap_control(Peer, join_response, Seq, RespElems, Header),
+	    ?log_capwap_control(Peer, join_response, Seq, RespElems, Header),
 	    Answer = hd(capwap_packet:encode(control, {Header, {join_response, Seq, RespElems}})),
 	    {reply, Answer}
     end.
@@ -870,7 +870,7 @@ handle_capwap_packet(Packet, StateName, State = #state{ctrl_stream = CtrlStreamS
 handle_capwap_message(Header, {Msg, 1, Seq, Elements}, StateName,
 		      State = #state{last_response = LastResponse}) ->
     %% Request
-    log_capwap_control(peer_log_str(State), Msg, Seq, Elements, Header),
+    ?log_capwap_control(peer_log_str(State), Msg, Seq, Elements, Header),
     case LastResponse of
 	{Seq, _} ->
 	    NewState = resend_response(State),
@@ -885,7 +885,7 @@ handle_capwap_message(Header, {Msg, 1, Seq, Elements}, StateName,
 handle_capwap_message(Header, {Msg, 0, Seq, Elements}, StateName,
 		      State = #state{request_queue = Queue}) ->
     %% Response
-    log_capwap_control(peer_log_str(State), Msg, Seq, Elements, Header),
+    ?log_capwap_control(peer_log_str(State), Msg, Seq, Elements, Header),
     case queue:peek(Queue) of
 	{value, {Seq, _}} ->
 	    State1 = ack_request(State),
@@ -1102,7 +1102,7 @@ bump_seqno(State = #state{seqno = SeqNo}) ->
     State#state{seqno = (SeqNo + 1) rem 256}.
 
 send_response(Header, MsgType, Seq, MsgElems, State) ->
-    log_capwap_control(peer_log_str(State), MsgType, Seq, MsgElems, Header),
+    ?log_capwap_control(peer_log_str(State), MsgType, Seq, MsgElems, Header),
     Msg = {Header, {MsgType, Seq, MsgElems}},
     stream_send(Msg, State#state{last_response = {Seq, Msg}}).
 
@@ -1111,7 +1111,7 @@ resend_response(State = #state{last_response = {SeqNo, Msg}}) ->
     stream_send(Msg, State).
 
 send_request(Header, MsgType, ReqElements, State0 = #state{request_queue = Queue, seqno = SeqNo}) ->
-    log_capwap_control(peer_log_str(State0), MsgType, SeqNo, ReqElements, Header),
+    ?log_capwap_control(peer_log_str(State0), MsgType, SeqNo, ReqElements, Header),
     Msg = {Header, {MsgType, SeqNo, ReqElements}},
     State1 = queue_request(State0, {SeqNo, Msg}),
     State2 = bump_seqno(State1),
@@ -1209,7 +1209,7 @@ answer_discover(Peer, Seq, Elements, #capwap_header{
 		       radio_id = RadioId, wb_id = WBID, flags = Flags}) ->
     RespElems = ac_info(discover, Elements),
     Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
-    log_capwap_control(Peer, discovery_response, Seq, RespElems, Header),
+    ?log_capwap_control(Peer, discovery_response, Seq, RespElems, Header),
     hd(capwap_packet:encode(control, {Header, {discovery_response, Seq, RespElems}})).
 
 stream_send(Msg, State = #state{ctrl_stream = CtrlStreamState0, socket = Socket}) ->
