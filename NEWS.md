@@ -3,6 +3,11 @@ capwap
 
 Erlang CAPWAP AC implementation.
 
+Version 1.4.0 - 18 Nov 2014
+---------------------------
+
+* change to use capwap-dp as data path element
+
 Version 1.3.2 - 26 Nov 2014
 ---------------------------
 

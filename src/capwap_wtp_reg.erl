@@ -4,10 +4,13 @@
 
 %% API
 -export([start_link/0]).
--export([register/1, register_args/2, unregister/0, lookup/1, register_sessionid/2, lookup_sessionid/2, list_commonnames/0]).
+-export([register/1, register_args/2, unregister/0, lookup/1, register_sessionid/2, lookup_sessionid/2]).
+-export([list_commonnames/0, get_commonname/1]).
 
 %% regine_server callbacks
 -export([init/1, handle_register/4, handle_unregister/3, handle_pid_remove/3, handle_death/3, terminate/2]).
+
+-include_lib("stdlib/include/ms_transform.hrl").
 
 -define(SERVER, ?MODULE).
 -define(SELECT_COMMONNAMES_ADDRESS, [{{'$1','_','$2'},[{is_binary,'$1'}],[{{'$1','$2'}}]}]).
@@ -44,6 +47,9 @@ lookup_sessionid(PeerId, SessionId) ->
 	[] -> not_found;
 	[{_, Pid, _}] -> {ok, Pid}
     end.
+
+get_commonname(GetPid) ->
+    ets:select(?SERVER, ets:fun2ms(fun({PeerId, Pid, Args}) when Pid == GetPid, is_binary(PeerId) -> {PeerId, Args} end)).
 
 list_commonnames() ->
     ets:select(?SERVER, ?SELECT_COMMONNAMES_ADDRESS).

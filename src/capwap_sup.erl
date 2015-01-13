@@ -29,8 +29,9 @@ start_listener(TransportMod, Arguments) ->
 
 init([]) ->
     {ok, {{one_for_one, 30, 60}, [
-                                 ?CHILD(capwap_wtp_reg, worker),
-                                 ?CHILD(capwap_ac_sup, supervisor),
-                                 ?CHILD(capwap_station_reg, worker),
-                                 ?CHILD(capwap_station_sup, supervisor)
+				  ?CHILD(capwap_wtp_reg, worker),
+				  ?CHILD(capwap_ac_sup, supervisor),
+				  ?CHILD(capwap_station_reg, worker),
+				  ?CHILD(capwap_station_sup, supervisor),
+				  ?CHILD(capwap_dp, worker)
                                 ]} }.
