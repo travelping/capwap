@@ -466,6 +466,10 @@
         fraction = 0
 }).
 
+-record(tp_wtp_timestamp_1_1, {
+        second = 0
+}).
+
 -record(tp_wtp_wwan_iccid, {
         wwan_id = 0,
         iccid = <<>>

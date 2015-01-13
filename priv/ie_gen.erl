@@ -356,6 +356,8 @@ vendor_ies() ->
      {{18681, 2}, "TP WTP Timestamp",
       [{"Second", 32, integer},
        {"Fraction", 32, integer}]},
+     {{18681, 2}, "TP WTP Timestamp 1.1",
+      [{"Second", 32, integer}]},
      {{18681, 3}, "TP WTP WWAN ICCID",
       [{"WWAN Id", 8, integer},
        {"ICCID", 0, binary}]},

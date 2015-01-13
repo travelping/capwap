@@ -3,10 +3,11 @@ capwap
 
 Erlang CAPWAP AC implementation.
 
-Version 1.4.0 - 18 Nov 2014
+Version 1.4.0 - 13 Jan 2015
 ---------------------------
 
 * change to use capwap-dp as data path element
+* remove WTP event log
 
 Version 1.3.2 - 26 Nov 2014
 ---------------------------
