@@ -911,6 +911,9 @@ decode_vendor_element({18681,2}, <<M_second:32/integer,
     #tp_wtp_timestamp{second = M_second,
                       fraction = M_fraction};
 
+decode_vendor_element({18681,2}, <<M_second:32/integer>>) ->
+    #tp_wtp_timestamp_1_1{second = M_second};
+
 decode_vendor_element({18681,3}, <<M_wwan_id:8/integer,
                                    M_iccid/binary>>) ->
     #tp_wtp_wwan_iccid{wwan_id = M_wwan_id,
@@ -1713,6 +1716,10 @@ encode_element(#tp_wtp_timestamp{
                     fraction = M_fraction}) ->
     encode_vendor_element({18681,2}, <<M_second:32,
                                        M_fraction:32>>);
+
+encode_element(#tp_wtp_timestamp_1_1{
+                    second = M_second}) ->
+    encode_vendor_element({18681,2}, <<M_second:32>>);
 
 encode_element(#tp_wtp_wwan_iccid{
                     wwan_id = M_wwan_id,

@@ -52,7 +52,6 @@
 	  echo_request_timeout,
 	  seqno = 0,
 	  version,
-	  event_log,
           station_count = 0,
           radios
 }).
@@ -221,8 +220,7 @@ listen({accept, udp, Socket}, State0) ->
     case ctld_session:authenticate(Session, ctld_session:to_session(Opts)) of
 	success ->
 	    lager:info("AuthResult: success"),
-	    State1 = State0#state{event_log = open_log(),
-				  session = Session,
+	    State1 = State0#state{session = Session,
 				  socket = {udp, Socket},
 				  id = undefined},
 
@@ -249,7 +247,7 @@ listen({accept, dtls, Socket}, State) ->
             maybe_takeover(CommonName),
             capwap_wtp_reg:register_args(CommonName, Address),
 
-            State1 = State#state{event_log = open_log(), socket = {dtls, SslSocket}, session = Session, id = CommonName},
+            State1 = State#state{socket = {dtls, SslSocket}, session = Session, id = CommonName},
             %% TODO: find old connection instance, take over their StationState and stop them
             next_state(idle, State1);
         Other ->
@@ -520,20 +518,10 @@ run({del_station, #capwap_header{radio_id = RadioId, wb_id = WBID}, MAC}, State)
     next_state(run, State1);
 
 run({wtp_event_request, Seq, Elements, RequestHeader =
-	 #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags}}, State = #state{peer = Peer, id = Id}) ->
+	 #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags}}, State) ->
     ResponseHeader = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
     State1 = send_response(ResponseHeader, wtp_event_response, Seq, [], State),
     State2 = handle_wtp_event(Elements, RequestHeader, State1),
-    Now = calendar:now_to_universal_time(erlang:now()),
-    {FormatString, FormatVars} = lists:foldl(
-                                   fun
-                                       ({Key, Value}, {FStr, FVars}) ->
-                                           {FStr ++ "~p(~p), ", FVars ++ [Key, Value]};
-                                       (Record, {FStr, FVars}) ->
-                                           {FStr ++ "~p, ", FVars ++ [Record]}
-                                   end, {"~p(~p)@~p: ", [Peer, Id, Now]}, Elements),
-    EventData = io_lib:format(FormatString ++ "~n", FormatVars),
-    ok = disk_log:blog(State#state.event_log, EventData),
     State3 = reset_echo_request_timer(State2),
     next_state(run, State3);
 
@@ -903,15 +891,6 @@ maybe_takeover(CommonName) ->
         _ ->
             ok
     end.
-
-open_log() ->
-    EventLogBasePath = application:get_env(capwap, event_log_base_path, "."),
-    EventLogPath = filename:join([EventLogBasePath, "events-capwap.log"]),
-    lager:info("EventLogP: ~s", [EventLogPath]),
-
-    ok = filelib:ensure_dir(EventLogPath),
-    {ok, EventLog} = disk_log:open([{name, capwap_ac_log}, {file, EventLogPath}, {format, external}, {type, halt}]),
-    EventLog.
 
 handle_wtp_event(Elements, Header, State = #state{session = Session}) ->
     SessionOptsList = lists:foldl(fun(Ev, SOptsList) -> handle_wtp_stats_event(Ev, Header, SOptsList) end, [], Elements),
