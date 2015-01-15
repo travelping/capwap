@@ -36,7 +36,7 @@
 	  session_id,
 	  peer,
 	  peer_data,
-	  flow_switch,
+	  data_path,
 	  socket,
 	  ctrl_stream,
 	  session,
@@ -108,13 +108,13 @@ handle_packet(Address, Port, Packet) ->
 	    {error, not_capwap}
     end.
 
-handle_data(FlowSwitch, Sw, Address, Port, Packet) ->
+handle_data(DataPath, Sw, Address, Port, Packet) ->
     try
 	lager:debug("capwap_data: ~p, ~p, ~p", [Address, Port, Packet]),
 	case capwap_packet:decode(data, Packet) of
 	    {Header, PayLoad} ->
 		KeepAlive = proplists:get_bool('keep-alive', Header#capwap_header.flags),
-		handle_capwap_data(FlowSwitch, Sw, Address, Port, Header, KeepAlive, PayLoad);
+		handle_capwap_data(DataPath, Sw, Address, Port, Header, KeepAlive, PayLoad);
 	    _ ->
 		{error, not_capwap}
 	end
@@ -259,7 +259,7 @@ listen({accept, dtls, Socket}, State) ->
 listen(timeout, State) ->
     {stop, normal, State}.
 
-idle({keep_alive, _FlowSwitch, _Sw, _PeerId, Header, PayLoad}, _From, State) ->
+idle({keep_alive, _DataPath, _Sw, _PeerId, Header, PayLoad}, _From, State) ->
     lager:warning("in IDLE got unexpected keep_alive: ~p", [{Header, PayLoad}]),
     reply({error, unexpected}, idle, State).
 
@@ -299,7 +299,7 @@ idle({Msg, Seq, Elements, Header}, State) ->
     lager:warning("in IDLE got unexpexted: ~p", [{Msg, Seq, Elements, Header}]),
     next_state(idle, State).
 
-join({keep_alive, _FlowSwitch, _Sw, _PeerId, Header, PayLoad}, _From, State) ->
+join({keep_alive, _DataPath, _Sw, _PeerId, Header, PayLoad}, _From, State) ->
     lager:warning("in JOIN got unexpected keep_alive: ~p", [{Header, PayLoad}]),
     reply({error, unexpected}, join, State).
 
@@ -354,7 +354,7 @@ join({Msg, Seq, Elements, Header}, State) ->
     lager:warning("in JOIN got unexpexted: ~p", [{Msg, Seq, Elements, Header}]),
     next_state(join, State).
 
-configure({keep_alive, _FlowSwitch, _Sw, _PeerId, Header, PayLoad}, _From, State) ->
+configure({keep_alive, _DataPath, _Sw, _PeerId, Header, PayLoad}, _From, State) ->
     lager:warning("in CONFIGURE got unexpected keep_alive: ~p", [{Header, PayLoad}]),
     reply({error, unexpected}, configure, State).
 
@@ -373,14 +373,14 @@ configure({Msg, Seq, Elements, Header}, State) ->
     lager:debug("in configure got: ~p", [{Msg, Seq, Elements, Header}]),
     next_state(configure, State).
 
-data_check({keep_alive, FlowSwitch, Sw, PeerId, Header, PayLoad}, _From,
+data_check({keep_alive, DataPath, Sw, PeerId, Header, PayLoad}, _From,
 	   State = #state{ctrl_stream = CtrlStreamState}) ->
     lager:info("in DATA_CHECK got expected keep_alive: ~p", [{Sw, Header, PayLoad}]),
     capwap_wtp_reg:register(PeerId),
     MTU = capwap_stream:get_mtu(CtrlStreamState),
     capwap_dp:add_wtp(PeerId, MTU),
     gen_fsm:send_event(self(), configure),
-    reply({reply, {Header, PayLoad}}, run, State#state{peer_data = PeerId, flow_switch = FlowSwitch}).
+    reply({reply, {Header, PayLoad}}, run, State#state{peer_data = PeerId, data_path = DataPath}).
 
 data_check(timeout, State) ->
     lager:info("timeout in DATA_CHECK -> stop"),
@@ -391,7 +391,7 @@ data_check({Msg, Seq, Elements, Header}, State) ->
     next_state(data_check, State).
 
 run({new_station, BSS, SA}, _From, State = #state{id = WtpId, session_id = SessionId,
-						  peer_data = PeerId, flow_switch = FlowSwitch,
+						  peer_data = PeerId, data_path = DataPath,
                                                   mac_mode = MacMode, tunnel_mode = TunnelMode,
                                                   station_count  = StationCount,
                                                   session=Session}) ->
@@ -410,11 +410,11 @@ run({new_station, BSS, SA}, _From, State = #state{id = WtpId, session_id = Sessi
                     not_found ->
                         lager:debug("starting station: ~p", [SA]),
                         {State#state{station_count = StationCount + 1},
-                         capwap_station_sup:new_station(self(), FlowSwitch, PeerId, WtpId, SessionId, BSS, SA, MacMode, TunnelMode)};
+                         capwap_station_sup:new_station(self(), DataPath, PeerId, WtpId, SessionId, BSS, SA, MacMode, TunnelMode)};
                     {ok, Station0} ->
                         lager:debug("TAKE-OVER: station ~p found as ~p", [{self(), SA}, Station0]),
                         {State#state{station_count = StationCount + 1},
-                         ieee80211_station:take_over(Station0, self(), FlowSwitch, PeerId, WtpId, SessionId, BSS, MacMode, TunnelMode)}
+                         ieee80211_station:take_over(Station0, self(), DataPath, PeerId, WtpId, SessionId, BSS, MacMode, TunnelMode)}
                 end;
             {Ok = {ok, Station0}, _} ->
                 lager:debug("station ~p found as ~p", [{self(), SA}, Station0]),
@@ -422,7 +422,7 @@ run({new_station, BSS, SA}, _From, State = #state{id = WtpId, session_id = Sessi
         end,
     reply(Reply, run, State0);
 
-run({keep_alive, _FlowSwitch, Sw, _PeerId, Header, PayLoad}, _From, State) ->
+run({keep_alive, _DataPath, Sw, _PeerId, Header, PayLoad}, _From, State) ->
     lager:debug("in RUN got expected keep_alive: ~p", [{Sw, Header, PayLoad}]),
     reply({reply, {Header, PayLoad}}, run, State).
 
@@ -685,12 +685,12 @@ handle_info(Info, StateName, State) ->
 %%--------------------------------------------------------------------
 terminate(Reason, StateName,
 	  State = #state{peer_data = PeerId,
-			 flow_switch = FlowSwitch, socket = Socket,
+			 data_path = DataPath, socket = Socket,
 			 session = Session}) ->
     error_logger:info_msg("AC session terminating in state ~p with state ~p with reason ~p~n", [StateName, State, Reason]),
     case StateName of
         run ->
-            FlowSwitch ! {wtp_down, PeerId},
+            DataPath ! {wtp_down, PeerId},
             ok;
         _ ->
             ok
@@ -763,7 +763,7 @@ handle_plain_join(Peer, Seq, _Elements, #capwap_header{
 	    {reply, Answer}
     end.
 
-handle_capwap_data(FlowSwitch, Sw, Address, Port, Header, true, PayLoad) ->
+handle_capwap_data(DataPath, Sw, Address, Port, Header, true, PayLoad) ->
     lager:debug("CAPWAP Data KeepAlive: ~p", [PayLoad]),
 
     SessionId = proplists:get_value(session_id, PayLoad),
@@ -772,7 +772,7 @@ handle_capwap_data(FlowSwitch, Sw, Address, Port, Header, true, PayLoad) ->
 	    {error, not_found};
 	{ok, AC} ->
 	    PeerId = {Address, Port},
-	    case gen_fsm:sync_send_event(AC, {keep_alive, FlowSwitch, Sw, PeerId, Header, PayLoad}) of
+	    case gen_fsm:sync_send_event(AC, {keep_alive, DataPath, Sw, PeerId, Header, PayLoad}) of
 		{reply, {RHeader, RPayLoad}} ->
 		    Data = hd(capwap_packet:encode(data, {RHeader, RPayLoad})),
 		    {reply, Data};
@@ -781,7 +781,7 @@ handle_capwap_data(FlowSwitch, Sw, Address, Port, Header, true, PayLoad) ->
 	    end
     end;
 
-handle_capwap_data(_FlowSwitch, Sw, Address, Port,
+handle_capwap_data(_DataPath, Sw, Address, Port,
 		   Header = #capwap_header{
 		     flags = Flags,
 		     radio_id = RadioId, wb_id = WBID},

@@ -34,7 +34,7 @@
 -record(state, {
           ac,
           ac_monitor,
-          flow_switch,
+          data_path,
           peer_data,
 	  wtp_id,
 	  wtp_session_id,
@@ -52,8 +52,8 @@
 %%%===================================================================
 %%% API
 %%%===================================================================
-start_link(AC, FlowSwitch, PeerId, WtpId, SessionId, RadioMAC, ClientMAC, MacMode, TunnelMode) ->
-    gen_fsm:start_link(?MODULE, [AC, FlowSwitch, PeerId, WtpId, SessionId, RadioMAC, ClientMAC, MacMode, TunnelMode], [{debug, ?DEBUG_OPTS}]).
+start_link(AC, DataPath, PeerId, WtpId, SessionId, RadioMAC, ClientMAC, MacMode, TunnelMode) ->
+    gen_fsm:start_link(?MODULE, [AC, DataPath, PeerId, WtpId, SessionId, RadioMAC, ClientMAC, MacMode, TunnelMode], [{debug, ?DEBUG_OPTS}]).
 
 handle_ieee80211_frame(AC, <<FrameControl:2/bytes,
 			      _Duration:16, DA:6/bytes, SA:6/bytes, BSS:6/bytes,
@@ -104,8 +104,8 @@ get_out_action(Sw, ClientMAC) ->
 	    not_found
     end.
 
-take_over(Pid, AC, FlowSwitch, PeerId, WtpId, SessionId, RadioMAC, MacMode, TunnelMode) ->
-    gen_fsm:sync_send_event(Pid, {take_over, AC, FlowSwitch, PeerId, WtpId, SessionId, RadioMAC, MacMode, TunnelMode}).
+take_over(Pid, AC, DataPath, PeerId, WtpId, SessionId, RadioMAC, MacMode, TunnelMode) ->
+    gen_fsm:sync_send_event(Pid, {take_over, AC, DataPath, PeerId, WtpId, SessionId, RadioMAC, MacMode, TunnelMode}).
 
 detach(ClientMAC) ->
     case capwap_station_reg:lookup(ClientMAC) of
@@ -118,12 +118,12 @@ detach(ClientMAC) ->
 %%%===================================================================
 %%% gen_fsm callbacks
 %%%===================================================================
-init([AC, FlowSwitch, PeerId, WtpId, SessionId, RadioMAC, ClientMAC, MacMode, TunnelMode]) ->
+init([AC, DataPath, PeerId, WtpId, SessionId, RadioMAC, ClientMAC, MacMode, TunnelMode]) ->
     lager:debug("Register station ~p as ~w", [{AC, RadioMAC, ClientMAC}, self()]),
     capwap_station_reg:register(ClientMAC),
     capwap_station_reg:register(AC, ClientMAC),
     ACMonitor = erlang:monitor(process, AC),
-    State = #state{ac = AC, ac_monitor = ACMonitor, flow_switch = FlowSwitch,
+    State = #state{ac = AC, ac_monitor = ACMonitor, data_path = DataPath,
 		   peer_data = PeerId, wtp_id = WtpId, wtp_session_id = SessionId,
                    radio_mac = RadioMAC, mac = ClientMAC, mac_mode = MacMode, tunnel_mode = TunnelMode},
     {ok, initial_state(MacMode), State}.
@@ -335,7 +335,7 @@ handle_sync_event(_Event, _From, StateName, State) ->
 
 handle_info({'DOWN', ACMonitor, process, AC, _Info}, StateName,
             State = #state{ac = AC, ac_monitor = ACMonitor,
-			   flow_switch = FlowSwitch, peer_data = PeerId,
+			   data_path = DataPath, peer_data = PeerId,
                            radio_mac = BSS, mac = MAC,
                            mac_mode = MacMode, tunnel_mode = TunnelMode}) ->
     lager:warning("AC died ~w", [AC]),
@@ -344,7 +344,7 @@ handle_info({'DOWN', ACMonitor, process, AC, _Info}, StateName,
         StateName == connected ->
             %% if the AC dies in connected whe have to tell the Switch directly
             %% to avoid a race
-            FlowSwitch ! {station_down, PeerId, BSS, MAC, MacMode, TunnelMode};
+            DataPath ! {station_down, PeerId, BSS, MAC, MacMode, TunnelMode};
         true ->
             ok
     end,
@@ -450,9 +450,9 @@ ieee80211_request(_AC, FrameType, DA, SA, BSS, FromDS, ToDS, Frame) ->
     lager:warning("unhandled IEEE 802.11 Frame: ~p", [{FrameType, DA, SA, BSS, FromDS, ToDS, Frame}]),
     {error, unhandled}.
 
-handle_take_over({take_over, AC, FlowSwitch, PeerId, WtpId, SessionId, RadioMAC, MacMode, TunnelMode}, _From,
+handle_take_over({take_over, AC, DataPath, PeerId, WtpId, SessionId, RadioMAC, MacMode, TunnelMode}, _From,
 		 State0 = #state{ac = OldAC, ac_monitor = OldACMonitor,
-				 flow_switch = _OldFlowSwitch,
+				 data_path = _OldDataPath,
 				 radio_mac = OldRadioMAC, mac = ClientMAC,
 				 mac_mode = _OldMacMode, tunnel_mode = _OldTunnelMode}) ->
     %% NOTE: we could build a real WIFI switch when we could build OF rules that sends
@@ -471,7 +471,7 @@ handle_take_over({take_over, AC, FlowSwitch, PeerId, WtpId, SessionId, RadioMAC,
     ACMonitor = erlang:monitor(process, AC),
 
     State = State0#state{ac = AC, ac_monitor = ACMonitor,
-			 flow_switch = FlowSwitch, peer_data = PeerId,
+			 data_path = DataPath, peer_data = PeerId,
 			 wtp_id = WtpId, wtp_session_id = SessionId,
 			 radio_mac = RadioMAC, mac_mode = MacMode,
 			 tunnel_mode = TunnelMode},
