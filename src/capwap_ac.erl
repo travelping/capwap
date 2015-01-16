@@ -3,7 +3,7 @@
 -behaviour(gen_fsm).
 
 %% API
--export([start_link/1, accept/3, get_peer_data/1, take_over/1, new_station/3,
+-export([start_link/1, accept/3, get_data_channel_address/1, take_over/1, new_station/3,
          station_terminating/1]).
 
 %% Extern API
@@ -17,7 +17,7 @@
 	 handle_event/3,
 	 handle_sync_event/4, handle_info/3, terminate/3, code_change/4]).
 
--export([handle_packet/3, handle_data/5]).
+-export([handle_packet/2, handle_data/4]).
 
 -include_lib("public_key/include/OTP-PUB-KEY.hrl").
 -include("capwap_debug.hrl").
@@ -34,8 +34,8 @@
 -record(state, {
 	  id,
 	  session_id,
-	  peer,
-	  peer_data,
+	  ctrl_channel_address,
+	  data_channel_address,
 	  data_path,
 	  socket,
 	  ctrl_stream,
@@ -84,12 +84,12 @@
 %% @spec start_link() -> {ok, Pid} | ignore | {error, Error}
 %% @end
 %%--------------------------------------------------------------------
-start_link(Peer) ->
-    gen_fsm:start_link(?MODULE, [Peer], [{debug, ?DEBUG_OPTS}]).
+start_link(WTPControlChannelAddress) ->
+    gen_fsm:start_link(?MODULE, [WTPControlChannelAddress], [{debug, ?DEBUG_OPTS}]).
 
-handle_packet(Address, Port, Packet) ->
+handle_packet(WTPControlChannelAddress, Packet) ->
     try
-	Peer = format_peer({Address, Port}),
+	Peer = format_peer(WTPControlChannelAddress),
 	case capwap_packet:decode(control, Packet) of
 	    {Header, {discovery_request, 1, Seq, Elements}} ->
 		?log_capwap_control(Peer, discovery_request, Seq, Elements, Header),
@@ -108,13 +108,13 @@ handle_packet(Address, Port, Packet) ->
 	    {error, not_capwap}
     end.
 
-handle_data(DataPath, Sw, Address, Port, Packet) ->
+handle_data(DataPath, Sw, WTPDataChannelAddress, Packet) ->
     try
-	lager:debug("capwap_data: ~p, ~p, ~p", [Address, Port, Packet]),
+	lager:debug("capwap_data: ~p, ~p", [WTPDataChannelAddress, Packet]),
 	case capwap_packet:decode(data, Packet) of
 	    {Header, PayLoad} ->
 		KeepAlive = proplists:get_bool('keep-alive', Header#capwap_header.flags),
-		handle_capwap_data(DataPath, Sw, Address, Port, Header, KeepAlive, PayLoad);
+		handle_capwap_data(DataPath, Sw, WTPDataChannelAddress, Header, KeepAlive, PayLoad);
 	    _ ->
 		{error, not_capwap}
 	end
@@ -127,8 +127,8 @@ handle_data(DataPath, Sw, Address, Port, Packet) ->
 accept(WTP, Type, Socket) ->
     gen_fsm:send_event(WTP, {accept, Type, Socket}).
 
-get_peer_data(WTP) ->
-    gen_fsm:sync_send_all_state_event(WTP, get_peer_data).
+get_data_channel_address(WTP) ->
+    gen_fsm:sync_send_all_state_event(WTP, get_data_channel_address).
 
 take_over(WTP) ->
     gen_fsm:sync_send_all_state_event(WTP, {take_over, self()}).
@@ -184,10 +184,11 @@ stop_radio(CommonName, RadioID) ->
 %%                     {stop, StopReason}
 %% @end
 %%--------------------------------------------------------------------
-init([Peer]) ->
+init([WTPControlChannelAddress]) ->
     process_flag(trap_exit, true),
-    capwap_wtp_reg:register(Peer),
-    {ok, listen, #state{peer = Peer, request_queue = queue:new(),
+    capwap_wtp_reg:register(WTPControlChannelAddress),
+    {ok, listen, #state{ctrl_channel_address = WTPControlChannelAddress,
+			request_queue = queue:new(),
 			ctrl_stream = capwap_stream:init(1500),
                         radios = []}, 5000}.
 
@@ -211,8 +212,8 @@ listen({accept, udp, Socket}, State0) ->
     lager:info("udp_accept: ~p", [Socket]),
     {ok, Session} = start_session(Socket, State0),
 
-    {ok, IP} = capwap_udp:peername(Socket),
-    PeerName = iolist_to_binary(format_peer(IP)),
+    {ok, WTPControlChannelAddress} = capwap_udp:peername(Socket),
+    PeerName = iolist_to_binary(format_peer(WTPControlChannelAddress)),
 
     Opts = [{'Username', PeerName},
 	    {'Authentication-Method', {'TLS', 'Pre-Shared-Key'}}
@@ -238,14 +239,14 @@ listen({accept, dtls, Socket}, State) ->
     case ssl:ssl_accept(Socket, mk_ssl_opts(Session), ?SSL_ACCEPT_TIMEOUT) of
         {ok, SslSocket} ->
             lager:info("ssl_accept: ~p", [SslSocket]),
-            {ok, Address} = ssl:peername(SslSocket),
+            {ok, WTPControlChannelAddress} = ssl:peername(SslSocket),
             ssl:setopts(SslSocket, [{active, true}, {mode, binary}]),
 
             CommonName = common_name(SslSocket),
             lager:debug("ssl_cert: ~p", [CommonName]),
 
             maybe_takeover(CommonName),
-            capwap_wtp_reg:register_args(CommonName, Address),
+            capwap_wtp_reg:register_args(CommonName, WTPControlChannelAddress),
 
             State1 = State#state{socket = {dtls, SslSocket}, session = Session, id = CommonName},
             %% TODO: find old connection instance, take over their StationState and stop them
@@ -259,7 +260,7 @@ listen({accept, dtls, Socket}, State) ->
 listen(timeout, State) ->
     {stop, normal, State}.
 
-idle({keep_alive, _DataPath, _Sw, _PeerId, Header, PayLoad}, _From, State) ->
+idle({keep_alive, _DataPath, _Sw, _WTPDataChannelAddress, Header, PayLoad}, _From, State) ->
     lager:warning("in IDLE got unexpected keep_alive: ~p", [{Header, PayLoad}]),
     reply({error, unexpected}, idle, State).
 
@@ -277,7 +278,8 @@ idle({discovery_request, Seq, Elements, #capwap_header{
 
 idle({join_request, Seq, Elements, #capwap_header{
 			   radio_id = RadioId, wb_id = WBID, flags = Flags}},
-     State0 = #state{peer = {Address, _}, session = Session}) ->
+     State0 = #state{ctrl_channel_address = WTPControlChannelAddress, session = Session}) ->
+    {Address, _} = WTPControlChannelAddress,
     Version = get_wtp_version(Elements),
     SessionId = proplists:get_value(session_id, Elements),
     capwap_wtp_reg:register_sessionid(Address, SessionId),
@@ -299,7 +301,7 @@ idle({Msg, Seq, Elements, Header}, State) ->
     lager:warning("in IDLE got unexpexted: ~p", [{Msg, Seq, Elements, Header}]),
     next_state(idle, State).
 
-join({keep_alive, _DataPath, _Sw, _PeerId, Header, PayLoad}, _From, State) ->
+join({keep_alive, _DataPath, _Sw, _WTPDataChannelAddress, Header, PayLoad}, _From, State) ->
     lager:warning("in JOIN got unexpected keep_alive: ~p", [{Header, PayLoad}]),
     reply({error, unexpected}, join, State).
 
@@ -354,7 +356,7 @@ join({Msg, Seq, Elements, Header}, State) ->
     lager:warning("in JOIN got unexpexted: ~p", [{Msg, Seq, Elements, Header}]),
     next_state(join, State).
 
-configure({keep_alive, _DataPath, _Sw, _PeerId, Header, PayLoad}, _From, State) ->
+configure({keep_alive, _DataPath, _Sw, _WTPDataChannelAddress, Header, PayLoad}, _From, State) ->
     lager:warning("in CONFIGURE got unexpected keep_alive: ~p", [{Header, PayLoad}]),
     reply({error, unexpected}, configure, State).
 
@@ -373,14 +375,14 @@ configure({Msg, Seq, Elements, Header}, State) ->
     lager:debug("in configure got: ~p", [{Msg, Seq, Elements, Header}]),
     next_state(configure, State).
 
-data_check({keep_alive, DataPath, Sw, PeerId, Header, PayLoad}, _From,
+data_check({keep_alive, DataPath, Sw, WTPDataChannelAddress, Header, PayLoad}, _From,
 	   State = #state{ctrl_stream = CtrlStreamState}) ->
     lager:info("in DATA_CHECK got expected keep_alive: ~p", [{Sw, Header, PayLoad}]),
-    capwap_wtp_reg:register(PeerId),
+    capwap_wtp_reg:register(WTPDataChannelAddress),
     MTU = capwap_stream:get_mtu(CtrlStreamState),
-    capwap_dp:add_wtp(PeerId, MTU),
+    capwap_dp:add_wtp(WTPDataChannelAddress, MTU),
     gen_fsm:send_event(self(), configure),
-    reply({reply, {Header, PayLoad}}, run, State#state{peer_data = PeerId, data_path = DataPath}).
+    reply({reply, {Header, PayLoad}}, run, State#state{data_channel_address = WTPDataChannelAddress, data_path = DataPath}).
 
 data_check(timeout, State) ->
     lager:info("timeout in DATA_CHECK -> stop"),
@@ -391,7 +393,7 @@ data_check({Msg, Seq, Elements, Header}, State) ->
     next_state(data_check, State).
 
 run({new_station, BSS, SA}, _From, State = #state{id = WtpId, session_id = SessionId,
-						  peer_data = PeerId, data_path = DataPath,
+						  data_channel_address = WTPDataChannelAddress, data_path = DataPath,
                                                   mac_mode = MacMode, tunnel_mode = TunnelMode,
                                                   station_count  = StationCount,
                                                   session=Session}) ->
@@ -410,11 +412,11 @@ run({new_station, BSS, SA}, _From, State = #state{id = WtpId, session_id = Sessi
                     not_found ->
                         lager:debug("starting station: ~p", [SA]),
                         {State#state{station_count = StationCount + 1},
-                         capwap_station_sup:new_station(self(), DataPath, PeerId, WtpId, SessionId, BSS, SA, MacMode, TunnelMode)};
+                         capwap_station_sup:new_station(self(), DataPath, WTPDataChannelAddress, WtpId, SessionId, BSS, SA, MacMode, TunnelMode)};
                     {ok, Station0} ->
                         lager:debug("TAKE-OVER: station ~p found as ~p", [{self(), SA}, Station0]),
                         {State#state{station_count = StationCount + 1},
-                         ieee80211_station:take_over(Station0, self(), DataPath, PeerId, WtpId, SessionId, BSS, MacMode, TunnelMode)}
+                         ieee80211_station:take_over(Station0, self(), DataPath, WTPDataChannelAddress, WtpId, SessionId, BSS, MacMode, TunnelMode)}
                 end;
             {Ok = {ok, Station0}, _} ->
                 lager:debug("station ~p found as ~p", [{self(), SA}, Station0]),
@@ -422,7 +424,7 @@ run({new_station, BSS, SA}, _From, State = #state{id = WtpId, session_id = Sessi
         end,
     reply(Reply, run, State0);
 
-run({keep_alive, _DataPath, Sw, _PeerId, Header, PayLoad}, _From, State) ->
+run({keep_alive, _DataPath, Sw, _WTPDataChannelAddress, Header, PayLoad}, _From, State) ->
     lager:debug("in RUN got expected keep_alive: ~p", [{Sw, Header, PayLoad}]),
     reply({reply, {Header, PayLoad}}, run, State).
 
@@ -507,7 +509,9 @@ run({add_station, #capwap_header{radio_id = RadioId, wb_id = WBID}, MAC}, State)
     State1 = send_request(Header1, station_configuration_request, ReqElements, State),
     next_state(run, State1);
 
-run({del_station, #capwap_header{radio_id = RadioId, wb_id = WBID}, MAC}, State) ->
+run({del_station, #capwap_header{radio_id = RadioId, wb_id = WBID}, MAC},
+    State = #state{data_channel_address = WTPDataChannelAddress, data_path = DataPath,
+		   mac_mode = MacMode, tunnel_mode = TunnelMode}) ->
     Flags = [{frame,'802.3'}],
     ReqElements = [#delete_station{
     		      radio_id  = RadioId,
@@ -515,6 +519,7 @@ run({del_station, #capwap_header{radio_id = RadioId, wb_id = WBID}, MAC}, State)
 		     }],
     Header1 = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
     State1 = send_request(Header1, station_configuration_request, ReqElements, State),
+    DataPath ! {del_flow, 'Sw', self(), WTPDataChannelAddress, 'RadioMAC', MAC, MacMode, TunnelMode},
     next_state(run, State1);
 
 run({wtp_event_request, Seq, Elements, RequestHeader =
@@ -627,10 +632,10 @@ handle_sync_event({set_ssid, _SSID, _RadioId}, _From, StateName, State)
   when StateName =/= run ->
     reply({error, not_in_run_state}, StateName, State);
 
-handle_sync_event(get_peer_data, _From, run, State) ->
-    Reply = {ok, State#state.peer_data},
+handle_sync_event(get_data_channel_address, _From, run, State) ->
+    Reply = {ok, State#state.data_channel_address},
     reply(Reply, run, State);
-handle_sync_event(get_peer_data, _From, StateName, State) ->
+handle_sync_event(get_data_channel_address, _From, StateName, State) ->
     Reply = {error, not_connected},
     reply(Reply, StateName, State);
 handle_sync_event({take_over, NewWtp}, _From, _StateName, State) ->
@@ -684,13 +689,13 @@ handle_info(Info, StateName, State) ->
 %% @end
 %%--------------------------------------------------------------------
 terminate(Reason, StateName,
-	  State = #state{peer_data = PeerId,
+	  State = #state{data_channel_address = WTPDataChannelAddress,
 			 data_path = DataPath, socket = Socket,
 			 session = Session}) ->
     error_logger:info_msg("AC session terminating in state ~p with state ~p with reason ~p~n", [StateName, State, Reason]),
     case StateName of
         run ->
-            DataPath ! {wtp_down, PeerId},
+            DataPath ! {wtp_down, WTPDataChannelAddress},
             ok;
         _ ->
             ok
@@ -730,10 +735,10 @@ format_peer({IP, Port}) ->
 format_peer(IP) ->
     io_lib:format("~p", [IP]).
 
-peer_log_str(#state{id = undefined, peer = Peer}) ->
-    io_lib:format("~p", [Peer]);
-peer_log_str(#state{id = Id, peer = Peer}) ->
-    io_lib:format("~s[~s]", [Id, format_peer(Peer)]).
+peer_log_str(#state{id = undefined, ctrl_channel_address = WTPControlChannelAddress}) ->
+    io_lib:format("~p", [WTPControlChannelAddress]);
+peer_log_str(#state{id = Id, ctrl_channel_address = WTPControlChannelAddress}) ->
+    io_lib:format("~s[~s]", [Id, format_peer(WTPControlChannelAddress)]).
 
 next_state(NextStateName, State)
   when NextStateName == idle; NextStateName == run ->
@@ -763,16 +768,16 @@ handle_plain_join(Peer, Seq, _Elements, #capwap_header{
 	    {reply, Answer}
     end.
 
-handle_capwap_data(DataPath, Sw, Address, Port, Header, true, PayLoad) ->
+handle_capwap_data(DataPath, Sw, WTPDataChannelAddress, Header, true, PayLoad) ->
     lager:debug("CAPWAP Data KeepAlive: ~p", [PayLoad]),
 
+    {Address, _Port} = WTPDataChannelAddress,
     SessionId = proplists:get_value(session_id, PayLoad),
     case capwap_wtp_reg:lookup_sessionid(Address, SessionId) of
 	not_found ->
 	    {error, not_found};
 	{ok, AC} ->
-	    PeerId = {Address, Port},
-	    case gen_fsm:sync_send_event(AC, {keep_alive, DataPath, Sw, PeerId, Header, PayLoad}) of
+	    case gen_fsm:sync_send_event(AC, {keep_alive, DataPath, Sw, WTPDataChannelAddress, Header, PayLoad}) of
 		{reply, {RHeader, RPayLoad}} ->
 		    Data = hd(capwap_packet:encode(data, {RHeader, RPayLoad})),
 		    {reply, Data};
@@ -781,16 +786,16 @@ handle_capwap_data(DataPath, Sw, Address, Port, Header, true, PayLoad) ->
 	    end
     end;
 
-handle_capwap_data(_DataPath, Sw, Address, Port,
+handle_capwap_data(_DataPath, Sw, WTPDataChannelAddress,
 		   Header = #capwap_header{
 		     flags = Flags,
 		     radio_id = RadioId, wb_id = WBID},
 		   false, Frame) ->
     lager:debug("CAPWAP Data PayLoad:~n~p~n~p", [Header, Frame]),
-    PeerId = {Address, Port},
-    case capwap_wtp_reg:lookup(PeerId) of
+
+    case capwap_wtp_reg:lookup(WTPDataChannelAddress) of
 	not_found ->
-	    lager:warning("AC for data session no found: ~p", [PeerId]),
+	    lager:warning("AC for data session no found: ~p", [WTPDataChannelAddress]),
 	    {error, not_found};
 	{ok, AC} ->
 	    %% TODO: multiple highly redundant case to follow, find a way to simplify
@@ -801,10 +806,10 @@ handle_capwap_data(_DataPath, Sw, Address, Port,
 			{add, RadioMAC, MAC, MacMode, TunnelMode} ->
 			    gen_fsm:send_event(AC, {add_station, Header, MAC}),
 			    lager:debug("MacMode: ~w, TunnelMode ~w", [MacMode, TunnelMode]),
-			    {add_flow, Sw, self(), Address, Port, RadioMAC, MAC, MacMode, TunnelMode, true};
+			    {add_flow, Sw, self(), WTPDataChannelAddress, RadioMAC, MAC, MacMode, TunnelMode, true};
 
 			{flow, RadioMAC, MAC, MacMode, TunnelMode} ->
-			    {add_flow, Sw, self(), Address, Port, RadioMAC, MAC, MacMode, TunnelMode, true};
+			    {add_flow, Sw, self(), WTPDataChannelAddress, RadioMAC, MAC, MacMode, TunnelMode, true};
 
 			Other ->
 			    Other
@@ -824,14 +829,14 @@ handle_capwap_data(_DataPath, Sw, Address, Port,
 			{add, RadioMAC, MAC, MacMode, TunnelMode} ->
 			    gen_fsm:send_event(AC, {add_station, Header, MAC}),
 			    lager:debug("MacMode: ~w, TunnelMode ~w", [MacMode, TunnelMode]),
-			    {add_flow, Sw, self(), Address, Port, RadioMAC, MAC, MacMode, TunnelMode, false};
+			    {add_flow, Sw, self(), WTPDataChannelAddress, RadioMAC, MAC, MacMode, TunnelMode, false};
 
 			{flow, RadioMAC, MAC, MacMode, TunnelMode} ->
-			    {add_flow, Sw, self(), Address, Port, RadioMAC, MAC, MacMode, TunnelMode, false};
+			    {add_flow, Sw, self(), WTPDataChannelAddress, RadioMAC, MAC, MacMode, TunnelMode, false};
 
 			{del, RadioMAC, MAC, MacMode, TunnelMode} ->
 			    gen_fsm:send_event(AC, {del_station, Header, MAC}),
-			    {del_flow, Sw, self(), Address, Port, RadioMAC, MAC, MacMode, TunnelMode};
+			    {del_flow, Sw, self(), WTPDataChannelAddress, RadioMAC, MAC, MacMode, TunnelMode};
 
 			Other ->
 			    Other

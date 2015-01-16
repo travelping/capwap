@@ -396,10 +396,10 @@ handle_packet(_Peer, _Type, #capwap_socket{id = CSocketId, mode = _Mode, owner =
     Owner ! {?PROTOCOL, capwap_socket(CSocketId), Packet},
     State.
 
-handle_first_packet({Address, Port}, udp, Packet, _State) ->
+handle_first_packet(WTPControlChannelAddress, udp, Packet, _State) ->
     lager:debug("handle_first_packet: plain CAPWAP~n~p", [Packet]),
     %% TODO: keep AC configuration in State and pass it to AC
-    capwap_ac:handle_packet(Address, Port, Packet);
+    capwap_ac:handle_packet(WTPControlChannelAddress, Packet);
 handle_first_packet({Address, Port}, dtls, Packet, _State) ->
     lager:debug(?BLUE "handle_first_packet: DTLS CAPWAP" ?WHITE),
     try

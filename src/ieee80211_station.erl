@@ -35,7 +35,7 @@
           ac,
           ac_monitor,
           data_path,
-          peer_data,
+          data_channel_address,
 	  wtp_id,
 	  wtp_session_id,
           radio_mac,
@@ -52,8 +52,8 @@
 %%%===================================================================
 %%% API
 %%%===================================================================
-start_link(AC, DataPath, PeerId, WtpId, SessionId, RadioMAC, ClientMAC, MacMode, TunnelMode) ->
-    gen_fsm:start_link(?MODULE, [AC, DataPath, PeerId, WtpId, SessionId, RadioMAC, ClientMAC, MacMode, TunnelMode], [{debug, ?DEBUG_OPTS}]).
+start_link(AC, DataPath, WTPDataChannelAddress, WtpId, SessionId, RadioMAC, ClientMAC, MacMode, TunnelMode) ->
+    gen_fsm:start_link(?MODULE, [AC, DataPath, WTPDataChannelAddress, WtpId, SessionId, RadioMAC, ClientMAC, MacMode, TunnelMode], [{debug, ?DEBUG_OPTS}]).
 
 handle_ieee80211_frame(AC, <<FrameControl:2/bytes,
 			      _Duration:16, DA:6/bytes, SA:6/bytes, BSS:6/bytes,
@@ -104,8 +104,8 @@ get_out_action(Sw, ClientMAC) ->
 	    not_found
     end.
 
-take_over(Pid, AC, DataPath, PeerId, WtpId, SessionId, RadioMAC, MacMode, TunnelMode) ->
-    gen_fsm:sync_send_event(Pid, {take_over, AC, DataPath, PeerId, WtpId, SessionId, RadioMAC, MacMode, TunnelMode}).
+take_over(Pid, AC, DataPath, WTPDataChannelAddress, WtpId, SessionId, RadioMAC, MacMode, TunnelMode) ->
+    gen_fsm:sync_send_event(Pid, {take_over, AC, DataPath, WTPDataChannelAddress, WtpId, SessionId, RadioMAC, MacMode, TunnelMode}).
 
 detach(ClientMAC) ->
     case capwap_station_reg:lookup(ClientMAC) of
@@ -118,13 +118,13 @@ detach(ClientMAC) ->
 %%%===================================================================
 %%% gen_fsm callbacks
 %%%===================================================================
-init([AC, DataPath, PeerId, WtpId, SessionId, RadioMAC, ClientMAC, MacMode, TunnelMode]) ->
+init([AC, DataPath, WTPDataChannelAddress, WtpId, SessionId, RadioMAC, ClientMAC, MacMode, TunnelMode]) ->
     lager:debug("Register station ~p as ~w", [{AC, RadioMAC, ClientMAC}, self()]),
     capwap_station_reg:register(ClientMAC),
     capwap_station_reg:register(AC, ClientMAC),
     ACMonitor = erlang:monitor(process, AC),
     State = #state{ac = AC, ac_monitor = ACMonitor, data_path = DataPath,
-		   peer_data = PeerId, wtp_id = WtpId, wtp_session_id = SessionId,
+		   data_channel_address = WTPDataChannelAddress, wtp_id = WtpId, wtp_session_id = SessionId,
                    radio_mac = RadioMAC, mac = ClientMAC, mac_mode = MacMode, tunnel_mode = TunnelMode},
     {ok, initial_state(MacMode), State}.
 
@@ -315,7 +315,7 @@ handle_event(_Event, StateName, State) ->
 
 handle_sync_event({get_wtp_for_client_mac, _Sw}, _From, StateName,
                   State = #state{ac = AC, radio_mac = RadioMAC}) ->
-    case capwap_ac:get_peer_data(AC) of
+    case capwap_ac:get_data_channel_address(AC) of
         {ok, {Address, Port}} ->
             Reply = {ok, Address, Port, RadioMAC},
             {reply, Reply, StateName, State, ?IDLE_TIMEOUT};
@@ -333,22 +333,9 @@ handle_sync_event(_Event, _From, StateName, State) ->
     Reply = ok,
     {reply, Reply, StateName, State, ?IDLE_TIMEOUT}.
 
-handle_info({'DOWN', ACMonitor, process, AC, _Info}, StateName,
-            State = #state{ac = AC, ac_monitor = ACMonitor,
-			   data_path = DataPath, peer_data = PeerId,
-                           radio_mac = BSS, mac = MAC,
-                           mac_mode = MacMode, tunnel_mode = TunnelMode}) ->
+handle_info({'DOWN', _ACMonitor, process, AC, _Info}, _StateName,
+            State = #state{ac = AC}) ->
     lager:warning("AC died ~w", [AC]),
-
-    if
-        StateName == connected ->
-            %% if the AC dies in connected whe have to tell the Switch directly
-            %% to avoid a race
-            DataPath ! {station_down, PeerId, BSS, MAC, MacMode, TunnelMode};
-        true ->
-            ok
-    end,
-
     {stop, normal, State};
 
 handle_info(Info, StateName, State) ->
@@ -450,7 +437,7 @@ ieee80211_request(_AC, FrameType, DA, SA, BSS, FromDS, ToDS, Frame) ->
     lager:warning("unhandled IEEE 802.11 Frame: ~p", [{FrameType, DA, SA, BSS, FromDS, ToDS, Frame}]),
     {error, unhandled}.
 
-handle_take_over({take_over, AC, DataPath, PeerId, WtpId, SessionId, RadioMAC, MacMode, TunnelMode}, _From,
+handle_take_over({take_over, AC, DataPath, WTPDataChannelAddress, WtpId, SessionId, RadioMAC, MacMode, TunnelMode}, _From,
 		 State0 = #state{ac = OldAC, ac_monitor = OldACMonitor,
 				 data_path = _OldDataPath,
 				 radio_mac = OldRadioMAC, mac = ClientMAC,
@@ -471,7 +458,7 @@ handle_take_over({take_over, AC, DataPath, PeerId, WtpId, SessionId, RadioMAC, M
     ACMonitor = erlang:monitor(process, AC),
 
     State = State0#state{ac = AC, ac_monitor = ACMonitor,
-			 data_path = DataPath, peer_data = PeerId,
+			 data_path = DataPath, data_channel_address = WTPDataChannelAddress,
 			 wtp_id = WtpId, wtp_session_id = SessionId,
 			 radio_mac = RadioMAC, mac_mode = MacMode,
 			 tunnel_mode = TunnelMode},

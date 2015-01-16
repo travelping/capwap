@@ -112,24 +112,24 @@ handle_info({packet_in,tap, Packet}, State) ->
     end,
     {noreply, State};
 
-handle_info({capwap_in, InWTP = {Address, Port}, Msg}, State) ->
-    lager:warning("CAPWAP from ~p: ~p", [InWTP, Msg]),
-    case capwap_ac:handle_data(self(), none, Address, Port, Msg) of
+handle_info({capwap_in, WTPDataChannelAddress, Msg}, State) ->
+    lager:warning("CAPWAP from ~p: ~p", [WTPDataChannelAddress, Msg]),
+    case capwap_ac:handle_data(self(), none, WTPDataChannelAddress, Msg) of
 	{reply, Reply} ->
 	    %% send Reply to WTP
-	    lager:debug("sendto(~p, ~p)", [InWTP, Reply]),
-	    sendto(InWTP, Reply),
+	    lager:debug("sendto(~p, ~p)", [WTPDataChannelAddress, Reply]),
+	    sendto(WTPDataChannelAddress, Reply),
 	    ok;
 
-	{add_flow, Sw, _Owner, _Address, _Port, RadioMAC, MAC, _MacMode, TunnelMode, Forward} ->
+	{add_flow, Sw, _Owner, _WTPDataChannelAddress, RadioMAC, MAC, _MacMode, TunnelMode, Forward} ->
 	    %% add STA to WTP
-	    lager:debug("attach_station(~p, ~p)", [InWTP, MAC]),
-	    attach_station(InWTP, MAC),
+	    lager:debug("attach_station(~p, ~p)", [WTPDataChannelAddress, MAC]),
+	    attach_station(WTPDataChannelAddress, MAC),
 	    ok;
 
-	{del_flow, _Sw, _Owner, _Address, _Port, _RadioMAC, MAC, _MacMode, TunnelMode} ->
+	{del_flow, _Sw, _Owner, _WTPDataChannelAddress, _RadioMAC, MAC, _MacMode, TunnelMode} ->
 	    %% remove STA from WTP
-	    lager:debug("detach_station(~p, ~p)", [InWTP, MAC]),
+	    lager:debug("detach_station(~p, ~p)", [WTPDataChannelAddress, MAC]),
 	    detach_station(MAC),
 	    ok;
 
@@ -215,8 +215,8 @@ run_loop(WTP) ->
 	    [sendto(WTP, X) || X <- Data],
 	    ok;
 
-	{capwap_in, InWTP, Msg} ->
-	    io:format("CAPWAP From ~p: ~p~n", [InWTP, Msg]),
+	{capwap_in, WTPDataChannelAddress, Msg} ->
+	    io:format("CAPWAP From ~p: ~p~n", [WTPDataChannelAddress, Msg]),
 	    ok;
 
 	Other ->

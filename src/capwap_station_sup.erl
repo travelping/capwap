@@ -17,9 +17,9 @@
 start_link() ->
     supervisor:start_link({local, ?SERVER}, ?MODULE, []).
 
-new_station(AC, DataPath, PeerId, WtpId, SessionId, RadioMAC, ClientMAC, MacMode, TunnelMode) ->
-    lager:debug("Starting new station: ~p", [{AC, DataPath, PeerId, WtpId, SessionId, RadioMAC, ClientMAC, MacMode, TunnelMode}]),
-    R = supervisor:start_child(?SERVER, [AC, DataPath, PeerId, WtpId, SessionId, RadioMAC, ClientMAC, MacMode, TunnelMode]),
+new_station(AC, DataPath, WTPDataChannelAddress, WtpId, SessionId, RadioMAC, ClientMAC, MacMode, TunnelMode) ->
+    lager:debug("Starting new station: ~p", [{AC, DataPath, WTPDataChannelAddress, WtpId, SessionId, RadioMAC, ClientMAC, MacMode, TunnelMode}]),
+    R = supervisor:start_child(?SERVER, [AC, DataPath, WTPDataChannelAddress, WtpId, SessionId, RadioMAC, ClientMAC, MacMode, TunnelMode]),
     lager:debug("Starting new station result: ~p", [R]),
     R.
 
