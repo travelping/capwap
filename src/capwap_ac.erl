@@ -63,6 +63,14 @@
           reply_to_after_start
          }).
 
+-define(IS_RUN_CONTROL_EVENT(E),
+	(is_tuple(E) andalso
+			   (element(1, E) == add_station orelse
+			    element(1, E) == del_station orelse
+			    element(1, E) == detach_station orelse
+			    element(1, E) == delete_station orelse
+			    element(1, E) == firmware_download))).
+
 -define(DEBUG_OPTS,[{install, {fun lager_sys_debug:lager_gen_fsm_trace/3, ?MODULE}}]).
 
 -define(log_capwap_control(Id, MsgType, SeqNo, Elements, Header),
@@ -297,6 +305,10 @@ idle({join_request, Seq, Elements, #capwap_header{
     ctld_session:start(Session, SessionOpts),
     next_state(join, State);
 
+idle(Event, State) when ?IS_RUN_CONTROL_EVENT(Event) ->
+    lager:debug("in IDLE got control event: ~p", [Event]),
+    next_state(idle, State);
+
 idle({Msg, Seq, Elements, Header}, State) ->
     lager:warning("in IDLE got unexpexted: ~p", [{Msg, Seq, Elements, Header}]),
     next_state(idle, State).
@@ -352,6 +364,10 @@ join({configuration_status_request, Seq, Elements, #capwap_header{
     EchoRequestTimeout = EchoRequestInterval * 2,
     next_state(configure, State1#state{echo_request_timeout = EchoRequestTimeout});
 
+join(Event, State) when ?IS_RUN_CONTROL_EVENT(Event) ->
+    lager:debug("in JOIN got control event: ~p", [Event]),
+    next_state(join, State);
+
 join({Msg, Seq, Elements, Header}, State) ->
     lager:warning("in JOIN got unexpexted: ~p", [{Msg, Seq, Elements, Header}]),
     next_state(join, State).
@@ -371,6 +387,10 @@ configure({change_state_event_request, Seq, _Elements, #capwap_header{
     State1 = send_response(Header, change_state_event_response, Seq, [], State),
     next_state(data_check, State1);
 
+configure(Event, State) when ?IS_RUN_CONTROL_EVENT(Event) ->
+    lager:debug("in CONFIGURE got control event: ~p", [Event]),
+    next_state(configure, State);
+
 configure({Msg, Seq, Elements, Header}, State) ->
     lager:debug("in configure got: ~p", [{Msg, Seq, Elements, Header}]),
     next_state(configure, State).
@@ -388,6 +408,10 @@ data_check(timeout, State) ->
     lager:info("timeout in DATA_CHECK -> stop"),
     {stop, normal, State};
 
+data_check(Event, State) when ?IS_RUN_CONTROL_EVENT(Event) ->
+    lager:debug("in DATA_CHECK got control event: ~p", [Event]),
+    next_state(data_check, State);
+
 data_check({Msg, Seq, Elements, Header}, State) ->
     lager:warning("in DATA_CHECK got unexpexted: ~p", [{Msg, Seq, Elements, Header}]),
     next_state(data_check, State).
@@ -396,7 +420,7 @@ run({new_station, BSS, SA}, _From, State = #state{id = WtpId, session_id = Sessi
 						  data_channel_address = WTPDataChannelAddress, data_path = DataPath,
                                                   mac_mode = MacMode, tunnel_mode = TunnelMode,
                                                   station_count  = StationCount,
-                                                  session=Session}) ->
+                                                  session = Session}) ->
     lager:info("in RUN got new_station: ~p", [SA]),
     {ok, MaxStations} = ctld_session:get(Session, 'TP-CAPWAP-Max-WIFI-Clients'),
     WTPFullPred = StationCount + 1 > MaxStations,
@@ -491,6 +515,14 @@ run({configuration_update_responce, _Seq,
     State1 = reset_echo_request_timer(State),
     next_state(run, State1);
 
+run({wtp_event_request, Seq, Elements, RequestHeader =
+	 #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags}}, State) ->
+    ResponseHeader = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
+    State1 = send_response(ResponseHeader, wtp_event_response, Seq, [], State),
+    State2 = handle_wtp_event(Elements, RequestHeader, State1),
+    State3 = reset_echo_request_timer(State2),
+    next_state(run, State3);
+
 run(configure, State = #state{id = WtpId, session = Session}) ->
     lager:debug("configure WTP: ~p", [WtpId]),
     RadioId = 1,
@@ -509,9 +541,7 @@ run({add_station, #capwap_header{radio_id = RadioId, wb_id = WBID}, MAC}, State)
     State1 = send_request(Header1, station_configuration_request, ReqElements, State),
     next_state(run, State1);
 
-run({del_station, #capwap_header{radio_id = RadioId, wb_id = WBID}, MAC},
-    State = #state{data_channel_address = WTPDataChannelAddress, data_path = DataPath,
-		   mac_mode = MacMode, tunnel_mode = TunnelMode}) ->
+run({del_station, #capwap_header{radio_id = RadioId, wb_id = WBID}, MAC}, State) ->
     Flags = [{frame,'802.3'}],
     ReqElements = [#delete_station{
     		      radio_id  = RadioId,
@@ -519,16 +549,24 @@ run({del_station, #capwap_header{radio_id = RadioId, wb_id = WBID}, MAC},
 		     }],
     Header1 = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
     State1 = send_request(Header1, station_configuration_request, ReqElements, State),
-    DataPath ! {del_flow, self(), WTPDataChannelAddress, 'RadioMAC', MAC, MacMode, TunnelMode},
     next_state(run, State1);
 
-run({wtp_event_request, Seq, Elements, RequestHeader =
-	 #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags}}, State) ->
-    ResponseHeader = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
-    State1 = send_response(ResponseHeader, wtp_event_response, Seq, [], State),
-    State2 = handle_wtp_event(Elements, RequestHeader, State1),
-    State3 = reset_echo_request_timer(State2),
-    next_state(run, State3);
+run({detach_station, RadioId, WBID, RadioMAC, MAC, MacMode, TunnelMode},
+    State = #state{data_channel_address = WTPDataChannelAddress}) ->
+    Flags = [{frame,'802.3'}],
+    ReqElements = [#delete_station{
+		      radio_id  = RadioId,
+		      mac       = MAC
+		     }],
+    Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
+    State1 = send_request(Header, station_configuration_request, ReqElements, State),
+    capwap_dp:del_flow(self(), WTPDataChannelAddress, RadioMAC, MAC, MacMode, TunnelMode),
+    next_state(run, State1);
+
+run({delete_station, _RadioId, _WBID, RadioMAC, MAC, MacMode, TunnelMode},
+    State = #state{data_channel_address = WTPDataChannelAddress}) ->
+    capwap_dp:del_flow(self(), WTPDataChannelAddress, RadioMAC, MAC, MacMode, TunnelMode),
+    next_state(run, State);
 
 run({firmware_download, DownloadLink, Sha}, State) ->
     Flags = [{frame,'802.3'}],
@@ -903,6 +941,18 @@ handle_wtp_event(Elements, Header, State = #state{session = Session}) ->
 	    ctld_session:interim_batch(Session, SessionOptsList);
        true -> ok
     end,
+    lists:foldl(fun(Ev, State0) -> handle_wtp_action_event(Ev, Header, State0) end, State, Elements).
+
+handle_wtp_action_event(#delete_station{mac = MAC}, _Header, State) ->
+    case capwap_station_reg:lookup(self(), MAC) of
+	{ok, Station} ->
+	    ieee80211_station:delete(Station);
+	Other ->
+	    lager:debug("station ~p not found: ~p", [MAC, Other]),
+	    ok
+    end,
+    State;
+handle_wtp_action_event(_Action, _Header, State) ->
     State.
 
 handle_wtp_stats_event(#gps_last_acquired_position{timestamp = _EventTimestamp,

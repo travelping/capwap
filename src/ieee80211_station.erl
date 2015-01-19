@@ -4,7 +4,7 @@
 
 %% API
 -export([start_link/9, handle_ieee80211_frame/2, handle_ieee802_3_frame/2,
-         take_over/9, detach/1]).
+         take_over/9, detach/1, delete/1]).
 %% Helpers
 -export([format_mac/1]).
 
@@ -91,6 +91,9 @@ detach(ClientMAC) ->
 	    not_found
     end.
 
+delete(Pid) when is_pid(Pid) ->
+    gen_fsm:sync_send_event(Pid, delete).
+
 %%%===================================================================
 %%% gen_fsm callbacks
 %%%===================================================================
@@ -135,7 +138,7 @@ init_auth(Event, From, State)
     lager:debug("in INIT_AUTH got TAKE-OVER: ~p", [Event]),
     handle_take_over(Event, From, State);
 
-init_auth(detach, _From, State) ->
+init_auth(Event, _From, State) when Event == detach; Event == delete ->
     {reply, {error, not_attached}, init_auth, State, ?IDLE_TIMEOUT};
 
 init_auth(Event, _From, State) ->
@@ -210,7 +213,7 @@ init_assoc(Event, From, State)
     lager:debug("in INIT_ASSOC got TAKE-OVER: ~p", [Event]),
     handle_take_over(Event, From, State);
 
-init_assoc(detach, _From, State) ->
+init_assoc(Event, _From, State) when Event == detach; Event == delete ->
     {reply, {error, not_attached}, init_assoc, State, ?IDLE_TIMEOUT};
 
 init_assoc(Event, _From, State) ->
@@ -234,7 +237,7 @@ init_start(Event, From, State)
     lager:debug("in INIT_START got TAKE-OVER: ~p", [Event]),
     handle_take_over(Event, From, State);
 
-init_start(detach, _From, State) ->
+init_start(Event, _From, State) when Event == detach; Event == delete ->
     {reply, {error, not_attached}, init_start, State, ?IDLE_TIMEOUT};
 
 init_start(Event, _From, State) ->
@@ -273,12 +276,17 @@ connected(Event, From, State)
     ctld_disassociation(State),
     handle_take_over(Event, From, State);
 
-connected(detach, _From, State = #state{ac = AC, mac = MAC, mac_mode = MacMode}) ->
-		 Header = #capwap_header{
-			     flags = [{frame, '802.3'}],
-			     radio_id = 1,
-			     wb_id = 1},
-    gen_fsm:send_event(AC, {del_station, Header, MAC}),
+connected(delete, _From, State = #state{ac = AC, radio_mac = RadioMAC,
+						mac = MAC, mac_mode = MacMode,
+						tunnel_mode = TunnelMode}) ->
+    gen_fsm:send_event(AC, {delete_station, 1, 1, RadioMAC, MAC, MacMode, TunnelMode}),
+    ctld_disassociation(State),
+    {reply, ok, initial_state(MacMode), State, ?SHUTDOWN_TIMEOUT};
+
+connected(detach, _From, State = #state{ac = AC, radio_mac = RadioMAC,
+					mac = MAC, mac_mode = MacMode,
+					tunnel_mode = TunnelMode}) ->
+    gen_fsm:send_event(AC, {detach_station, 1, 1, RadioMAC, MAC, MacMode, TunnelMode}),
     ctld_disassociation(State),
     {reply, ok, initial_state(MacMode), State, ?SHUTDOWN_TIMEOUT};
 
@@ -302,8 +310,11 @@ handle_info(Info, StateName, State) ->
     lager:warning("in State ~p unexpected Info: ~p", [StateName, Info]),
     {next_state, StateName, State, ?IDLE_TIMEOUT}.
 
-terminate(_Reason, StateName, State = #state{ac = AC, mac = MAC}) ->
+terminate(_Reason, StateName, State = #state{ac = AC, radio_mac = RadioMAC,
+					     mac = MAC, mac_mode = MacMode,
+					     tunnel_mode = TunnelMode}) ->
     if StateName == connected ->
+	    gen_fsm:send_event(AC, {detach_station, 1, 1, RadioMAC, MAC, MacMode, TunnelMode}),
 	    ctld_disassociation(State);
        true ->
 	    ok

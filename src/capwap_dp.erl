@@ -3,7 +3,7 @@
 -behavior(gen_server).
 
 %% API
--export([start_link/0]).
+-export([start_link/0, del_flow/6]).
 
 %% C-Node wrapper
 -export([bind/1, clear/0, get_stats/0]).
@@ -30,11 +30,12 @@
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
+del_flow(Owner, WTPDataChannelAddress, RadioMAC, MAC, MacMode, TunnelMode) ->
+    gen_server:cast(?SERVER, {del_flow, Owner, WTPDataChannelAddress, RadioMAC, MAC, MacMode, TunnelMode}).
 
 %%===================================================================
 %% C-Node API Wrapper
 %%===================================================================
-
 
 bind(Owner) ->
     call({bind, Owner}).
@@ -91,6 +92,12 @@ handle_cast(Request, State = #state{state = disconnected}) ->
     lager:warning("got cast ~p without active data path", [Request]),
     {noreply, State};
 
+handle_cast({del_flow, _Owner, WTPDataChannelAddress, _RadioMAC, MAC, _MacMode, _TunnelMode}, State) ->
+    %% remove STA from WTP
+    Ret = detach_station(MAC),
+    lager:debug("detach_station(~p, ~p): ~p", [WTPDataChannelAddress, MAC, Ret]),
+    {noreply, State};
+
 handle_cast(_Request, State) ->
     {noreply, State}.
 
@@ -141,8 +148,8 @@ handle_info({capwap_in, WTPDataChannelAddress, Msg}, State) ->
 
 	{del_flow, _Owner, _WTPDataChannelAddress, _RadioMAC, MAC, _MacMode, _TunnelMode} ->
 	    %% remove STA from WTP
-	    lager:debug("detach_station(~p, ~p)", [WTPDataChannelAddress, MAC]),
-	    detach_station(MAC),
+	    Ret = detach_station(MAC),
+	    lager:debug("detach_station(~p, ~p): ~p", [WTPDataChannelAddress, MAC, Ret]),
 	    ok;
 
 	_Other ->
