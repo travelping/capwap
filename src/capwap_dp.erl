@@ -114,20 +114,20 @@ handle_info({packet_in,tap, Packet}, State) ->
 
 handle_info({capwap_in, WTPDataChannelAddress, Msg}, State) ->
     lager:warning("CAPWAP from ~p: ~p", [WTPDataChannelAddress, Msg]),
-    case capwap_ac:handle_data(self(), none, WTPDataChannelAddress, Msg) of
+    case capwap_ac:handle_data(self(), WTPDataChannelAddress, Msg) of
 	{reply, Reply} ->
 	    %% send Reply to WTP
 	    lager:debug("sendto(~p, ~p)", [WTPDataChannelAddress, Reply]),
 	    sendto(WTPDataChannelAddress, Reply),
 	    ok;
 
-	{add_flow, Sw, _Owner, _WTPDataChannelAddress, RadioMAC, MAC, _MacMode, TunnelMode, Forward} ->
+	{add_flow, _Owner, _WTPDataChannelAddress, _RadioMAC, MAC, _MacMode, _TunnelMode, _Forward} ->
 	    %% add STA to WTP
 	    lager:debug("attach_station(~p, ~p)", [WTPDataChannelAddress, MAC]),
 	    attach_station(WTPDataChannelAddress, MAC),
 	    ok;
 
-	{del_flow, _Sw, _Owner, _WTPDataChannelAddress, _RadioMAC, MAC, _MacMode, TunnelMode} ->
+	{del_flow, _Owner, _WTPDataChannelAddress, _RadioMAC, MAC, _MacMode, _TunnelMode} ->
 	    %% remove STA from WTP
 	    lager:debug("detach_station(~p, ~p)", [WTPDataChannelAddress, MAC]),
 	    detach_station(MAC),

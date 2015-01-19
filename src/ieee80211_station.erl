@@ -4,7 +4,7 @@
 
 %% API
 -export([start_link/9, handle_ieee80211_frame/2, handle_ieee802_3_frame/2,
-         set_out_action/3, get_out_action/2, take_over/9, detach/1]).
+         take_over/9, detach/1]).
 %% Helpers
 -export([format_mac/1]).
 
@@ -79,30 +79,6 @@ handle_ieee802_3_frame(AC, <<_EthDst:6/bytes, EthSrc:6/bytes, _/binary>> = Frame
     end;
 handle_ieee802_3_frame(_, _Frame) ->
     {error, unhandled}.
-
-get_wtp_for_client_mac(Sw, ClientMAC) ->
-    case capwap_station_reg:lookup(ClientMAC) of
-	{ok, Pid} ->
-	    gen_fsm:sync_send_all_state_event(Pid, {get_wtp_for_client_mac, Sw});
-	_ ->
-	    not_found
-    end.
-
-set_out_action(Sw, ClientMAC, Action) ->
-    case capwap_station_reg:lookup(ClientMAC) of
-	{ok, Pid} ->
-	    gen_fsm:sync_send_all_state_event(Pid, {set_out_action, Sw, Action});
-	_ ->
-	    not_found
-    end.
-
-get_out_action(Sw, ClientMAC) ->
-    case capwap_station_reg:lookup(ClientMAC) of
-	{ok, Pid} ->
-	    gen_fsm:sync_send_all_state_event(Pid, {get_out_action, Sw});
-	_ ->
-	    not_found
-    end.
 
 take_over(Pid, AC, DataPath, WTPDataChannelAddress, WtpId, SessionId, RadioMAC, MacMode, TunnelMode) ->
     gen_fsm:sync_send_event(Pid, {take_over, AC, DataPath, WTPDataChannelAddress, WtpId, SessionId, RadioMAC, MacMode, TunnelMode}).
@@ -312,22 +288,6 @@ connected(Event, _From, State) ->
 
 handle_event(_Event, StateName, State) ->
     {next_state, StateName, State, ?IDLE_TIMEOUT}.
-
-handle_sync_event({get_wtp_for_client_mac, _Sw}, _From, StateName,
-                  State = #state{ac = AC, radio_mac = RadioMAC}) ->
-    case capwap_ac:get_data_channel_address(AC) of
-        {ok, {Address, Port}} ->
-            Reply = {ok, Address, Port, RadioMAC},
-            {reply, Reply, StateName, State, ?IDLE_TIMEOUT};
-        Other ->
-            {reply, Other, StateName, State, ?IDLE_TIMEOUT}
-    end;
-
-handle_sync_event({set_out_action, _Sw, Action}, _From, StateName, State) ->
-    {reply, ok, StateName, State#state{out_action = Action}, ?IDLE_TIMEOUT};
-
-handle_sync_event({get_out_action, _Sw}, _From, StateName, State) ->
-    {reply, State#state.out_action, StateName, State, ?IDLE_TIMEOUT};
 
 handle_sync_event(_Event, _From, StateName, State) ->
     Reply = ok,
