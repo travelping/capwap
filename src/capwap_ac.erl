@@ -74,9 +74,19 @@
 -define(DEBUG_OPTS,[{install, {fun lager_sys_debug:lager_gen_fsm_trace/3, ?MODULE}}]).
 
 -define(log_capwap_control(Id, MsgType, SeqNo, Elements, Header),
-	begin
+	try
 	    #capwap_header{radio_id = RadioId, wb_id = WBID} = Header,
 	    lager:info("~s: ~s(Seq: ~w, R-Id: ~w, WB-Id: ~w): ~p", [Id, capwap_packet:msg_description(MsgType), SeqNo, RadioId, WBID, [lager:pr(E, ?MODULE) || E <- Elements]])
+	catch
+	    _:_ -> ok
+	end).
+
+-define(log_capwap_keep_alive(Id, PayLoad, Header),
+	try
+	    #capwap_header{radio_id = RadioId, wb_id = WBID} = Header,
+	    lager:info("~s: Keep-Alive(R-Id: ~w, WB-Id: ~w): ~p", [Id, RadioId, WBID, [lager:pr(E, ?MODULE) || E <- PayLoad]])
+	catch
+	    _:_ -> ok
 	end).
 
 %%%===================================================================
@@ -194,6 +204,7 @@ stop_radio(CommonName, RadioID) ->
 %%--------------------------------------------------------------------
 init([WTPControlChannelAddress]) ->
     process_flag(trap_exit, true),
+    lager:md([{control_channel_address, WTPControlChannelAddress}]),
     capwap_wtp_reg:register(WTPControlChannelAddress),
     {ok, listen, #state{ctrl_channel_address = WTPControlChannelAddress,
 			request_queue = queue:new(),
@@ -251,7 +262,8 @@ listen({accept, dtls, Socket}, State) ->
             ssl:setopts(SslSocket, [{active, true}, {mode, binary}]),
 
             CommonName = common_name(SslSocket),
-            lager:debug("ssl_cert: ~p", [CommonName]),
+	    lager:md([{wtp, CommonName}]),
+	    lager:debug("ssl_cert: ~p", [CommonName]),
 
             maybe_takeover(CommonName),
             capwap_wtp_reg:register_args(CommonName, WTPControlChannelAddress),
@@ -397,7 +409,9 @@ configure({Msg, Seq, Elements, Header}, State) ->
 
 data_check({keep_alive, DataPath, WTPDataChannelAddress, Header, PayLoad}, _From,
 	   State = #state{ctrl_stream = CtrlStreamState}) ->
-    lager:info("in DATA_CHECK got expected keep_alive: ~p", [{Header, PayLoad}]),
+    lager:md([{data_channel_address, WTPDataChannelAddress}]),
+    ?log_capwap_keep_alive(peer_log_str(WTPDataChannelAddress, State), PayLoad, Header),
+
     capwap_wtp_reg:register(WTPDataChannelAddress),
     MTU = capwap_stream:get_mtu(CtrlStreamState),
     capwap_dp:add_wtp(WTPDataChannelAddress, MTU),
@@ -448,8 +462,8 @@ run({new_station, BSS, SA}, _From, State = #state{id = WtpId, session_id = Sessi
         end,
     reply(Reply, run, State0);
 
-run({keep_alive, _DataPath, _WTPDataChannelAddress, Header, PayLoad}, _From, State) ->
-    lager:debug("in RUN got expected keep_alive: ~p", [{Header, PayLoad}]),
+run({keep_alive, _DataPath, WTPDataChannelAddress, Header, PayLoad}, _From, State) ->
+    ?log_capwap_keep_alive(peer_log_str(WTPDataChannelAddress, State), PayLoad, Header),
     reply({reply, {Header, PayLoad}}, run, State).
 
 run(echo_timeout, State) ->
@@ -773,10 +787,13 @@ format_peer({IP, Port}) ->
 format_peer(IP) ->
     io_lib:format("~p", [IP]).
 
-peer_log_str(#state{id = undefined, ctrl_channel_address = WTPControlChannelAddress}) ->
-    io_lib:format("~p", [WTPControlChannelAddress]);
-peer_log_str(#state{id = Id, ctrl_channel_address = WTPControlChannelAddress}) ->
-    io_lib:format("~s[~s]", [Id, format_peer(WTPControlChannelAddress)]).
+peer_log_str(State = #state{ctrl_channel_address = WTPControlChannelAddress}) ->
+    peer_log_str(WTPControlChannelAddress, State).
+
+peer_log_str(Address, #state{id = undefined}) ->
+    io_lib:format("~p", [Address]);
+peer_log_str(Address, #state{id = Id}) ->
+    io_lib:format("~s[~s]", [Id, format_peer(Address)]).
 
 next_state(NextStateName, State)
   when NextStateName == idle; NextStateName == run ->
