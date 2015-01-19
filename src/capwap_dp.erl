@@ -20,7 +20,7 @@
 
 -include("include/capwap_packet.hrl").
 
--record(state, {tref, timeout}).
+-record(state, {state, tref, timeout}).
 
 -define(SERVER, ?MODULE).
 
@@ -77,11 +77,19 @@ call(Args, Timeout) ->
 %% gen_server callbacks
 %%===================================================================
 init([]) ->
-    State = connect(#state{tref = undefined, timeout = 10}),
+    State = connect(#state{state = disconnected, tref = undefined, timeout = 10}),
     {ok, State}.
+
+handle_call(Request, _From, State = #state{state = disconnected}) ->
+    lager:warning("got call ~p without active data path", [Request]),
+    {reply, {error, not_connected}, State};
 
 handle_call(_Request, _From, State) ->
     {reply, ok, State}.
+
+handle_cast(Request, State = #state{state = disconnected}) ->
+    lager:warning("got cast ~p without active data path", [Request]),
+    {noreply, State};
 
 handle_cast(_Request, State) ->
     {noreply, State}.
@@ -98,7 +106,11 @@ handle_info(reconnect, State0) ->
     State1 = connect(State0#state{tref = undefined}),
     {noreply, State1};
 
-handle_info({packet_in,tap, Packet}, State) ->
+handle_info(Info, State = #state{state = disconnected}) ->
+    lager:warning("got info ~p without active data path", [Info]),
+    {noreply, State};
+
+handle_info({packet_in, tap, Packet}, State) ->
     lager:debug("TAP: ~p", [Packet]),
     <<MAC:6/bytes, _/binary>> = Packet,
     case flower_mac_learning:is_broadcast(MAC) of
@@ -180,14 +192,14 @@ connect(State) ->
 	    erlang:monitor_node(Node, true),
 	    clear(),
 	    bind(self()),
-	    State#state{timeout = 10};
+	    State#state{state = connected, timeout = 10};
 	pang ->
 	    lager:warning("Node ~p is down", [Node]),
 	    start_nodedown_timeout(State)
     end.
 
 handle_nodedown(State) ->
-    State.
+    State#state{state = disconnected}.
 
 %%%===================================================================
 %%% Development helper
