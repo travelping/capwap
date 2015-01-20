@@ -3,6 +3,14 @@ capwap
 
 Erlang CAPWAP AC implementation.
 
+Version 1.4.1 - 19 Jan 2015
+---------------------------
+
+* enhance CAPWAP loggging
+* fix capwap-dp resource leakage in del_station event and detach station commands
+* handle disconnected data path gracefully
+* remove openflow left overs
+
 Version 1.4.0 - 13 Jan 2015
 ---------------------------
 

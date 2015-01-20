@@ -3,7 +3,7 @@
 -behavior(gen_server).
 
 %% API
--export([start_link/0]).
+-export([start_link/0, del_flow/6]).
 
 %% C-Node wrapper
 -export([bind/1, clear/0, get_stats/0]).
@@ -20,7 +20,7 @@
 
 -include("include/capwap_packet.hrl").
 
--record(state, {tref, timeout}).
+-record(state, {state, tref, timeout}).
 
 -define(SERVER, ?MODULE).
 
@@ -30,11 +30,12 @@
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
+del_flow(Owner, WTPDataChannelAddress, RadioMAC, MAC, MacMode, TunnelMode) ->
+    gen_server:cast(?SERVER, {del_flow, Owner, WTPDataChannelAddress, RadioMAC, MAC, MacMode, TunnelMode}).
 
 %%===================================================================
 %% C-Node API Wrapper
 %%===================================================================
-
 
 bind(Owner) ->
     call({bind, Owner}).
@@ -77,11 +78,25 @@ call(Args, Timeout) ->
 %% gen_server callbacks
 %%===================================================================
 init([]) ->
-    State = connect(#state{tref = undefined, timeout = 10}),
+    State = connect(#state{state = disconnected, tref = undefined, timeout = 10}),
     {ok, State}.
+
+handle_call(Request, _From, State = #state{state = disconnected}) ->
+    lager:warning("got call ~p without active data path", [Request]),
+    {reply, {error, not_connected}, State};
 
 handle_call(_Request, _From, State) ->
     {reply, ok, State}.
+
+handle_cast(Request, State = #state{state = disconnected}) ->
+    lager:warning("got cast ~p without active data path", [Request]),
+    {noreply, State};
+
+handle_cast({del_flow, _Owner, WTPDataChannelAddress, _RadioMAC, MAC, _MacMode, _TunnelMode}, State) ->
+    %% remove STA from WTP
+    Ret = detach_station(MAC),
+    lager:debug("detach_station(~p, ~p): ~p", [WTPDataChannelAddress, MAC, Ret]),
+    {noreply, State};
 
 handle_cast(_Request, State) ->
     {noreply, State}.
@@ -98,7 +113,11 @@ handle_info(reconnect, State0) ->
     State1 = connect(State0#state{tref = undefined}),
     {noreply, State1};
 
-handle_info({packet_in,tap, Packet}, State) ->
+handle_info(Info, State = #state{state = disconnected}) ->
+    lager:warning("got info ~p without active data path", [Info]),
+    {noreply, State};
+
+handle_info({packet_in, tap, Packet}, State) ->
     lager:debug("TAP: ~p", [Packet]),
     <<MAC:6/bytes, _/binary>> = Packet,
     case flower_mac_learning:is_broadcast(MAC) of
@@ -112,25 +131,25 @@ handle_info({packet_in,tap, Packet}, State) ->
     end,
     {noreply, State};
 
-handle_info({capwap_in, InWTP = {Address, Port}, Msg}, State) ->
-    lager:warning("CAPWAP from ~p: ~p", [InWTP, Msg]),
-    case capwap_ac:handle_data(self(), none, Address, Port, Msg) of
+handle_info({capwap_in, WTPDataChannelAddress, Msg}, State) ->
+    lager:warning("CAPWAP from ~p: ~p", [WTPDataChannelAddress, Msg]),
+    case capwap_ac:handle_data(self(), WTPDataChannelAddress, Msg) of
 	{reply, Reply} ->
 	    %% send Reply to WTP
-	    lager:debug("sendto(~p, ~p)", [InWTP, Reply]),
-	    sendto(InWTP, Reply),
+	    lager:debug("sendto(~p, ~p)", [WTPDataChannelAddress, Reply]),
+	    sendto(WTPDataChannelAddress, Reply),
 	    ok;
 
-	{add_flow, Sw, _Owner, _Address, _Port, RadioMAC, MAC, _MacMode, TunnelMode, Forward} ->
+	{add_flow, _Owner, _WTPDataChannelAddress, _RadioMAC, MAC, _MacMode, _TunnelMode, _Forward} ->
 	    %% add STA to WTP
-	    lager:debug("attach_station(~p, ~p)", [InWTP, MAC]),
-	    attach_station(InWTP, MAC),
+	    lager:debug("attach_station(~p, ~p)", [WTPDataChannelAddress, MAC]),
+	    attach_station(WTPDataChannelAddress, MAC),
 	    ok;
 
-	{del_flow, _Sw, _Owner, _Address, _Port, _RadioMAC, MAC, _MacMode, TunnelMode} ->
+	{del_flow, _Owner, _WTPDataChannelAddress, _RadioMAC, MAC, _MacMode, _TunnelMode} ->
 	    %% remove STA from WTP
-	    lager:debug("detach_station(~p, ~p)", [InWTP, MAC]),
-	    detach_station(MAC),
+	    Ret = detach_station(MAC),
+	    lager:debug("detach_station(~p, ~p): ~p", [WTPDataChannelAddress, MAC, Ret]),
 	    ok;
 
 	_Other ->
@@ -180,14 +199,14 @@ connect(State) ->
 	    erlang:monitor_node(Node, true),
 	    clear(),
 	    bind(self()),
-	    State#state{timeout = 10};
+	    State#state{state = connected, timeout = 10};
 	pang ->
 	    lager:warning("Node ~p is down", [Node]),
 	    start_nodedown_timeout(State)
     end.
 
 handle_nodedown(State) ->
-    State.
+    State#state{state = disconnected}.
 
 %%%===================================================================
 %%% Development helper
@@ -215,8 +234,8 @@ run_loop(WTP) ->
 	    [sendto(WTP, X) || X <- Data],
 	    ok;
 
-	{capwap_in, InWTP, Msg} ->
-	    io:format("CAPWAP From ~p: ~p~n", [InWTP, Msg]),
+	{capwap_in, WTPDataChannelAddress, Msg} ->
+	    io:format("CAPWAP From ~p: ~p~n", [WTPDataChannelAddress, Msg]),
 	    ok;
 
 	Other ->

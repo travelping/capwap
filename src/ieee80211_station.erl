@@ -4,7 +4,7 @@
 
 %% API
 -export([start_link/9, handle_ieee80211_frame/2, handle_ieee802_3_frame/2,
-         set_out_action/3, get_out_action/2, take_over/9, detach/1]).
+         take_over/9, detach/1, delete/1]).
 %% Helpers
 -export([format_mac/1]).
 
@@ -34,8 +34,8 @@
 -record(state, {
           ac,
           ac_monitor,
-          flow_switch,
-          peer_data,
+          data_path,
+          data_channel_address,
 	  wtp_id,
 	  wtp_session_id,
           radio_mac,
@@ -52,8 +52,8 @@
 %%%===================================================================
 %%% API
 %%%===================================================================
-start_link(AC, FlowSwitch, PeerId, WtpId, SessionId, RadioMAC, ClientMAC, MacMode, TunnelMode) ->
-    gen_fsm:start_link(?MODULE, [AC, FlowSwitch, PeerId, WtpId, SessionId, RadioMAC, ClientMAC, MacMode, TunnelMode], [{debug, ?DEBUG_OPTS}]).
+start_link(AC, DataPath, WTPDataChannelAddress, WtpId, SessionId, RadioMAC, ClientMAC, MacMode, TunnelMode) ->
+    gen_fsm:start_link(?MODULE, [AC, DataPath, WTPDataChannelAddress, WtpId, SessionId, RadioMAC, ClientMAC, MacMode, TunnelMode], [{debug, ?DEBUG_OPTS}]).
 
 handle_ieee80211_frame(AC, <<FrameControl:2/bytes,
 			      _Duration:16, DA:6/bytes, SA:6/bytes, BSS:6/bytes,
@@ -80,32 +80,8 @@ handle_ieee802_3_frame(AC, <<_EthDst:6/bytes, EthSrc:6/bytes, _/binary>> = Frame
 handle_ieee802_3_frame(_, _Frame) ->
     {error, unhandled}.
 
-get_wtp_for_client_mac(Sw, ClientMAC) ->
-    case capwap_station_reg:lookup(ClientMAC) of
-	{ok, Pid} ->
-	    gen_fsm:sync_send_all_state_event(Pid, {get_wtp_for_client_mac, Sw});
-	_ ->
-	    not_found
-    end.
-
-set_out_action(Sw, ClientMAC, Action) ->
-    case capwap_station_reg:lookup(ClientMAC) of
-	{ok, Pid} ->
-	    gen_fsm:sync_send_all_state_event(Pid, {set_out_action, Sw, Action});
-	_ ->
-	    not_found
-    end.
-
-get_out_action(Sw, ClientMAC) ->
-    case capwap_station_reg:lookup(ClientMAC) of
-	{ok, Pid} ->
-	    gen_fsm:sync_send_all_state_event(Pid, {get_out_action, Sw});
-	_ ->
-	    not_found
-    end.
-
-take_over(Pid, AC, FlowSwitch, PeerId, WtpId, SessionId, RadioMAC, MacMode, TunnelMode) ->
-    gen_fsm:sync_send_event(Pid, {take_over, AC, FlowSwitch, PeerId, WtpId, SessionId, RadioMAC, MacMode, TunnelMode}).
+take_over(Pid, AC, DataPath, WTPDataChannelAddress, WtpId, SessionId, RadioMAC, MacMode, TunnelMode) ->
+    gen_fsm:sync_send_event(Pid, {take_over, AC, DataPath, WTPDataChannelAddress, WtpId, SessionId, RadioMAC, MacMode, TunnelMode}).
 
 detach(ClientMAC) ->
     case capwap_station_reg:lookup(ClientMAC) of
@@ -115,16 +91,19 @@ detach(ClientMAC) ->
 	    not_found
     end.
 
+delete(Pid) when is_pid(Pid) ->
+    gen_fsm:sync_send_event(Pid, delete).
+
 %%%===================================================================
 %%% gen_fsm callbacks
 %%%===================================================================
-init([AC, FlowSwitch, PeerId, WtpId, SessionId, RadioMAC, ClientMAC, MacMode, TunnelMode]) ->
+init([AC, DataPath, WTPDataChannelAddress, WtpId, SessionId, RadioMAC, ClientMAC, MacMode, TunnelMode]) ->
     lager:debug("Register station ~p as ~w", [{AC, RadioMAC, ClientMAC}, self()]),
     capwap_station_reg:register(ClientMAC),
     capwap_station_reg:register(AC, ClientMAC),
     ACMonitor = erlang:monitor(process, AC),
-    State = #state{ac = AC, ac_monitor = ACMonitor, flow_switch = FlowSwitch,
-		   peer_data = PeerId, wtp_id = WtpId, wtp_session_id = SessionId,
+    State = #state{ac = AC, ac_monitor = ACMonitor, data_path = DataPath,
+		   data_channel_address = WTPDataChannelAddress, wtp_id = WtpId, wtp_session_id = SessionId,
                    radio_mac = RadioMAC, mac = ClientMAC, mac_mode = MacMode, tunnel_mode = TunnelMode},
     {ok, initial_state(MacMode), State}.
 
@@ -159,7 +138,7 @@ init_auth(Event, From, State)
     lager:debug("in INIT_AUTH got TAKE-OVER: ~p", [Event]),
     handle_take_over(Event, From, State);
 
-init_auth(detach, _From, State) ->
+init_auth(Event, _From, State) when Event == detach; Event == delete ->
     {reply, {error, not_attached}, init_auth, State, ?IDLE_TIMEOUT};
 
 init_auth(Event, _From, State) ->
@@ -234,7 +213,7 @@ init_assoc(Event, From, State)
     lager:debug("in INIT_ASSOC got TAKE-OVER: ~p", [Event]),
     handle_take_over(Event, From, State);
 
-init_assoc(detach, _From, State) ->
+init_assoc(Event, _From, State) when Event == detach; Event == delete ->
     {reply, {error, not_attached}, init_assoc, State, ?IDLE_TIMEOUT};
 
 init_assoc(Event, _From, State) ->
@@ -258,7 +237,7 @@ init_start(Event, From, State)
     lager:debug("in INIT_START got TAKE-OVER: ~p", [Event]),
     handle_take_over(Event, From, State);
 
-init_start(detach, _From, State) ->
+init_start(Event, _From, State) when Event == detach; Event == delete ->
     {reply, {error, not_attached}, init_start, State, ?IDLE_TIMEOUT};
 
 init_start(Event, _From, State) ->
@@ -297,12 +276,17 @@ connected(Event, From, State)
     ctld_disassociation(State),
     handle_take_over(Event, From, State);
 
-connected(detach, _From, State = #state{ac = AC, mac = MAC, mac_mode = MacMode}) ->
-		 Header = #capwap_header{
-			     flags = [{frame, '802.3'}],
-			     radio_id = 1,
-			     wb_id = 1},
-    gen_fsm:send_event(AC, {del_station, Header, MAC}),
+connected(delete, _From, State = #state{ac = AC, radio_mac = RadioMAC,
+						mac = MAC, mac_mode = MacMode,
+						tunnel_mode = TunnelMode}) ->
+    gen_fsm:send_event(AC, {delete_station, 1, 1, RadioMAC, MAC, MacMode, TunnelMode}),
+    ctld_disassociation(State),
+    {reply, ok, initial_state(MacMode), State, ?SHUTDOWN_TIMEOUT};
+
+connected(detach, _From, State = #state{ac = AC, radio_mac = RadioMAC,
+					mac = MAC, mac_mode = MacMode,
+					tunnel_mode = TunnelMode}) ->
+    gen_fsm:send_event(AC, {detach_station, 1, 1, RadioMAC, MAC, MacMode, TunnelMode}),
     ctld_disassociation(State),
     {reply, ok, initial_state(MacMode), State, ?SHUTDOWN_TIMEOUT};
 
@@ -313,50 +297,24 @@ connected(Event, _From, State) ->
 handle_event(_Event, StateName, State) ->
     {next_state, StateName, State, ?IDLE_TIMEOUT}.
 
-handle_sync_event({get_wtp_for_client_mac, _Sw}, _From, StateName,
-                  State = #state{ac = AC, radio_mac = RadioMAC}) ->
-    case capwap_ac:get_peer_data(AC) of
-        {ok, {Address, Port}} ->
-            Reply = {ok, Address, Port, RadioMAC},
-            {reply, Reply, StateName, State, ?IDLE_TIMEOUT};
-        Other ->
-            {reply, Other, StateName, State, ?IDLE_TIMEOUT}
-    end;
-
-handle_sync_event({set_out_action, _Sw, Action}, _From, StateName, State) ->
-    {reply, ok, StateName, State#state{out_action = Action}, ?IDLE_TIMEOUT};
-
-handle_sync_event({get_out_action, _Sw}, _From, StateName, State) ->
-    {reply, State#state.out_action, StateName, State, ?IDLE_TIMEOUT};
-
 handle_sync_event(_Event, _From, StateName, State) ->
     Reply = ok,
     {reply, Reply, StateName, State, ?IDLE_TIMEOUT}.
 
-handle_info({'DOWN', ACMonitor, process, AC, _Info}, StateName,
-            State = #state{ac = AC, ac_monitor = ACMonitor,
-			   flow_switch = FlowSwitch, peer_data = PeerId,
-                           radio_mac = BSS, mac = MAC,
-                           mac_mode = MacMode, tunnel_mode = TunnelMode}) ->
+handle_info({'DOWN', _ACMonitor, process, AC, _Info}, _StateName,
+            State = #state{ac = AC}) ->
     lager:warning("AC died ~w", [AC]),
-
-    if
-        StateName == connected ->
-            %% if the AC dies in connected whe have to tell the Switch directly
-            %% to avoid a race
-            FlowSwitch ! {station_down, PeerId, BSS, MAC, MacMode, TunnelMode};
-        true ->
-            ok
-    end,
-
     {stop, normal, State};
 
 handle_info(Info, StateName, State) ->
     lager:warning("in State ~p unexpected Info: ~p", [StateName, Info]),
     {next_state, StateName, State, ?IDLE_TIMEOUT}.
 
-terminate(_Reason, StateName, State = #state{ac = AC, mac = MAC}) ->
+terminate(_Reason, StateName, State = #state{ac = AC, radio_mac = RadioMAC,
+					     mac = MAC, mac_mode = MacMode,
+					     tunnel_mode = TunnelMode}) ->
     if StateName == connected ->
+	    gen_fsm:send_event(AC, {detach_station, 1, 1, RadioMAC, MAC, MacMode, TunnelMode}),
 	    ctld_disassociation(State);
        true ->
 	    ok
@@ -450,9 +408,9 @@ ieee80211_request(_AC, FrameType, DA, SA, BSS, FromDS, ToDS, Frame) ->
     lager:warning("unhandled IEEE 802.11 Frame: ~p", [{FrameType, DA, SA, BSS, FromDS, ToDS, Frame}]),
     {error, unhandled}.
 
-handle_take_over({take_over, AC, FlowSwitch, PeerId, WtpId, SessionId, RadioMAC, MacMode, TunnelMode}, _From,
+handle_take_over({take_over, AC, DataPath, WTPDataChannelAddress, WtpId, SessionId, RadioMAC, MacMode, TunnelMode}, _From,
 		 State0 = #state{ac = OldAC, ac_monitor = OldACMonitor,
-				 flow_switch = _OldFlowSwitch,
+				 data_path = _OldDataPath,
 				 radio_mac = OldRadioMAC, mac = ClientMAC,
 				 mac_mode = _OldMacMode, tunnel_mode = _OldTunnelMode}) ->
     %% NOTE: we could build a real WIFI switch when we could build OF rules that sends
@@ -471,7 +429,7 @@ handle_take_over({take_over, AC, FlowSwitch, PeerId, WtpId, SessionId, RadioMAC,
     ACMonitor = erlang:monitor(process, AC),
 
     State = State0#state{ac = AC, ac_monitor = ACMonitor,
-			 flow_switch = FlowSwitch, peer_data = PeerId,
+			 data_path = DataPath, data_channel_address = WTPDataChannelAddress,
 			 wtp_id = WtpId, wtp_session_id = SessionId,
 			 radio_mac = RadioMAC, mac_mode = MacMode,
 			 tunnel_mode = TunnelMode},
