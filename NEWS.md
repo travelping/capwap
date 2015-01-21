@@ -3,6 +3,11 @@ capwap
 
 Erlang CAPWAP AC implementation.
 
+Version 1.4.2 - 21 Jan 2015
+---------------------------
+
+* add list_stations DP function
+
 Version 1.4.1 - 19 Jan 2015
 ---------------------------
 

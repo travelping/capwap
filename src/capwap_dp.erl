@@ -8,7 +8,7 @@
 %% C-Node wrapper
 -export([bind/1, clear/0, get_stats/0]).
 -export([add_wtp/2, del_wtp/1, get_wtp/1, list_wtp/0]).
--export([attach_station/2, detach_station/1]).
+-export([attach_station/2, detach_station/1, list_stations/0]).
 -export([sendto/2]).
 
 %% gen_server callbacks
@@ -60,6 +60,9 @@ attach_station(WTP, STA) ->
 
 detach_station(STA) ->
     call({detach_station, STA}).
+
+list_stations() ->
+    call({list_stations}).
 
 sendto(WTP, Msg) when is_binary(Msg) ->
     call({sendto, WTP, Msg}).
@@ -142,8 +145,8 @@ handle_info({capwap_in, WTPDataChannelAddress, Msg}, State) ->
 
 	{add_flow, _Owner, _WTPDataChannelAddress, _RadioMAC, MAC, _MacMode, _TunnelMode, _Forward} ->
 	    %% add STA to WTP
-	    lager:debug("attach_station(~p, ~p)", [WTPDataChannelAddress, MAC]),
-	    attach_station(WTPDataChannelAddress, MAC),
+	    Ret = attach_station(WTPDataChannelAddress, MAC),
+	    lager:debug("attach_station(~p, ~p): ~p", [WTPDataChannelAddress, MAC, Ret]),
 	    ok;
 
 	{del_flow, _Owner, _WTPDataChannelAddress, _RadioMAC, MAC, _MacMode, _TunnelMode} ->
