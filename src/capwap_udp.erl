@@ -403,7 +403,7 @@ handle_first_packet(WTPControlChannelAddress, udp, Packet, _State) ->
 handle_first_packet({Address, Port}, dtls, Packet, _State) ->
     lager:debug(?BLUE "handle_first_packet: DTLS CAPWAP" ?WHITE),
     try
-        ssl_datagram:handle_packet(Address, Port, Packet)
+        dtlsex_datagram:handle_packet(Address, Port, Packet)
     catch
         E:C ->
             lager:error("Error ~p:~p handling DTLS packet ~p", [E, C, Packet]),

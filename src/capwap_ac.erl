@@ -255,11 +255,11 @@ listen({accept, dtls, Socket}, State) ->
     lager:info("ssl_accept on: ~p", [Socket]),
 
     {ok, Session} = start_session(Socket, State),
-    case ssl:ssl_accept(Socket, mk_ssl_opts(Session), ?SSL_ACCEPT_TIMEOUT) of
+    case dtlsex:ssl_accept(Socket, mk_ssl_opts(Session), ?SSL_ACCEPT_TIMEOUT) of
         {ok, SslSocket} ->
             lager:info("ssl_accept: ~p", [SslSocket]),
-            {ok, WTPControlChannelAddress} = ssl:peername(SslSocket),
-            ssl:setopts(SslSocket, [{active, true}, {mode, binary}]),
+            {ok, WTPControlChannelAddress} = dtlsex:peername(SslSocket),
+            dtlsex:setopts(SslSocket, [{active, true}, {mode, binary}]),
 
             CommonName = common_name(SslSocket),
 	    lager:md([{wtp, CommonName}]),
@@ -1271,12 +1271,12 @@ stream_send(Msg, State = #state{ctrl_stream = CtrlStreamState0, socket = Socket}
 socket_send({udp, Socket}, Data) ->
     capwap_udp:send(Socket, Data);
 socket_send({dtls, Socket}, Data) ->
-    ssl:send(Socket, Data).
+    dtlsex:send(Socket, Data).
 
 socket_close({udp, Socket}) ->
     capwap_udp:close(Socket);
 socket_close({dtls, Socket}) ->
-    ssl:close(Socket);
+    dtlsex:close(Socket);
 socket_close(undefined) ->
     ok;
 socket_close(Socket) ->
@@ -1284,7 +1284,7 @@ socket_close(Socket) ->
     ok.
 
 common_name(SslSocket) ->
-    {ok, Cert} = ssl:peercert(SslSocket),
+    {ok, Cert} = dtlsex:peercert(SslSocket),
     #'OTPCertificate'{
        tbsCertificate =
        #'OTPTBSCertificate'{
@@ -1297,7 +1297,7 @@ common_name(SslSocket) ->
 
 user_lookup(srp, Username, _UserState) ->
     lager:debug("srp: ~p", [Username]),
-    Salt = ssl:random_bytes(16),
+    Salt = dtlsex:random_bytes(16),
     UserPassHash = crypto:hash(sha, [Salt, crypto:hash(sha, [Username, <<$:>>, <<"secret">>])]),
     {ok, {srp_1024, Salt, UserPassHash}};
 

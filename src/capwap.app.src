@@ -5,6 +5,7 @@
     {applications, [
         kernel,
         stdlib,
+        dtlsex,
 	lager,
 	flower,
         ssl,
