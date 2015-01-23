@@ -3,6 +3,11 @@ capwap
 
 Erlang CAPWAP AC implementation.
 
+Version 1.5.0 - xx Feb 2015
+---------------------------
+
+* upgrade to Erlang R17
+
 Version 1.4.2 - 21 Jan 2015
 ---------------------------
 
