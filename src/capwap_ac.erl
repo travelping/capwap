@@ -312,7 +312,7 @@ idle({join_request, Seq, Elements, #capwap_header{
     RespElements = ac_info_version(join, Version) ++ [#result_code{result_code = 0}],
     Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
     State = send_response(Header, join_response, Seq, RespElements, State1),
-    SessionOpts = wtp_accounting_infos(Elements, [{'TP-CAPWAP-Radio-Id', RadioId}]),
+    SessionOpts = wtp_accounting_infos(Elements, [{'CAPWAP-Radio-Id', RadioId}]),
     lager:info("WTP Session Start Opts: ~p", [SessionOpts]),
     ctld_session:start(Session, SessionOpts),
     next_state(join, State);
@@ -336,8 +336,8 @@ join(timeout, State) ->
 join({configuration_status_request, Seq, Elements, #capwap_header{
 					   radio_id = RadioId, wb_id = WBID, flags = Flags}},
      State) ->
-    SessionAttrs = ['TP-CAPWAP-Power-Save-Idle-Timeout',
-                    'TP-CAPWAP-Power-Save-Busy-Timeout',
+    SessionAttrs = ['CAPWAP-Power-Save-Idle-Timeout',
+                    'CAPWAP-Power-Save-Busy-Timeout',
                     'CAPWAP-Echo-Request-Interval',
                     'CAPWAP-Discovery-Interval',
                     'CAPWAP-Idle-Timeout',
@@ -436,7 +436,7 @@ run({new_station, BSS, SA}, _From, State = #state{id = WtpId, session_id = Sessi
                                                   station_count  = StationCount,
                                                   session = Session}) ->
     lager:info("in RUN got new_station: ~p", [SA]),
-    {ok, MaxStations} = ctld_session:get(Session, 'TP-CAPWAP-Max-WIFI-Clients'),
+    {ok, MaxStations} = ctld_session:get(Session, 'CAPWAP-Max-WIFI-Clients'),
     WTPFullPred = StationCount + 1 > MaxStations,
     %% we have to repeat the search again to avoid a race
     lager:debug("search for station ~p", [{self(), SA}]),
@@ -540,7 +540,7 @@ run({wtp_event_request, Seq, Elements, RequestHeader =
 run(configure, State = #state{id = WtpId, session = Session}) ->
     lager:debug("configure WTP: ~p", [WtpId]),
     RadioId = 1,
-    {ok, SSID} = ctld_session:get(Session, 'TP-CAPWAP-SSID'),
+    {ok, SSID} = ctld_session:get(Session, 'CAPWAP-SSID'),
     State1 = internal_add_wlan(State, SSID, RadioId),
     next_state(run, State1);
 
@@ -979,11 +979,11 @@ handle_wtp_stats_event(#gps_last_acquired_position{timestamp = _EventTimestamp,
     case [string:strip(V) || V <- string:tokens(binary_to_list(GpsString), ",:")] of
         [_, GPSTime, Latitude, Longitude, Hdop, Altitude, _Fix, _Cog, _Spkm, _Spkn, GPSDate, _Nsat] ->
 	    GPSTimestamp = gpsutc_to_iso(GPSTime, GPSDate),
-            Opts = [{'TP-CAPWAP-GPS-Timestamp', GPSTimestamp},
-                    {'TP-CAPWAP-GPS-Latitude', Latitude},
-                    {'TP-CAPWAP-GPS-Longitude', Longitude},
-                    {'TP-CAPWAP-GPS-Altitude', Altitude},
-                    {'TP-CAPWAP-GPS-Hdop', Hdop}
+            Opts = [{'CAPWAP-GPS-Timestamp', GPSTimestamp},
+                    {'CAPWAP-GPS-Latitude', Latitude},
+                    {'CAPWAP-GPS-Longitude', Longitude},
+                    {'CAPWAP-GPS-Altitude', Altitude},
+                    {'CAPWAP-GPS-Hdop', Hdop}
                    ],
             lager:debug("WTP Event Opts: ~p", [Opts]),
             [ctld_session:to_session(Opts) | SOptsList];
@@ -995,28 +995,28 @@ handle_wtp_stats_event(#gps_last_acquired_position{timestamp = _EventTimestamp,
 handle_wtp_stats_event(#tp_wtp_wwan_statistics_0_9{timestamp = Timestamp, wwan_id = WWanId, rat = RAT,
 					     rssi = RSSi, lac = LAC, cell_id = CellId},
 		 _Header, SOptsList) ->
-    Opts = [{'TP-CAPWAP-Timestamp', Timestamp},
-            {'TP-CAPWAP-WWAN-Id',   WWanId},
-            {'TP-CAPWAP-WWAN-RAT',       RAT},
-            {'TP-CAPWAP-WWAN-RSSi',      RSSi},
-            {'TP-CAPWAP-WWAN-LAC',       LAC},
-            {'TP-CAPWAP-WWAN-Cell-Id',   CellId}],
+    Opts = [{'CAPWAP-Timestamp', Timestamp},
+            {'CAPWAP-WWAN-Id',   WWanId},
+            {'CAPWAP-WWAN-RAT',       RAT},
+            {'CAPWAP-WWAN-RSSi',      RSSi},
+            {'CAPWAP-WWAN-LAC',       LAC},
+            {'CAPWAP-WWAN-Cell-Id',   CellId}],
     lager:debug("WTP Event Opts: ~p", [Opts]),
     [ctld_session:to_session(Opts) | SOptsList];
 handle_wtp_stats_event(#tp_wtp_wwan_statistics{timestamp = Timestamp, wwan_id = WWanId, rat = RAT,
 					 rssi = RSSi, creg = CREG, lac = LAC, latency = Latency,
 					 mcc = MCC, mnc = MNC, cell_id = CellId},
 		 _Header, SOptsList) ->
-    Opts = [{'TP-CAPWAP-Timestamp', Timestamp},
-            {'TP-CAPWAP-WWAN-Id',   WWanId},
-            {'TP-CAPWAP-WWAN-RAT',       RAT},
-            {'TP-CAPWAP-WWAN-RSSi',      RSSi},
-            {'TP-CAPWAP-WWAN-CREG',      CREG},
-            {'TP-CAPWAP-WWAN-LAC',       LAC},
-            {'TP-CAPWAP-WWAN-Latency',   Latency},
-            {'TP-CAPWAP-WWAN-MCC',       MCC},
-            {'TP-CAPWAP-WWAN-MNC',       MNC},
-            {'TP-CAPWAP-WWAN-Cell-Id',   CellId}],
+    Opts = [{'CAPWAP-Timestamp', Timestamp},
+            {'CAPWAP-WWAN-Id',   WWanId},
+            {'CAPWAP-WWAN-RAT',       RAT},
+            {'CAPWAP-WWAN-RSSi',      RSSi},
+            {'CAPWAP-WWAN-CREG',      CREG},
+            {'CAPWAP-WWAN-LAC',       LAC},
+            {'CAPWAP-WWAN-Latency',   Latency},
+            {'CAPWAP-WWAN-MCC',       MCC},
+            {'CAPWAP-WWAN-MNC',       MNC},
+            {'CAPWAP-WWAN-Cell-Id',   CellId}],
     lager:debug("WTP Event Opts: ~p", [Opts]),
     [ctld_session:to_session(Opts) | SOptsList];
 handle_wtp_stats_event(_Event, _Header, SOptsList) ->
@@ -1079,7 +1079,7 @@ wtp_accounting_infos([#wtp_descriptor{sub_elements = SubElements}|Elements], Acc
     wtp_accounting_infos(Elements, Acc1);
 wtp_accounting_infos([{session_id, Value}|Elements], Acc)
   when is_integer(Value) ->
-    Acc1 = [{'TP-CAPWAP-Session-Id', <<Value:128>>}|Acc],
+    Acc1 = [{'CAPWAP-Session-Id', <<Value:128>>}|Acc],
     wtp_accounting_infos(Elements, Acc1);
 wtp_accounting_infos([_|Elements], Acc) ->
     wtp_accounting_infos(Elements, Acc).
@@ -1493,10 +1493,10 @@ create_initial_ctld_params(CommonName) ->
                 undefined -> DefaultSSID;
                 _ -> SSID
             end,
-    [{'TP-CAPWAP-Power-Save-Idle-Timeout', PsmIdle},
-     {'TP-CAPWAP-Power-Save-Busy-Timeout', PsmBusy},
-     {'TP-CAPWAP-Max-WIFI-Clients', MaxWifi},
-     {'TP-CAPWAP-SSID', SSID2},
+    [{'CAPWAP-Power-Save-Idle-Timeout', PsmIdle},
+     {'CAPWAP-Power-Save-Busy-Timeout', PsmBusy},
+     {'CAPWAP-Max-WIFI-Clients', MaxWifi},
+     {'CAPWAP-SSID', SSID2},
      {'CAPWAP-Echo-Request-Interval', EchoRequestInterval},
      {'CAPWAP-Discovery-Interval', DiscoveryInterval},
      {'CAPWAP-Idle-Timeout', IdleTimeout},
