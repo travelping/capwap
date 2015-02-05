@@ -23,6 +23,8 @@
 -include("capwap_debug.hrl").
 -include("capwap_packet.hrl").
 
+-import(ctld_session, [to_session/1]).
+
 -define(SERVER, ?MODULE).
 
 %% TODO: convert constants into configuration values
@@ -237,7 +239,7 @@ listen({accept, udp, Socket}, State0) ->
     Opts = [{'Username', PeerName},
 	    {'Authentication-Method', {'TLS', 'Pre-Shared-Key'}}
             | create_initial_ctld_params(PeerName)],
-    case ctld_session:authenticate(Session, ctld_session:to_session(Opts)) of
+    case ctld_session:authenticate(Session, to_session(Opts)) of
 	success ->
 	    lager:info("AuthResult: success"),
 	    State1 = State0#state{session = Session,
@@ -314,7 +316,7 @@ idle({join_request, Seq, Elements, #capwap_header{
     State = send_response(Header, join_response, Seq, RespElements, State1),
     SessionOpts = wtp_accounting_infos(Elements, [{'CAPWAP-Radio-Id', RadioId}]),
     lager:info("WTP Session Start Opts: ~p", [SessionOpts]),
-    ctld_session:start(Session, SessionOpts),
+    ctld_session:start(Session, to_session(SessionOpts)),
     next_state(join, State);
 
 idle(Event, State) when ?IS_RUN_CONTROL_EVENT(Event) ->
@@ -336,6 +338,7 @@ join(timeout, State) ->
 join({configuration_status_request, Seq, Elements, #capwap_header{
 					   radio_id = RadioId, wb_id = WBID, flags = Flags}},
      State) ->
+    SessionOpts = ctld_session:get(State#state.session),
     SessionAttrs = ['CAPWAP-Power-Save-Idle-Timeout',
                     'CAPWAP-Power-Save-Busy-Timeout',
                     'CAPWAP-Echo-Request-Interval',
@@ -345,16 +348,16 @@ join({configuration_status_request, Seq, Elements, #capwap_header{
                     'CAPWAP-AC-Join-Timeout'],
     [PSMIdleTimeout, PSMBusyTimeout, EchoRequestInterval, DiscoveryInterval,
      IdleTimeout, DataChannelDeadInterval, ACJoinTimeout] =
-        [Val || {ok, Val} <- [ctld_session:get(State#state.session, Key) || Key <- SessionAttrs]],
+        [Val || {ok, Val} <- [ctld_session:attr_get(Key, SessionOpts) || Key <- SessionAttrs]],
     %% only add admin pw when defined
-    AdminPwIE = case ctld_session:get(State#state.session, 'CAPWAP-Admin-PW') of
+    AdminPwIE = case ctld_session:attr_get('CAPWAP-Admin-PW', SessionOpts) of
                     {ok, Val} when is_binary(Val) ->
                         [#wtp_administrator_password_settings{password = Val}];
                     _ ->
                         []
                 end,
     AdminWlans = get_admin_wifi_updates(State, Elements),
-    {ok, WlanHoldTime} = ctld_session:get(State#state.session, 'CAPWAP-Wlan-Hold-Time'),
+    {ok, WlanHoldTime} = ctld_session:attr_get('CAPWAP-Wlan-Hold-Time', SessionOpts),
     RespElements = [%%#ac_ipv4_list{ip_address = [<<0,0,0,0>>]},
                     #timers{discovery = DiscoveryInterval,
                             echo_request = EchoRequestInterval},
@@ -752,7 +755,7 @@ terminate(Reason, StateName,
         _ ->
             ok
     end,
-    if Session /= undefined -> ctld_session:stop(Session, []);
+    if Session /= undefined -> ctld_session:stop(Session, to_session([]));
        true -> ok
     end,
     socket_close(Socket),
@@ -986,7 +989,7 @@ handle_wtp_stats_event(#gps_last_acquired_position{timestamp = _EventTimestamp,
                     {'CAPWAP-GPS-Hdop', Hdop}
                    ],
             lager:debug("WTP Event Opts: ~p", [Opts]),
-            [ctld_session:to_session(Opts) | SOptsList];
+            [to_session(Opts) | SOptsList];
         _ ->
             lager:error("Unable to parse GPSATC string from WTP! String: ~p", [GpsString]),
             SOptsList
@@ -1002,7 +1005,7 @@ handle_wtp_stats_event(#tp_wtp_wwan_statistics_0_9{timestamp = Timestamp, wwan_i
             {'CAPWAP-WWAN-LAC',       LAC},
             {'CAPWAP-WWAN-Cell-Id',   CellId}],
     lager:debug("WTP Event Opts: ~p", [Opts]),
-    [ctld_session:to_session(Opts) | SOptsList];
+    [to_session(Opts) | SOptsList];
 handle_wtp_stats_event(#tp_wtp_wwan_statistics{timestamp = Timestamp, wwan_id = WWanId, rat = RAT,
 					 rssi = RSSi, creg = CREG, lac = LAC, latency = Latency,
 					 mcc = MCC, mnc = MNC, cell_id = CellId},
@@ -1018,7 +1021,7 @@ handle_wtp_stats_event(#tp_wtp_wwan_statistics{timestamp = Timestamp, wwan_id = 
             {'CAPWAP-WWAN-MNC',       MNC},
             {'CAPWAP-WWAN-Cell-Id',   CellId}],
     lager:debug("WTP Event Opts: ~p", [Opts]),
-    [ctld_session:to_session(Opts) | SOptsList];
+    [to_session(Opts) | SOptsList];
 handle_wtp_stats_event(_Event, _Header, SOptsList) ->
     SOptsList.
 
@@ -1306,7 +1309,7 @@ user_lookup(psk, Username, Session) ->
     Opts = [{'Username', Username},
 	    {'Authentication-Method', {'TLS', 'Pre-Shared-Key'}}
             | create_initial_ctld_params(Username)],
-    case ctld_session:authenticate(Session, ctld_session:to_session(Opts)) of
+    case ctld_session:authenticate(Session, to_session(Opts)) of
 	success ->
 	    lager:info("AuthResult: success"),
 	    case ctld_session:get(Session, 'TLS-Pre-Shared-Key') of
@@ -1349,7 +1352,7 @@ verify_cert_auth_cn(CommonName, Session) ->
     Opts = [{'Username', CommonName},
 	    {'Authentication-Method', {'TLS', 'X509-Subject-CN'}}
             | create_initial_ctld_params(CommonName)],
-    case ctld_session:authenticate(Session, ctld_session:to_session(Opts)) of
+    case ctld_session:authenticate(Session, to_session(Opts)) of
         success ->
             lager:info("AuthResult: success for ~p", [CommonName]),
             {valid, Session};
@@ -1414,10 +1417,28 @@ tunnel_medium({_,_,_,_}) ->
 tunnel_medium({_,_,_,_,_,_,_,_}) ->
     'IPv6'.
 
+accounting_update(WTP, SessionOpts) ->
+    case get_data_channel_address(WTP) of
+	{ok, WTPDataChannelAddress} ->
+	    WTPStats = capwap_dp:get_wtp(WTPDataChannelAddress),
+	    lager:debug("WTP: ~p, ~p, ~p", [WTP, WTPDataChannelAddress, WTPStats]),
+	    {_, _STAs, _RefCnt, _MTU, Stats} = WTPStats,
+	    {RcvdPkts, SendPkts, RcvdBytes, SendBytes,
+	     _RcvdFragments, _SendFragments,
+	     _ErrInvalidStation, _ErrFragmentInvalid, _ErrFragmentTooOld} = Stats,
+	    Acc = [{'InPackets',  RcvdPkts},
+		   {'OutPackets', SendPkts},
+		   {'InOctets',   RcvdBytes},
+		   {'OutOctets',  SendBytes}],
+	    ctld_session:merge(SessionOpts, to_session(Acc));
+	_ ->
+	    SessionOpts
+    end.
+
 start_session(Socket, _State) ->
+    AccUpd = {'Accouting-Update-Fun', fun accounting_update/2},
     SessionData = session_info(Socket),
-    {ok, {Provider, ProviderOpts}} = application:get_env(ctld_provider),
-    ctld_session_sup:new_session(?MODULE, self(), Provider, ProviderOpts, SessionData).
+    ctld_session_sup:new_session(self(), to_session([AccUpd | SessionData])).
 
 session_info(Socket) ->
     {ok, {Address, _Port}} = capwap_udp:peername(Socket),
