@@ -1410,7 +1410,7 @@ mk_ssl_opts(Session) ->
     ].
 
 ip2str(IP) ->
-    inet_parse:ntoa(IP).
+    iolist_to_binary(inet_parse:ntoa(IP)).
 
 tunnel_medium({_,_,_,_}) ->
     'IPv4';

@@ -23,6 +23,8 @@
 -include("capwap_debug.hrl").
 -include("capwap_packet.hrl").
 
+-import(ctld_session, [to_session/1, attr_get/2]).
+
 -define(SERVER, ?MODULE).
 -define(IDLE_TIMEOUT, 30 * 1000).
 -define(SHUTDOWN_TIMEOUT, 1 * 1000).
@@ -34,6 +36,7 @@
 -record(state, {
           ac,
           ac_monitor,
+	  ctld_session,
           data_path,
           data_channel_address,
 	  wtp_id,
@@ -175,9 +178,9 @@ init_assoc(Event = {FrameType, _DA, _SA, BSS, 0, 0, _Frame}, _From,
     %%   necessary, and upon receipt of a failed Association Response frame
     %%   from the AC, the WTP MUST send a Disassociation frame to the station.
 
-    ctld_association(State),
+    NewState = ctld_association(State),
 
-    {reply, {add, BSS, MAC, MacMode, TunnelMode}, connected, State, ?IDLE_TIMEOUT};
+    {reply, {add, BSS, MAC, MacMode, TunnelMode}, connected, NewState, ?IDLE_TIMEOUT};
 
 init_assoc(Event = {'Authentication', _DA, _SA, _BSS, 0, 0, _Frame}, From, State) ->
     lager:debug("in INIT_ASSOC got Authentication Request: ~p", [Event]),
@@ -451,15 +454,53 @@ encode_auth_frame(#auth_frame{algo   = Algo, seq_no = SeqNo,
       Status:16/little-integer, Params/binary>>.
 
 %% Accounting Support
+ip2str(IP) ->
+    iolist_to_binary(inet_parse:ntoa(IP)).
 
-ctld_association(#state{mac = MAC, wtp_id = WtpId, wtp_session_id = WtpSessionId}) ->
-    {ok, {_, ProviderOpts}} = application:get_env(ctld_provider),
-    ctld_station_session:association(format_mac(MAC), WtpId, WtpSessionId, ProviderOpts),
-    ok.
+tunnel_medium({_,_,_,_}) ->
+    'IPv4';
+tunnel_medium({_,_,_,_,_,_,_,_}) ->
+    'IPv6'.
 
-ctld_disassociation(#state{mac = MAC, wtp_id = WtpId, wtp_session_id = WtpSessionId}) ->
-    {ok, {_, ProviderOpts}} = application:get_env(ctld_provider),
-    ctld_station_session:disassociation(format_mac(MAC), WtpId, WtpSessionId, ProviderOpts),
+add_tunnel_info({Address, _Port}, SessionData) ->
+    [{'Tunnel-Type', 'CAPWAP'},
+     {'Tunnel-Medium-Type', tunnel_medium(Address)},
+     {'Tunnel-Client-Endpoint', ip2str(Address)}
+     |SessionData].
+
+accounting_update(STA, SessionOpts) ->
+    lager:debug("accounting_update: ~p, ~p", [STA, attr_get('MAC', SessionOpts)]),
+    case attr_get('MAC', SessionOpts) of
+	{ok, MAC} ->
+	    STAStats = capwap_dp:get_station(MAC),
+	    lager:debug("STA Stats: ~p", [STAStats]),
+	    {_MAC, {RcvdPkts, SendPkts, RcvdBytes, SendBytes}} = STAStats,
+	    Acc = [{'InPackets',  RcvdPkts},
+		    {'OutPackets', SendPkts},
+		    {'InOctets',   RcvdBytes},
+		    {'OutOctets',  SendBytes}],
+	    ctld_session:merge(SessionOpts, to_session(Acc));
+	_ ->
+	    SessionOpts
+    end.
+
+ctld_association(State = #state{mac = MAC, data_channel_address = WTPDataChannelAddress,
+				wtp_id = WtpId, wtp_session_id = WtpSessionId}) ->
+    MACStr = format_mac(MAC),
+    SessionData0 = [{'Accouting-Update-Fun', fun accounting_update/2},
+		    {'MAC', MAC},
+		    {'Username', MACStr},
+		    {'Calling-Station', MACStr},
+		    {'Location-Id', WtpId},
+		    {'CAPWAP-Session-Id', <<WtpSessionId:128>>}],
+    SessionData1 = add_tunnel_info(WTPDataChannelAddress, SessionData0),
+    {ok, Session} = ctld_session_sup:new_session(self(), to_session(SessionData1)),
+    lager:info("NEW session for ~w at ~p", [MAC, Session]),
+    ctld_session:start(Session, to_session([])),
+    State#state{ctld_session = Session}.
+
+ctld_disassociation(#state{ctld_session = Session}) ->
+    ctld_session:stop(Session, to_session([])),
     ok.
 
 %% Management
