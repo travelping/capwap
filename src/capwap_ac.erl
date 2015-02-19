@@ -1436,16 +1436,15 @@ accounting_update(WTP, SessionOpts) ->
     end.
 
 start_session(Socket, _State) ->
-    AccUpd = {'Accouting-Update-Fun', fun accounting_update/2},
-    SessionData = session_info(Socket),
-    ctld_session_sup:new_session(self(), to_session([AccUpd | SessionData])).
-
-session_info(Socket) ->
     {ok, {Address, _Port}} = capwap_udp:peername(Socket),
-    [{'Calling-Station', ip2str(Address)},
-     {'Tunnel-Type', 'CAPWAP'},
-     {'Tunnel-Medium-Type', tunnel_medium(Address)},
-     {'Tunnel-Client-Endpoint', ip2str(Address)}].
+    SessionOpts = [{'Accouting-Update-Fun', fun accounting_update/2},
+		    {'Service-Type', 'TP-CAPWAP-WTP'},
+		    {'Framed-Protocol', 'TP-CAPWAP'},
+		    {'Calling-Station', ip2str(Address)},
+		    {'Tunnel-Type', 'CAPWAP'},
+		    {'Tunnel-Medium-Type', tunnel_medium(Address)},
+		    {'Tunnel-Client-Endpoint', ip2str(Address)}],
+    ctld_session_sup:new_session(self(), to_session(SessionOpts)).
 
 ie(Key, Elements) ->
     proplists:get_value(Key, Elements).
