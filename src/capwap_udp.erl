@@ -403,7 +403,7 @@ handle_first_packet(WTPControlChannelAddress, udp, Packet, _State) ->
 handle_first_packet({Address, Port}, dtls, Packet, _State) ->
     lager:debug(?BLUE "handle_first_packet: DTLS CAPWAP" ?WHITE),
     try
-        ssl_datagram:handle_packet(Address, Port, Packet)
+        dtlsex_datagram:handle_packet(Address, Port, Packet)
     catch
         E:C ->
             lager:error("Error ~p:~p handling DTLS packet ~p", [E, C, Packet]),
@@ -558,34 +558,7 @@ delete_csocket(#capwap_socket{id = CSocketId, type = Type, peer = Peer, monitor 
       virtual_sockets = gb_trees:delete_any(CSocketId, VSockets)}.
 
 open_socket(Port, Options) ->
-    case lists:keytake(netns, 1, Options) of
-        {value, {_, NetNs}, Opts} ->
-            case gen_socket:raw_socketat(NetNs, inet, dgram, udp) of
-                {ok, Fd} ->
-                    gen_socket:setsockopt(Fd, sol_socket, reuseaddr, true),
-                    Ret = case lists:keytake(ip, 1, Opts) of
-                              {value, {_, IP}, _} ->
-                                  gen_socket:bind(Fd, {inet4, IP, Port});
-                              _ ->
-                                  ok
-                          end,
-                    case Ret of
-                        ok ->
-                            Opts1 = [{reuseaddr, true}, {fd, Fd}|Opts],
-                            Res = gen_udp:open(Port, Opts1),
-                            lager:debug("Opening udp connecting on port ~p : ~p : ~p ", [Port, Res, Opts1]),
-                            Res;
-                        _ ->
-                            lager:error("Error ~p binding socket ~p : ~p", [Ret, Fd, Port]),
-                            Ret
-                    end;
-                Other ->
-                    lager:error("Error ~p opening raw socketat in ~p", [Other, NetNs]),
-                    Other
-            end;
-        _ ->
-            Opts1 = [{reuseaddr, true}|Options],
-            Res = gen_udp:open(Port, Opts1),
-            lager:debug("Opening udp connecting on port ~p : ~p : ~p ", [Port, Res, Opts1]),
-            Res
-    end.
+    Opts1 = [{reuseaddr, true}|Options],
+    Res = gen_udp:open(Port, Opts1),
+    lager:debug("Opening udp connecting on port ~p : ~p : ~p ", [Port, Res, Opts1]),
+    Res.
