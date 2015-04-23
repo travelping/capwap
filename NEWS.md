@@ -7,6 +7,9 @@ Version 1.5.0 - xx Feb 2015
 ---------------------------
 
 * upgrade to Erlang R17
+* adjust for ctld v1.3.0 changes
+* added STA and WTP Accounting
+* added new, explicit session type attributes
 
 Version 1.4.2 - 21 Jan 2015
 ---------------------------

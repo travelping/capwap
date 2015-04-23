@@ -8,7 +8,7 @@
 %% C-Node wrapper
 -export([bind/1, clear/0, get_stats/0]).
 -export([add_wtp/2, del_wtp/1, get_wtp/1, list_wtp/0]).
--export([attach_station/2, detach_station/1, list_stations/0]).
+-export([attach_station/2, detach_station/1, get_station/1, list_stations/0]).
 -export([sendto/2]).
 
 %% gen_server callbacks
@@ -60,6 +60,9 @@ attach_station(WTP, STA) ->
 
 detach_station(STA) ->
     call({detach_station, STA}).
+
+get_station(STA) ->
+    call({get_station, STA}).
 
 list_stations() ->
     call({list_stations}).
