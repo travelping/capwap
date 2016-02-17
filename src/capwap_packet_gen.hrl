@@ -700,7 +700,7 @@ decode_element(1035, <<M_client_mac_address:6/bytes,
 
 decode_element(1036, <<M_radio_id:8/integer,
                        M_association_id:16/integer,
-                       _:0,
+                       _:8,
                        M_mac_address:6/bytes,
                        M_capabilities:2/bytes,
                        M_wlan_id:8/integer,
@@ -1502,7 +1502,7 @@ encode_element(#ieee_802_11_station{
                     supported_rate = M_supported_rate}) ->
     encode_element(1036, <<M_radio_id:8,
                            M_association_id:16,
-                           0:0,
+                           0:8,
                            M_mac_address:6/bytes,
                            M_capabilities:2/bytes,
                            M_wlan_id:8,

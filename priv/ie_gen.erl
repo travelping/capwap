@@ -246,7 +246,7 @@ ies() ->
      {1036, "IEEE 802.11 Station",
       [{"Radio ID", 8, integer},
        {"Association ID", 16, integer},
-       {'_', 0},
+       {'_', 8},
        {"MAC Address", 6, bytes},
        {"Capabilities", 2, bytes},
        {"WLAN ID", 8, integer},
