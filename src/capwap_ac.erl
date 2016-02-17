@@ -341,6 +341,7 @@ join(timeout, State) ->
 join({configuration_status_request, Seq, Elements, #capwap_header{
 						      wb_id = WBID, flags = Flags}},
      State) ->
+    App = capwap,
     WlanId = 1,
     RadioId = 1,
     SessionOpts = ctld_session:get(State#state.session),
@@ -363,8 +364,7 @@ join({configuration_status_request, Seq, Elements, #capwap_header{
                 end,
     AdminWlans = get_admin_wifi_updates(State, Elements),
     {ok, WlanHoldTime} = ctld_session:attr_get('CAPWAP-Wlan-Hold-Time', SessionOpts),
-    RespElements = [%%#ac_ipv4_list{ip_address = [<<0,0,0,0>>]},
-                    #timers{discovery = DiscoveryInterval,
+    RespElements = [#timers{discovery = DiscoveryInterval,
                             echo_request = EchoRequestInterval},
                     #tp_data_channel_dead_interval{data_channel_dead_interval = DataChannelDeadInterval},
                     #tp_ac_join_timeout{ac_join_timeout = ACJoinTimeout},
@@ -377,7 +377,10 @@ join({configuration_status_request, Seq, Elements, #capwap_header{
                     #tp_ieee_802_11_wlan_hold_time{radio_id  = RadioId,
                                                    wlan_id   = WlanId,
                                                    hold_time = WlanHoldTime}
-                   ] ++ AdminPwIE ++ AdminWlans,
+                   ]
+	++ AdminPwIE
+	++ AdminWlans
+	++ ac_addresses(App),
     Header = #capwap_header{radio_id = 0, wb_id = WBID, flags = Flags},
     State1 = send_response(Header, configuration_status_response, Seq, RespElements, State),
 
@@ -1224,17 +1227,19 @@ dequeue_request_next(State = #state{request_queue = Queue0}) ->
     {queue:peek(Queue1), State#state{request_queue = Queue1}}.
 
 control_addresses(App) ->
-    case application:get_env(App, control_ips) of
-	{ok, IPs} when is_list(IPs) ->
-	    [control_address(IP) || IP <- IPs];
-	_ ->
-	    case application:get_env(App, server_ip) of
-		{ok, IP} ->
-		    [control_address(IP)];
-		_ ->
-		    all_local_control_addresses()
-	    end
-    end.
+    Addrs =
+	case application:get_env(App, control_ips) of
+	    {ok, IPs} when is_list(IPs) ->
+		IPs;
+	    _ ->
+		case application:get_env(App, server_ip) of
+		    {ok, IP} ->
+			[IP];
+		    _ ->
+			all_local_addresses()
+		end
+	end,
+    [control_address(A) || A <- Addrs].
 
 control_address({A,B,C,D}) ->
     #control_ipv4_address{ip_address = <<A,B,C,D>>,
@@ -1243,7 +1248,25 @@ control_address({A,B,C,D,E,F,G,H}) ->
     #control_ipv6_address{ip_address = <<A:16,B:16,C:16,D:16,E:16,F:16,G:16,H:16>>,
 			  wtp_count = 0}.
 
-all_local_control_addresses() ->
+ac_addresses(App) ->
+    Addrs =
+	case application:get_env(App, server_ip) of
+	    {ok, IP} ->
+		[IP];
+	    _ ->
+		all_local_addresses()
+	end,
+    IE0 =
+	case [I || I = {_,_,_,_} <- Addrs] of
+	    [] -> [];
+	    IPv4 -> [#ac_ipv4_list{ip_address = IPv4}]
+	end,
+    case [I || I = {_,_,_,_,_,_,_,_} <- Addrs] of
+	[] -> IE0;
+	IPv6 -> [#ac_ipv6_list{ip_address = IPv6} | IE0]
+    end.
+
+all_local_addresses() ->
     case inet:getifaddrs() of
 	{ok, IfList} ->
 	    process_iflist(IfList, []);
@@ -1260,8 +1283,7 @@ process_iflist([{_Ifname, Ifopt}|Rest], Acc) ->
 process_ifopt([], Acc) ->
     Acc;
 process_ifopt([{addr,IP}|Rest], Acc) ->
-    IE = control_address(IP),
-    process_ifopt(Rest, [IE|Acc]);
+    process_ifopt(Rest, [IP|Acc]);
 process_ifopt([_|Rest], Acc) ->
     process_ifopt(Rest, Acc).
 
