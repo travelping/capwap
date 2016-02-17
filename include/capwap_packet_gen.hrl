@@ -341,7 +341,7 @@
         radio_id = 0,
         association_id = 0,
         mac_address = <<0,0,0,0,0,0>>,
-        capabilities = <<0,0>>,
+        capabilities = [],
         wlan_id = 0,
         supported_rate = <<>>
 }).
