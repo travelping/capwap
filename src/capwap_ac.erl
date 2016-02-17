@@ -311,7 +311,10 @@ idle({join_request, Seq, Elements, #capwap_header{
     State1 = State0#state{session_id = SessionId, mac_types = MacTypes,
 			  tunnel_modes = TunnelModes, version = Version},
 
-    RespElements = ac_info_version(join, Version) ++ [#result_code{result_code = 0}],
+    RespElements = ac_info_version(join, Version)
+	++ [#ecn_support{ecn_support = full},
+	    #local_ipv4_address{ip_address = <<127,0,0,1>>},
+	    #result_code{result_code = 0}],
     Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
     State = send_response(Header, join_response, Seq, RespElements, State1),
     SessionOpts = wtp_accounting_infos(Elements, [{'CAPWAP-Radio-Id', RadioId}]),
