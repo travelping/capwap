@@ -372,6 +372,7 @@ join({configuration_status_request, Seq, Elements, #capwap_header{
                        radio_id = RadioId,
                        report_interval = 15},
                     #idle_timeout{timeout = IdleTimeout},
+		    #wtp_fallback{mode = disabled},
                     #power_save_mode{idle_timeout = PSMIdleTimeout,
                                      busy_timeout = PSMBusyTimeout},
                     #tp_ieee_802_11_wlan_hold_time{radio_id  = RadioId,
@@ -380,7 +381,8 @@ join({configuration_status_request, Seq, Elements, #capwap_header{
                    ]
 	++ AdminPwIE
 	++ AdminWlans
-	++ ac_addresses(App),
+	++ ac_addresses(App)
+	++ radio_configuration(RadioId, State),
     Header = #capwap_header{radio_id = 0, wb_id = WBID, flags = Flags},
     State1 = send_response(Header, configuration_status_response, Seq, RespElements, State),
 
@@ -558,11 +560,21 @@ run(configure, State = #state{id = WtpId, session = Session}) ->
 run({add_station, #capwap_header{radio_id = RadioId, wb_id = WBID}, MAC}, State) ->
     WlanId = 1,
     Flags = [{frame,'802.3'}],
+
+    %% FIXME: generate uniq value...
+    AID = (random:uniform(2007) + 1) bor 16#C000,
+
     ReqElements = [#add_station{
 		      radio_id  = RadioId,
 		      mac       = MAC,
-		      vlan_name = <<>>
-		     }],
+		      vlan_name = <<>>},
+		   #ieee_802_11_station{
+		      radio_id  = RadioId,
+		      association_id = AID,
+		      mac_address = MAC,
+		      capabilities = [ess, short_slot_time],
+		      wlan_id = WlanId,
+		      supported_rate = [6,9,12,18,22,36,48,54]}],
     Header1 = #capwap_header{radio_id = 0, wb_id = WBID, flags = Flags},
     State1 = send_request(Header1, station_configuration_request, ReqElements, State),
     next_state(run, State1);
@@ -1151,6 +1163,47 @@ ac_info_version(Request, {Version, _AddOn}) ->
 				    {{0,5}, proplists:get_value(software, Versions, <<"Software Ver. 1.0">>)}]},
      #ac_name{name = application:get_env(App, ac_name, <<"My AC Name">>)}
     ] ++ control_addresses(App) ++ AcList.
+
+radio_configuration(RadioId, _State) ->
+	[#ieee_802_11_antenna{
+	    radio_id = RadioId,
+	    diversity = disabled,
+	    combiner = omni,
+	    antenna_selection = <<1>>},
+	 #ieee_802_11_direct_sequence_control{
+	    radio_id = RadioId,
+	    current_chan = 11,
+	    current_cca = csonly,
+	    energy_detect_threshold = 100},
+	 #ieee_802_11_mac_operation{
+	    radio_id = RadioId,
+	    rts_threshold = 2347,
+	    short_retry = 7,
+	    long_retry = 4,
+	    fragmentation_threshold = 2346,
+	    tx_msdu_lifetime = 512,
+	    rx_msdu_lifetime = 512},
+	 #ieee_802_11_multi_domain_capability{
+	    radio_id = RadioId,
+	    first_channel = 1,
+	    number_of_channels_ = 11,
+	    max_tx_power_level = 100},
+	 #ieee_802_11_rate_set{
+	    radio_id = RadioId,
+	    rate_set = [6,9,12,18,22,36,48,54]},
+	 #ieee_802_11_tx_power{
+	    radio_id = RadioId,
+	    current_tx_power = 100},
+	 #ieee_802_11_wtp_radio_configuration{
+	    radio_id = RadioId,
+	    short_preamble = supported,
+	    num_of_bssids = 1,
+	    dtim_period = 1,
+	    bssid = <<0,0,0,0,0,0>>,
+	    beacon_period = 100,
+	    country_string = <<"DE", $X, 0>>}
+	].
+
 
 reset_echo_request_timer(State = #state{echo_request_timer = Timer, echo_request_timeout = Timeout}) ->
     if is_reference(Timer) -> gen_fsm:cancel_timer(Timer);
