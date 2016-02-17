@@ -321,7 +321,7 @@
 
 -record(ieee_802_11_rate_set, {
         radio_id = 0,
-        rate_set = <<>>
+        rate_set = []
 }).
 
 -record(ieee_802_11_rsna_error_report_from_station, {
@@ -343,7 +343,7 @@
         mac_address = <<0,0,0,0,0,0>>,
         capabilities = [],
         wlan_id = 0,
-        supported_rate = <<>>
+        supported_rate = []
 }).
 
 -record(ieee_802_11_station_qos_profile, {

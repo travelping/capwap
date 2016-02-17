@@ -230,7 +230,7 @@ ies() ->
        {"TI Threshold", 32, integer}]},
      {1034, "IEEE 802.11 Rate Set",
       [{"Radio ID", 8, integer},
-       {"Rate Set", 0, binary}]},
+       {"Rate Set", '_', {array, 8}}]},
      {1035, "IEEE 802.11 RSNA Error Report From Station",
       [{"Client MAC Address", 6, bytes},
        {"BSSID", 6, bytes},
@@ -253,7 +253,7 @@ ies() ->
 				 "spectrum_management", "qos", "short_slot_time", "apsd",
 				 "reserved", "dsss_ofdm", "delayed_block_ack", "immediate_block_ack"]}},
        {"WLAN ID", 8, integer},
-       {"Supported Rate", 0, binary}]},
+       {"Supported Rate", '_', {array, 8}}]},
      {1037, "IEEE 802.11 Station QoS Profile",
       [{"MAC Address", 6, bytes},
        {'_', 13},
@@ -467,6 +467,8 @@ gen_decoder_header_match({Name, Size, {enum, _Enum}}) ->
     [io_lib:format("M_~s:~w/integer", [s2a(Name), Size])];
 gen_decoder_header_match({Name, _Fun}) ->
     [io_lib:format("M_~s/binary", [s2a(Name)])];
+gen_decoder_header_match({Name, '_', {array, _Multi}}) ->
+    [io_lib:format("M_~s/binary", [s2a(Name)])];
 gen_decoder_header_match({Name, Len, {array, _Multi}}) ->
     {stop, [io_lib:format("M_~s_len:~w/integer, M_Rest/binary", [s2a(Name), Len])]};
 gen_decoder_header_match({Name, Len, length_binary}) ->
@@ -485,6 +487,8 @@ gen_decoder_record_assign({Name, _Size, {enum, _Enum}}) ->
     [io_lib:format("~s = enum_~s(M_~s)", [s2a(Name), s2a(Name), s2a(Name)])];
 gen_decoder_record_assign({Name, Fun}) ->
     [io_lib:format("~s = decode_~s(M_~s)", [s2a(Name), Fun, s2a(Name)])];
+gen_decoder_record_assign({Name, '_', {array, Multi}}) ->
+    [io_lib:format("~s = [X || <<X:~w>> <= M_~s]", [s2a(Name), Multi, s2a(Name)])];
 gen_decoder_record_assign({Name, _Size, {array, Multi}}) ->
     [io_lib:format("~s = [X || <<X:~w/bytes>> <= M_~s]", [s2a(Name), Multi, s2a(Name)])];
 gen_decoder_record_assign({Name, _Size, _Type}) ->
@@ -506,6 +510,8 @@ gen_encoder_bin({Name, Size, {enum, _Enum}}) ->
     [io_lib:format("(enum_~s(M_~s)):~w/integer", [s2a(Name), s2a(Name), Size])];
 gen_encoder_bin({Name, Fun}) ->
     [io_lib:format("(encode_~s(M_~s))/binary", [Fun, s2a(Name)])];
+gen_encoder_bin({Name, '_', {array, Multi}}) ->
+    [io_lib:format("(<< <<X:~w>> || X <- M_~s>>)/binary", [Multi, s2a(Name)])];
 gen_encoder_bin({Name, Len, {array, _Multi}}) ->
     [io_lib:format("(length(M_~s)):~w/integer, (<< <<X/binary>> || X <- M_~s>>)/binary", [s2a(Name), Len, s2a(Name)])];
 gen_encoder_bin({Name, Len, length_binary}) ->
@@ -582,6 +588,8 @@ collect_late_assign(_, [], Init, Acc) ->
 collect_late_assign(do, [H|R], Init, Acc) ->
     Match = gen_decoder_header_match(H),
     collect_late_assign(do, R, Init, [Match|Acc]);
+collect_late_assign(init, [{_Name, '_', {array, _Multi}}], _, _) ->
+    collect_late_assign(init, [], [], []);
 collect_late_assign(init, [{Name, _Len, {array, Multi}}|R], _, _) ->
     Init = io_lib:format("M_~s_size = M_~s_len * ~w", [s2a(Name), s2a(Name), Multi]),
     Match = io_lib:format("M_~s:M_~s_size/bytes", [s2a(Name), s2a(Name)]),

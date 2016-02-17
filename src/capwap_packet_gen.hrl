@@ -674,7 +674,7 @@ decode_element(1033, <<M_radio_id:8/integer,
 decode_element(1034, <<M_radio_id:8/integer,
                        M_rate_set/binary>>) ->
     #ieee_802_11_rate_set{radio_id = M_radio_id,
-                          rate_set = M_rate_set};
+                          rate_set = [X || <<X:8>> <= M_rate_set]};
 
 decode_element(1035, <<M_client_mac_address:6/bytes,
                        M_bssid:6/bytes,
@@ -725,7 +725,7 @@ decode_element(1036, <<M_radio_id:8/integer,
                          mac_address = M_mac_address,
                          capabilities = [ 'ess' || M_capabilities_ess =/= 0 ] ++ [ 'ibss' || M_capabilities_ibss =/= 0 ] ++ [ 'cf-pollable' || M_capabilities_cf_pollable =/= 0 ] ++ [ 'cf-poll-request' || M_capabilities_cf_poll_request =/= 0 ] ++ [ 'privacy' || M_capabilities_privacy =/= 0 ] ++ [ 'short_preamble' || M_capabilities_short_preamble =/= 0 ] ++ [ 'pbcc' || M_capabilities_pbcc =/= 0 ] ++ [ 'channel_agility' || M_capabilities_channel_agility =/= 0 ] ++ [ 'spectrum_management' || M_capabilities_spectrum_management =/= 0 ] ++ [ 'qos' || M_capabilities_qos =/= 0 ] ++ [ 'short_slot_time' || M_capabilities_short_slot_time =/= 0 ] ++ [ 'apsd' || M_capabilities_apsd =/= 0 ] ++ [ 'reserved' || M_capabilities_reserved =/= 0 ] ++ [ 'dsss_ofdm' || M_capabilities_dsss_ofdm =/= 0 ] ++ [ 'delayed_block_ack' || M_capabilities_delayed_block_ack =/= 0 ] ++ [ 'immediate_block_ack' || M_capabilities_immediate_block_ack =/= 0 ],
                          wlan_id = M_wlan_id,
-                         supported_rate = M_supported_rate};
+                         supported_rate = [X || <<X:8>> <= M_supported_rate]};
 
 decode_element(1037, <<M_mac_address:6/bytes,
                        _:13,
@@ -1483,7 +1483,7 @@ encode_element(#ieee_802_11_rate_set{
                     radio_id = M_radio_id,
                     rate_set = M_rate_set}) ->
     encode_element(1034, <<M_radio_id:8,
-                           M_rate_set/binary>>);
+                           (<< <<X:8>> || X <- M_rate_set>>)/binary>>);
 
 encode_element(#ieee_802_11_rsna_error_report_from_station{
                     client_mac_address = M_client_mac_address,
@@ -1536,7 +1536,7 @@ encode_element(#ieee_802_11_station{
                            (encode_flag('delayed_block_ack', M_capabilities)):1,
                            (encode_flag('immediate_block_ack', M_capabilities)):1,
                            M_wlan_id:8,
-                           M_supported_rate/binary>>);
+                           (<< <<X:8>> || X <- M_supported_rate>>)/binary>>);
 
 encode_element(#ieee_802_11_station_qos_profile{
                     mac_address = M_mac_address,
