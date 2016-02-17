@@ -8,6 +8,7 @@
         dtlsex,
 	lager,
 	flower,
+        pcapng,
         ssl,
         regine,
         ctld

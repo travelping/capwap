@@ -12,6 +12,7 @@
 start(_StartType, _StartArgs) ->
     case capwap_sup:start_link() of
 	{ok, _} = Ret ->
+	    capwap_trace:start_tracer(),
 	    Opts = case application:get_env(server_ip) of
 		       {ok, IP} -> [{ip, IP}];
 		       _        -> []

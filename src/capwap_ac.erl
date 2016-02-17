@@ -26,6 +26,8 @@
 -import(ctld_session, [to_session/1]).
 
 -define(SERVER, ?MODULE).
+-define(TRACE_LOCAL_CONTROL, {{127,0,0,1}, 5246}).
+-define(TRACE_LOCAL_DATA,    {{127,0,0,1}, 5247}).
 
 %% TODO: convert constants into configuration values
 -define(IDLE_TIMEOUT, 30 * 1000).
@@ -109,6 +111,7 @@ start_link(WTPControlChannelAddress) ->
 
 handle_packet(WTPControlChannelAddress, Packet) ->
     try
+	capwap_trace:trace(WTPControlChannelAddress, ?TRACE_LOCAL_CONTROL, Packet),
 	Peer = format_peer(WTPControlChannelAddress),
 	case capwap_packet:decode(control, Packet) of
 	    {Header, {discovery_request, 1, Seq, Elements}} ->
@@ -130,6 +133,7 @@ handle_packet(WTPControlChannelAddress, Packet) ->
 
 handle_data(DataPath, WTPDataChannelAddress, Packet) ->
     try
+	capwap_trace:trace(WTPDataChannelAddress, ?TRACE_LOCAL_DATA, Packet),
 	lager:debug("capwap_data: ~p, ~p", [WTPDataChannelAddress, Packet]),
 	case capwap_packet:decode(data, Packet) of
 	    {Header, PayLoad} ->
@@ -859,6 +863,7 @@ handle_capwap_data(DataPath, WTPDataChannelAddress, Header, true, PayLoad) ->
 	    case gen_fsm:sync_send_event(AC, {keep_alive, DataPath, WTPDataChannelAddress, Header, PayLoad}) of
 		{reply, {RHeader, RPayLoad}} ->
 		    Data = hd(capwap_packet:encode(data, {RHeader, RPayLoad})),
+		    capwap_trace:trace(?TRACE_LOCAL_DATA, WTPDataChannelAddress, Data),
 		    {reply, Data};
 		Other ->
 		    Other
@@ -903,6 +908,7 @@ handle_capwap_data(_DataPath, WTPDataChannelAddress,
 			      wb_id = WBID,
 			      flags = [{frame, 'native'}]},
 			    Data = hd(capwap_packet:encode(data, {RHeader, Reply})),
+			    capwap_trace:trace(?TRACE_LOCAL_DATA, WTPDataChannelAddress, Data),
 			    {reply, Data};
 
 			{add, RadioMAC, MAC, MacMode, TunnelMode} ->
@@ -926,7 +932,9 @@ handle_capwap_data(_DataPath, WTPDataChannelAddress,
 	    end
     end.
 
-handle_capwap_packet(Packet, StateName, State = #state{ctrl_stream = CtrlStreamState0}) ->
+handle_capwap_packet(Packet, StateName, State = #state{ctrl_channel_address = WTPControlChannelAddress,
+						       ctrl_stream = CtrlStreamState0}) ->
+    capwap_trace:trace(WTPControlChannelAddress, ?TRACE_LOCAL_CONTROL, Packet),
     case capwap_stream:recv(control, Packet, CtrlStreamState0) of
 	{ok, {Header, Msg}, CtrlStreamState1} ->
 	    handle_capwap_message(Header, Msg, StateName, State#state{ctrl_stream = CtrlStreamState1});
@@ -1347,9 +1355,14 @@ answer_discover(Peer, Seq, Elements, #capwap_header{
     ?log_capwap_control(Peer, discovery_response, Seq, RespElems, Header),
     hd(capwap_packet:encode(control, {Header, {discovery_response, Seq, RespElems}})).
 
-stream_send(Msg, State = #state{ctrl_stream = CtrlStreamState0, socket = Socket}) ->
+stream_send(Msg, State = #state{ctrl_channel_address = WTPControlChannelAddress,
+				ctrl_stream = CtrlStreamState0,
+				socket = Socket}) ->
     {BinMsg, CtrlStreamState1} = capwap_stream:encode(control, Msg, CtrlStreamState0),
-    lists:foreach(fun(M) -> ok = socket_send(Socket, M) end, BinMsg),
+    lists:foreach(fun(M) ->
+			  capwap_trace:trace(?TRACE_LOCAL_CONTROL, WTPControlChannelAddress, M),
+			  ok = socket_send(Socket, M)
+		  end, BinMsg),
     State#state{ctrl_stream = CtrlStreamState1}.
 
 socket_send({udp, Socket}, Data) ->
