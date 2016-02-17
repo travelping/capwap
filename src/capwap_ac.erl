@@ -336,8 +336,9 @@ join(timeout, State) ->
     {stop, normal, State};
 
 join({configuration_status_request, Seq, Elements, #capwap_header{
-					   radio_id = RadioId, wb_id = WBID, flags = Flags}},
+						      wb_id = WBID, flags = Flags}},
      State) ->
+    RadioId = 1,
     SessionOpts = ctld_session:get(State#state.session),
     SessionAttrs = ['CAPWAP-Power-Save-Idle-Timeout',
                     'CAPWAP-Power-Save-Busy-Timeout',
@@ -370,10 +371,10 @@ join({configuration_status_request, Seq, Elements, #capwap_header{
                     #power_save_mode{idle_timeout = PSMIdleTimeout,
                                      busy_timeout = PSMBusyTimeout},
                     #tp_ieee_802_11_wlan_hold_time{radio_id  = RadioId,
-                                                   wlan_id   = 1,
+                                                   wlan_id   = WlanId,
                                                    hold_time = WlanHoldTime}
                    ] ++ AdminPwIE ++ AdminWlans,
-    Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
+    Header = #capwap_header{radio_id = 0, wb_id = WBID, flags = Flags},
     State1 = send_response(Header, configuration_status_response, Seq, RespElements, State),
 
     EchoRequestTimeout = EchoRequestInterval * 2,
@@ -550,11 +551,11 @@ run(configure, State = #state{id = WtpId, session = Session}) ->
 run({add_station, #capwap_header{radio_id = RadioId, wb_id = WBID}, MAC}, State) ->
     Flags = [{frame,'802.3'}],
     ReqElements = [#add_station{
-    		      radio_id  = RadioId,
+		      radio_id  = RadioId,
 		      mac       = MAC,
 		      vlan_name = <<>>
 		     }],
-    Header1 = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
+    Header1 = #capwap_header{radio_id = 0, wb_id = WBID, flags = Flags},
     State1 = send_request(Header1, station_configuration_request, ReqElements, State),
     next_state(run, State1);
 
@@ -564,7 +565,7 @@ run({del_station, #capwap_header{radio_id = RadioId, wb_id = WBID}, MAC}, State)
     		      radio_id  = RadioId,
 		      mac       = MAC
 		     }],
-    Header1 = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
+    Header1 = #capwap_header{radio_id = 0, wb_id = WBID, flags = Flags},
     State1 = send_request(Header1, station_configuration_request, ReqElements, State),
     next_state(run, State1);
 
@@ -575,7 +576,7 @@ run({detach_station, RadioId, WBID, RadioMAC, MAC, MacMode, TunnelMode},
 		      radio_id  = RadioId,
 		      mac       = MAC
 		     }],
-    Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
+    Header = #capwap_header{radio_id = 0, wb_id = WBID, flags = Flags},
     State1 = send_request(Header, station_configuration_request, ReqElements, State),
     capwap_dp:del_flow(self(), WTPDataChannelAddress, RadioMAC, MAC, MacMode, TunnelMode),
     next_state(run, State1);
@@ -590,7 +591,7 @@ run({firmware_download, DownloadLink, Sha}, State) ->
     ReqElements = [#firmware_download_information{
         sha256_image_hash = Sha,
         download_uri = DownloadLink}],
-    Header1 = #capwap_header{radio_id = 1, wb_id = 1, flags = Flags},
+    Header1 = #capwap_header{radio_id = 0, wb_id = 1, flags = Flags},
     State1 = send_request(Header1, configuration_update_request, ReqElements, State),
     next_state(run, State1);
 
@@ -812,7 +813,7 @@ reply(Reply, NextStateName, State) ->
 
 %% non-DTLS join-reqeust, check app config
 handle_plain_join(Peer, Seq, _Elements, #capwap_header{
-					   radio_id = RadioId, wb_id = WBID, flags = Flags}) ->
+					   wb_id = WBID, flags = Flags}) ->
     case application:get_env(capwap, enforce_dtls_control, true) of
 	false ->
 	    lager:warning("Accepting JOIN without DTLS from ~s", [Peer]),
@@ -820,7 +821,7 @@ handle_plain_join(Peer, Seq, _Elements, #capwap_header{
 	_ ->
 	    lager:warning("Rejecting JOIN without DTLS from ~s", [Peer]),
 	    RespElems = [#result_code{result_code = 18}],
-	    Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
+	    Header = #capwap_header{radio_id = 0, wb_id = WBID, flags = Flags},
 	    ?log_capwap_control(Peer, join_response, Seq, RespElems, Header),
 	    Answer = hd(capwap_packet:encode(control, {Header, {join_response, Seq, RespElems}})),
 	    {reply, Answer}
