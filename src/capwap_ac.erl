@@ -338,6 +338,7 @@ join(timeout, State) ->
 join({configuration_status_request, Seq, Elements, #capwap_header{
 						      wb_id = WBID, flags = Flags}},
      State) ->
+    WlanId = 1,
     RadioId = 1,
     SessionOpts = ctld_session:get(State#state.session),
     SessionAttrs = ['CAPWAP-Power-Save-Idle-Timeout',
@@ -549,6 +550,7 @@ run(configure, State = #state{id = WtpId, session = Session}) ->
     next_state(run, State1);
 
 run({add_station, #capwap_header{radio_id = RadioId, wb_id = WBID}, MAC}, State) ->
+    WlanId = 1,
     Flags = [{frame,'802.3'}],
     ReqElements = [#add_station{
 		      radio_id  = RadioId,
@@ -1551,6 +1553,7 @@ internal_add_wlan(State, SSID, RadioID) ->
 
 internal_del_wlan(State, RadioID) ->
     WBID = 1,
+    WlanId = 1,
     Flags = [{frame,'802.3'}],
     MacMode = select_mac_mode(State#state.mac_types),
     TunnelMode = select_tunnel_mode(State#state.tunnel_modes, MacMode),
@@ -1558,7 +1561,7 @@ internal_del_wlan(State, RadioID) ->
     State0 = State#state{mac_mode = MacMode, tunnel_mode = TunnelMode},
     ReqElemDel = [#ieee_802_11_delete_wlan{
                      radio_id = RadioID,
-                     wlan_id = 1}
+                     wlan_id = WlanId}
                  ],
     State1 = send_request(Header, ieee_802_11_wlan_configuration_request, ReqElemDel, State0),
     remove_radio(State1, RadioID).
