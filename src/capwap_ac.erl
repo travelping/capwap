@@ -212,9 +212,10 @@ init([WTPControlChannelAddress]) ->
     process_flag(trap_exit, true),
     lager:md([{control_channel_address, WTPControlChannelAddress}]),
     capwap_wtp_reg:register(WTPControlChannelAddress),
+    MTU = application:get_env(capwap, mtu, 1500),
     {ok, listen, #state{ctrl_channel_address = WTPControlChannelAddress,
 			request_queue = queue:new(),
-			ctrl_stream = capwap_stream:init(1500),
+			ctrl_stream = capwap_stream:init(MTU),
                         radios = []}, 5000}.
 
 %%--------------------------------------------------------------------
