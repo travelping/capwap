@@ -22,6 +22,8 @@
 
 -include("capwap_debug.hrl").
 -include("capwap_packet.hrl").
+-include("ieee80211.hrl").
+-include("ieee80211_station.hrl").
 
 -import(ctld_session, [to_session/1, attr_get/2]).
 
@@ -45,7 +47,8 @@
           mac,
           mac_mode,
           tunnel_mode,
-          out_action
+          out_action,
+	  capabilities
          }).
 
 -record(auth_frame, {algo, seq_no, status, params}).
@@ -60,12 +63,13 @@ start_link(AC, DataPath, WTPDataChannelAddress, WtpId, SessionId, RadioMAC, Clie
 
 handle_ieee80211_frame(AC, <<FrameControl:2/bytes,
 			      _Duration:16, DA:6/bytes, SA:6/bytes, BSS:6/bytes,
-			      _SequenceControl:16/little-integer, Frame/binary>>) ->
+			      _SequenceControl:16/little-integer, FrameRest/binary>>) ->
     %% FragmentNumber = SequenceControl band 16#0f,
     %% SequenceNumber = SequenceControl bsr 4,
 
-    <<SubType:4, Type:2, 0:2, _:6, FromDS:1, ToDS:1>> = FrameControl,
+    <<SubType:4, Type:2, 0:2, Order:1, _:5, FromDS:1, ToDS:1>> = FrameControl,
     FrameType = frame_type(Type, SubType),
+    Frame = strip_ht_control(Order, FrameRest),
     ieee80211_request(AC, FrameType, DA, SA, BSS, FromDS, ToDS, Frame);
 
 handle_ieee80211_frame(_, Frame) ->
@@ -107,7 +111,8 @@ init([AC, DataPath, WTPDataChannelAddress, WtpId, SessionId, RadioMAC, ClientMAC
     ACMonitor = erlang:monitor(process, AC),
     State = #state{ac = AC, ac_monitor = ACMonitor, data_path = DataPath,
 		   data_channel_address = WTPDataChannelAddress, wtp_id = WtpId, wtp_session_id = SessionId,
-                   radio_mac = RadioMAC, mac = ClientMAC, mac_mode = MacMode, tunnel_mode = TunnelMode},
+                   radio_mac = RadioMAC, mac = ClientMAC, mac_mode = MacMode, tunnel_mode = TunnelMode,
+		  capabilities = #sta_cap{}},
     {ok, initial_state(MacMode), State}.
 
 %%
@@ -160,9 +165,9 @@ init_assoc(Event = {'Authentication', _DA, _SA, _BSS, 0, 0, _Frame}, _From, Stat
     lager:debug("in INIT_ASSOC Local-MAC Mode got Authentication Request: ~p", [Event]),
     {reply, {ok, ignore}, init_assoc, State, ?IDLE_TIMEOUT};
 
-init_assoc(Event = {FrameType, _DA, _SA, BSS, 0, 0, _Frame}, _From,
-	   State = #state{radio_mac = BSS, mac = MAC, mac_mode = MacMode,
-			  tunnel_mode = TunnelMode})
+init_assoc(Event = {FrameType, _DA, _SA, BSS, 0, 0, Frame}, _From,
+	   State0 = #state{radio_mac = BSS, mac = MAC, mac_mode = MacMode,
+			   tunnel_mode = TunnelMode})
   when MacMode == local_mac andalso
        (FrameType == 'Association Request' orelse FrameType == 'Reassociation Request') ->
     lager:debug("in INIT_ASSOC Local-MAC Mode got Association Request: ~p", [Event]),
@@ -178,9 +183,11 @@ init_assoc(Event = {FrameType, _DA, _SA, BSS, 0, 0, _Frame}, _From,
     %%   necessary, and upon receipt of a failed Association Response frame
     %%   from the AC, the WTP MUST send a Disassociation frame to the station.
 
-    NewState = ctld_association(State),
+    State1 = update_sta_from_mgmt_frame(FrameType, Frame, State0),
+    State = ctld_association(State1),
 
-    {reply, {add, BSS, MAC, MacMode, TunnelMode}, connected, NewState, ?IDLE_TIMEOUT};
+    Reply = {add, BSS, MAC, State#state.capabilities, MacMode, TunnelMode},
+    {reply, Reply, connected, State, ?IDLE_TIMEOUT};
 
 init_assoc(Event = {'Authentication', _DA, _SA, _BSS, 0, 0, _Frame}, From, State) ->
     lager:debug("in INIT_ASSOC got Authentication Request: ~p", [Event]),
@@ -231,9 +238,11 @@ init_start(timeout, State) ->
     {stop, normal, State}.
 
 init_start(Event = {'Null', _DA, _SA, BSS, 0, 1, <<>>}, _From,
-	   State = #state{radio_mac = BSS, mac = MAC, mac_mode = MacMode, tunnel_mode = TunnelMode}) ->
+	   State = #state{radio_mac = BSS, mac = MAC, mac_mode = MacMode,
+			  tunnel_mode = TunnelMode, capabilities = StaCaps}) ->
     lager:debug("in INIT_START got Null: ~p", [Event]),
-    {reply, {add, BSS, MAC, MacMode, TunnelMode}, connected, State, ?IDLE_TIMEOUT};
+    Reply = {add, BSS, MAC, StaCaps, MacMode, TunnelMode},
+    {reply, Reply, connected, State, ?IDLE_TIMEOUT};
 
 init_start(Event, From, State)
   when element(1, Event) == take_over ->
@@ -452,6 +461,66 @@ encode_auth_frame(#auth_frame{algo   = Algo, seq_no = SeqNo,
 			      status = Status, params = Params}) ->
     <<Algo:16/little-integer, SeqNo:16/little-integer,
       Status:16/little-integer, Params/binary>>.
+
+update_sta_from_mgmt_frame(FrameType, Frame, State)
+  when (FrameType == 'Association Request') ->
+    <<_Capability:16, _ListenInterval:16,
+      IEs/binary>> = Frame,
+    update_sta_from_mgmt_frame_ies(IEs, State);
+update_sta_from_mgmt_frame(FrameType, Frame, State)
+  when (FrameType == 'Reassociation Request') ->
+    <<_Capability:16, _ListenInterval:16,
+      _CurrentAP:6/bytes, IEs/binary>> = Frame,
+    update_sta_from_mgmt_frame_ies(IEs, State);
+update_sta_from_mgmt_frame(_FrameType, _Frame, State) ->
+    State.
+
+update_sta_from_mgmt_frame_ies(IEs, #state{capabilities = Cap0} = State) ->
+    ListIE = [ {Id, Data} || <<Id:8, Len:8, Data:Len/bytes>> <= IEs ],
+    Cap = lists:foldl(fun update_sta_cap_from_mgmt_frame_ie/2, Cap0, ListIE),
+    lager:debug("New Station Caps: ~p", [lager:pr(Cap, ?MODULE)]),
+    State#state{capabilities = Cap}.
+
+smps2atom(0) -> static;
+smps2atom(1) -> dynamic;
+smps2atom(2) -> reserved;
+smps2atom(3) -> disabled.
+
+update_sta_cap_from_mgmt_frame_ie(IE = {?WLAN_EID_HT_CAP, HtCap}, Cap) ->
+    lager:debug("Mgmt IE HT CAP: ~p", [IE]),
+    <<CapInfo:2/bytes, AMPDU_ParamsInfo:8/bits, MCSinfo:16/bytes,
+      ExtHtCapInfo:2/bytes, TxBFinfo:4/bytes, ASelCap:8/bits>> = HtCap,
+    lager:debug("CapInfo: ~p, AMPDU: ~p, MCS: ~p, ExtHt: ~p, TXBf: ~p, ASEL: ~p",
+		[CapInfo, AMPDU_ParamsInfo, MCSinfo, ExtHtCapInfo, TxBFinfo, ASelCap]),
+    <<_TxSTBC:1, SGI40Mhz:1, SGI20Mhz:1, _GFPreamble:1, SMPS:2, _Only20Mhz:1, _LDPC:1,
+      _TXOP:1, _FortyMHzIntol:1, _PSMPSup:1, _DSSSMode:1, _MaxAMSDULen:1, BAckDelay:1, _RxSTBC:2>>
+	= CapInfo,
+    <<_:3, AMPDU_Density:3, AMPDU_Factor:2>> = AMPDU_ParamsInfo,
+    <<RxMask:10/bytes, RxHighest:16/integer-little, _TxParms:8, _:3/bytes>> = MCSinfo,
+
+    Cap#sta_cap{sgi_20mhz = (SGI20Mhz == 1), sgi_40mhz = (SGI40Mhz == 1),
+		smps = smps2atom(SMPS), back_delay = (BAckDelay == 1),
+		ampdu_density = AMPDU_Density, ampdu_factor = AMPDU_Factor,
+		rx_mask = RxMask, rx_highest = RxHighest
+	       };
+
+%% Vendor Specific:
+%%  OUI:  00-50-F2 - Microsoft
+%%  Type: 2        - WMM/WME
+%%  WME Subtype: 0 - IE
+%%  WME Version: 1
+update_sta_cap_from_mgmt_frame_ie(IE = {?WLAN_EID_VENDOR_SPECIFIC,
+				    <<16#00, 16#50, 16#F2, 2, 0, 1, _/binary>>}, Cap) ->
+    lager:debug("Mgmt IE WMM: ~p", [IE]),
+    Cap#sta_cap{wmm = true};
+update_sta_cap_from_mgmt_frame_ie(IE = {_Id, _Value}, Cap) ->
+    lager:debug("Mgmt IE: ~p", [IE]),
+    Cap.
+
+strip_ht_control(0, Frame) ->
+    Frame;
+strip_ht_control(1, <<_HT:4/bytes, Frame/binary>>) ->
+    Frame.
 
 %% Accounting Support
 ip2str(IP) ->

@@ -23,6 +23,7 @@
 -include("capwap_debug.hrl").
 -include("capwap_packet.hrl").
 -include("ieee80211.hrl").
+-include("ieee80211_station.hrl").
 
 -import(ctld_session, [to_session/1]).
 
@@ -565,7 +566,7 @@ run(configure, State = #state{id = WtpId, session = Session}) ->
     State1 = internal_add_wlan(State, SSID, RadioId),
     next_state(run, State1);
 
-run({add_station, #capwap_header{radio_id = RadioId, wb_id = WBID}, MAC}, State) ->
+run({add_station, #capwap_header{radio_id = RadioId, wb_id = WBID}, MAC, StaCaps}, State) ->
     WlanId = 1,
     Flags = [{frame,'802.3'}],
 
@@ -587,17 +588,17 @@ run({add_station, #capwap_header{radio_id = RadioId, wb_id = WBID}, MAC}, State)
 		      %% FIXME: test RADIO and Station for 802.11n support
 		      mac_address = MAC,
 		      bandwith_40mhz = 0,
-		      power_save_mode = disabled,
-		      sgi_20mhz = 1,
-		      sgi_40mhz = 0,
-		      ba_delay_mode = 0,
+		      power_save_mode = StaCaps#sta_cap.smps,
+		      sgi_20mhz = bool2i(StaCaps#sta_cap.sgi_20mhz),
+		      sgi_40mhz = bool2i(StaCaps#sta_cap.sgi_40mhz),
+		      ba_delay_mode = bool2i(StaCaps#sta_cap.back_delay),
 		      max_a_msdu = 0,
-		      max_rxfactor = 3,
-		      min_staspacing = 5,
-		      hisuppdatarate = 300,
+		      max_rxfactor = StaCaps#sta_cap.ampdu_factor,
+		      min_staspacing = StaCaps#sta_cap.ampdu_density,
+		      hisuppdatarate = StaCaps#sta_cap.rx_highest,
 		      ampdubufsize = 0,
 		      htcsupp = 0,
-		      mcs_set = <<16#ff,16#ff,0,0,0,0,0,0,0,0>>}],
+		      mcs_set = StaCaps#sta_cap.rx_mask}],
     Header1 = #capwap_header{radio_id = 0, wb_id = WBID, flags = Flags},
     State1 = send_request(Header1, station_configuration_request, ReqElements, State),
     next_state(run, State1);
@@ -906,8 +907,8 @@ handle_capwap_data(_DataPath, WTPDataChannelAddress,
 		'802.3' ->
 		    lager:warning("got 802.3 payload Frame, what TODO with it???"),
 		    case ieee80211_station:handle_ieee802_3_frame(AC, Frame) of
-			{add, RadioMAC, MAC, MacMode, TunnelMode} ->
-			    gen_fsm:send_event(AC, {add_station, Header, MAC}),
+			{add, RadioMAC, MAC, StaCaps, MacMode, TunnelMode} ->
+			    gen_fsm:send_event(AC, {add_station, Header, MAC, StaCaps}),
 			    lager:debug("MacMode: ~w, TunnelMode ~w", [MacMode, TunnelMode]),
 			    {add_flow, self(), WTPDataChannelAddress, RadioMAC, MAC, MacMode, TunnelMode, true};
 
@@ -930,8 +931,8 @@ handle_capwap_data(_DataPath, WTPDataChannelAddress,
 			    capwap_trace:trace(?TRACE_LOCAL_DATA, WTPDataChannelAddress, Data),
 			    {reply, Data};
 
-			{add, RadioMAC, MAC, MacMode, TunnelMode} ->
-			    gen_fsm:send_event(AC, {add_station, Header, MAC}),
+			{add, RadioMAC, MAC, StaCaps, MacMode, TunnelMode} ->
+			    gen_fsm:send_event(AC, {add_station, Header, MAC, StaCaps}),
 			    lager:debug("MacMode: ~w, TunnelMode ~w", [MacMode, TunnelMode]),
 			    {add_flow, self(), WTPDataChannelAddress, RadioMAC, MAC, MacMode, TunnelMode, false};
 
@@ -1091,6 +1092,9 @@ map_aalwp({Priority, IPv6 = {_,_,_,_,_,_,_,_}}) ->
 	   type = 2,
 	   value = tuple_to_ip(IPv6)
 	  }.
+
+bool2i(false) -> 0;
+bool2i(_)     -> 1.
 
 s2i(V) ->
     case string:to_integer(V) of
