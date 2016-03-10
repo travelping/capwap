@@ -547,3 +547,19 @@
         gpsatc = <<>>
 }).
 
+-record(ieee_802_11n_station_information, {
+        mac_address = <<0,0,0,0,0,0>>,
+        bandwith_40mhz = 0,
+        power_save_mode = static,
+        sgi_20mhz = 0,
+        sgi_40mhz = 0,
+        ba_delay_mode = 0,
+        max_a_msdu = 0,
+        max_rxfactor = 0,
+        min_staspacing = 0,
+        hisuppdatarate = 0,
+        ampdubufsize = 0,
+        htcsupp = 0,
+        mcs_set = <<0,0,0,0,0,0,0,0,0,0>>
+}).
+

@@ -88,6 +88,15 @@ message_type({13277, 1}) -> ieee_802_11_wlan_configuration_request;
 message_type({13277, 2}) -> ieee_802_11_wlan_configuration_response;
 message_type({Vendor, Type}) when is_integer(Vendor), is_integer(Type) -> {Vendor, Type}.
 
+enum_power_save_mode(static) -> 0;
+enum_power_save_mode(dynamic) -> 1;
+enum_power_save_mode(reserved) -> 2;
+enum_power_save_mode(disabled) -> 3;
+enum_power_save_mode(0) -> static;
+enum_power_save_mode(1) -> dynamic;
+enum_power_save_mode(2) -> reserved;
+enum_power_save_mode(3) -> disabled.
+
 enum_tunnel_mode(local_bridge) -> 0;
 enum_tunnel_mode('802_3_tunnel') -> 1;
 enum_tunnel_mode('802_11_tunnel') -> 2;
@@ -1034,6 +1043,34 @@ decode_vendor_element({18681,15}, <<M_timestamp:32/integer,
                                 wwan_id = M_wwan_id,
                                 gpsatc = M_gpsatc};
 
+decode_vendor_element({18681,17}, <<M_mac_address:6/bytes,
+                                    M_bandwith_40mhz:1/integer,
+                                    M_power_save_mode:2/integer,
+                                    M_sgi_20mhz:1/integer,
+                                    M_sgi_40mhz:1/integer,
+                                    M_ba_delay_mode:1/integer,
+                                    M_max_a_msdu:1/integer,
+                                    _:1,
+                                    M_max_rxfactor:8/integer,
+                                    M_min_staspacing:8/integer,
+                                    M_hisuppdatarate:16/integer,
+                                    M_ampdubufsize:16/integer,
+                                    M_htcsupp:8/integer,
+                                    M_mcs_set:10/bytes>>) ->
+    #ieee_802_11n_station_information{mac_address = M_mac_address,
+                                      bandwith_40mhz = M_bandwith_40mhz,
+                                      power_save_mode = enum_power_save_mode(M_power_save_mode),
+                                      sgi_20mhz = M_sgi_20mhz,
+                                      sgi_40mhz = M_sgi_40mhz,
+                                      ba_delay_mode = M_ba_delay_mode,
+                                      max_a_msdu = M_max_a_msdu,
+                                      max_rxfactor = M_max_rxfactor,
+                                      min_staspacing = M_min_staspacing,
+                                      hisuppdatarate = M_hisuppdatarate,
+                                      ampdubufsize = M_ampdubufsize,
+                                      htcsupp = M_htcsupp,
+                                      mcs_set = M_mcs_set};
+
 decode_vendor_element(Tag, Value) ->
         {Tag, Value}.
 
@@ -1868,6 +1905,35 @@ encode_element(#gps_last_acquired_position{
     encode_vendor_element({18681,15}, <<M_timestamp:32,
                                         M_wwan_id:8,
                                         M_gpsatc/binary>>);
+
+encode_element(#ieee_802_11n_station_information{
+                    mac_address = M_mac_address,
+                    bandwith_40mhz = M_bandwith_40mhz,
+                    power_save_mode = M_power_save_mode,
+                    sgi_20mhz = M_sgi_20mhz,
+                    sgi_40mhz = M_sgi_40mhz,
+                    ba_delay_mode = M_ba_delay_mode,
+                    max_a_msdu = M_max_a_msdu,
+                    max_rxfactor = M_max_rxfactor,
+                    min_staspacing = M_min_staspacing,
+                    hisuppdatarate = M_hisuppdatarate,
+                    ampdubufsize = M_ampdubufsize,
+                    htcsupp = M_htcsupp,
+                    mcs_set = M_mcs_set}) ->
+    encode_vendor_element({18681,17}, <<M_mac_address:6/bytes,
+                                        M_bandwith_40mhz:1,
+                                        (enum_power_save_mode(M_power_save_mode)):2/integer,
+                                        M_sgi_20mhz:1,
+                                        M_sgi_40mhz:1,
+                                        M_ba_delay_mode:1,
+                                        M_max_a_msdu:1,
+                                        0:1,
+                                        M_max_rxfactor:8,
+                                        M_min_staspacing:8,
+                                        M_hisuppdatarate:16,
+                                        M_ampdubufsize:16,
+                                        M_htcsupp:8,
+                                        M_mcs_set:10/bytes>>);
 
 encode_element({Tag = {Vendor, Type}, Value}) when is_integer(Vendor), is_integer(Type), is_binary(Value) ->
     encode_vendor_element(Tag, Value);

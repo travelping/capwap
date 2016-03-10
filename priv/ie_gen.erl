@@ -399,7 +399,22 @@ vendor_ies() ->
      {{18681, 15}, "GPS Last Acquired Position",
       [{"Timestamp", 32, integer},
        {"WWAN Id", 8, integer},
-       {"GPSATC", 0, binary}]}
+       {"GPSATC", 0, binary}]},
+     {{18681, 17}, "IEEE 802.11n Station Information",
+      [{"MAC Address", 6, bytes},
+       {"Bandwith 40MHz", 1, integer},
+       {"Power Save Mode", 2, {enum, [static, dynamic, reserved, disabled]}},
+       {"SGI-20MHz", 1, integer},
+       {"SGI-40MHz", 1, integer},
+       {"BA Delay Mode", 1, integer},
+       {"MAX A-MSDU", 1, integer},
+       {'_', 1},
+       {"Max RxFactor", 8, integer},
+       {"Min StaSpacing", 8, integer},
+       {"HiSuppDataRate", 16, integer},
+       {"AMPDUBufSize", 16, integer},
+       {"HtcSupp", 8, integer},
+       {"MCS Set", 10, bytes}]}
     ].
 
 msgs() ->
