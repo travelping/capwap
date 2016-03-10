@@ -22,6 +22,7 @@
 -include_lib("public_key/include/OTP-PUB-KEY.hrl").
 -include("capwap_debug.hrl").
 -include("capwap_packet.hrl").
+-include("ieee80211.hrl").
 
 -import(ctld_session, [to_session/1]).
 
@@ -34,6 +35,8 @@
 -define(SSL_ACCEPT_TIMEOUT, 30 * 1000).
 -define(RetransmitInterval, 3 * 1000).
 -define(MaxRetransmit, 5).
+
+-define(RadioChannel, 11).
 
 -record(state, {
 	  id,
@@ -579,7 +582,22 @@ run({add_station, #capwap_header{radio_id = RadioId, wb_id = WBID}, MAC}, State)
 		      mac_address = MAC,
 		      capabilities = [ess, short_slot_time],
 		      wlan_id = WlanId,
-		      supported_rate = [6,9,12,18,22,36,48,54]}],
+		      supported_rate = [6,9,12,18,22,36,48,54]},
+		   #ieee_802_11n_station_information{
+		      %% FIXME: test RADIO and Station for 802.11n support
+		      mac_address = MAC,
+		      bandwith_40mhz = 0,
+		      power_save_mode = disabled,
+		      sgi_20mhz = 1,
+		      sgi_40mhz = 0,
+		      ba_delay_mode = 0,
+		      max_a_msdu = 0,
+		      max_rxfactor = 3,
+		      min_staspacing = 5,
+		      hisuppdatarate = 300,
+		      ampdubufsize = 0,
+		      htcsupp = 0,
+		      mcs_set = <<16#ff,16#ff,0,0,0,0,0,0,0,0>>}],
     Header1 = #capwap_header{radio_id = 0, wb_id = WBID, flags = Flags},
     State1 = send_request(Header1, station_configuration_request, ReqElements, State),
     next_state(run, State1);
@@ -1173,46 +1191,60 @@ ac_info_version(Request, {Version, _AddOn}) ->
      #ac_name{name = application:get_env(App, ac_name, <<"My AC Name">>)}
     ] ++ control_addresses(App) ++ AcList.
 
-radio_configuration(RadioId, _State) ->
-	[#ieee_802_11_antenna{
-	    radio_id = RadioId,
-	    diversity = disabled,
-	    combiner = omni,
-	    antenna_selection = <<1>>},
-	 #ieee_802_11_direct_sequence_control{
-	    radio_id = RadioId,
-	    current_chan = 11,
-	    current_cca = csonly,
-	    energy_detect_threshold = 100},
-	 #ieee_802_11_mac_operation{
-	    radio_id = RadioId,
-	    rts_threshold = 2347,
-	    short_retry = 7,
-	    long_retry = 4,
-	    fragmentation_threshold = 2346,
-	    tx_msdu_lifetime = 512,
-	    rx_msdu_lifetime = 512},
-	 #ieee_802_11_multi_domain_capability{
-	    radio_id = RadioId,
-	    first_channel = 1,
-	    number_of_channels_ = 11,
-	    max_tx_power_level = 100},
-	 #ieee_802_11_rate_set{
-	    radio_id = RadioId,
-	    rate_set = [6,9,12,18,22,36,48,54]},
-	 #ieee_802_11_tx_power{
-	    radio_id = RadioId,
-	    current_tx_power = 100},
-	 #ieee_802_11_wtp_radio_configuration{
-	    radio_id = RadioId,
-	    short_preamble = supported,
-	    num_of_bssids = 1,
-	    dtim_period = 1,
-	    bssid = <<0,0,0,0,0,0>>,
-	    beacon_period = 100,
-	    country_string = <<"DE", $X, 0>>}
-	].
+rateset('11b-only') ->
+    [10, 20, 55, 110];
+rateset('11g-only') ->
+    [60, 90, 120, 180, 240, 360, 480, 540];
+rateset('11bg') ->
+    [10, 20, 55, 110, 60, 90, 120, 180, 240, 360, 480, 540].
 
+radio_cfg_rateset(RadioId, Mode, RateSet, IEs) ->
+    {Rates, _} =  lists:split(8, RateSet),
+    Basic = [capwap_packet:encode_rate(Mode, X) || X <- Rates],
+    [#ieee_802_11_rate_set{
+	radio_id = RadioId,
+	rate_set = Basic}
+     | IEs].
+
+radio_configuration(RadioId, _State) ->
+    Mode = '11g-only',
+    RateSet = rateset(Mode),
+    IEs = [#ieee_802_11_antenna{
+	      radio_id = RadioId,
+	      diversity = disabled,
+	      combiner = omni,
+	      antenna_selection = <<1>>},
+	   #ieee_802_11_direct_sequence_control{
+	      radio_id = RadioId,
+	      current_chan = ?RadioChannel,
+	      current_cca = csonly,
+	      energy_detect_threshold = 100},
+	   #ieee_802_11_mac_operation{
+	      radio_id = RadioId,
+	      rts_threshold = 2347,
+	      short_retry = 7,
+	      long_retry = 4,
+	      fragmentation_threshold = 2346,
+	      tx_msdu_lifetime = 512,
+	      rx_msdu_lifetime = 512},
+	   #ieee_802_11_multi_domain_capability{
+	      radio_id = RadioId,
+	      first_channel = 1,
+	      number_of_channels_ = 11,
+	      max_tx_power_level = 100},
+	   #ieee_802_11_tx_power{
+	      radio_id = RadioId,
+	      current_tx_power = 100},
+	   #ieee_802_11_wtp_radio_configuration{
+	      radio_id = RadioId,
+	      short_preamble = supported,
+	      num_of_bssids = 1,
+	      dtim_period = 1,
+	      bssid = <<0,0,0,0,0,0>>,
+	      beacon_period = 100,
+	      country_string = <<"DE", $X, 0>>}
+	  ],
+    radio_cfg_rateset(RadioId, Mode, RateSet, IEs).
 
 reset_echo_request_timer(State = #state{echo_request_timer = Timer, echo_request_timeout = Timeout}) ->
     if is_reference(Timer) -> gen_fsm:cancel_timer(Timer);
@@ -1621,25 +1653,77 @@ create_initial_ctld_params(CommonName) ->
      {'CAPWAP-Wlan-Hold-Time', WlanHoldTime}
     ].
 
+wlan_cfg_rateset(RadioId, WlanId, Mode, RateSet, IEs) ->
+    case lists:split(8, RateSet) of
+	{_, []} ->
+	    IEs;
+	{_, ExtRates} ->
+	    Bin = << <<(capwap_packet:encode_rate(Mode, X)):8>> || X <- ExtRates>>,
+	    [#ieee_802_11_information_element{radio_id = RadioId,
+					      wlan_id = WlanId,
+					      flags = ['beacon','probe_response'],
+					      ie = <<?WLAN_EID_EXT_SUPP_RATES, (byte_size(Bin)):8, Bin/bytes>>}
+	     | IEs]
+    end.
+
+wlan_cfg_wmm(RadioId, WlanId, IEs) ->
+    IE = <<16#00, 16#50, 16#f2, 16#02, 16#01, 16#01, 16#00, 16#00,
+	   16#03, 16#a4, 16#00, 16#00, 16#27, 16#a4, 16#00, 16#00,
+	   16#42, 16#43, 16#5e, 16#00, 16#62, 16#32, 16#2f, 16#00>>,
+    [#ieee_802_11_information_element{radio_id = RadioId,
+				      wlan_id = WlanId,
+				      flags = ['beacon','probe_response'],
+				      ie = <<?WLAN_EID_VENDOR_SPECIFIC, (byte_size(IE)):8, IE/bytes>>}
+     | IEs].
+
+wlan_cfg_ht_cap(RadioId, WlanId, IEs) ->
+    IE = <<16#0c, 16#00, 16#1b, 16#ff, 16#ff, 16#00, 16#00, 16#00,
+	   16#00, 16#00, 16#00, 16#00, 16#00, 16#00, 16#00, 16#10,
+	   16#00, 16#00, 16#00, 16#00, 16#00, 16#00, 16#00, 16#00,
+	   16#00, 16#00>>,
+    [#ieee_802_11_information_element{radio_id = RadioId,
+				      wlan_id = WlanId,
+				      flags = ['beacon','probe_response'],
+				      ie = <<?WLAN_EID_HT_CAP, (byte_size(IE)):8, IE/bytes>>}
+     | IEs].
+
+wlan_cfg_ht_opmode(RadioId, WlanId, IEs) ->
+    Channel = ?RadioChannel,
+    IE = <<Channel:8, 16#08, 16#00, 16#00, 16#00, 16#00, 16#00, 16#00,
+	   16#00, 16#00, 16#00, 16#00, 16#00, 16#00, 16#00, 16#00,
+	   16#00, 16#00, 16#00, 16#00, 16#00, 16#00>>,
+    [#ieee_802_11_information_element{radio_id = RadioId,
+				      wlan_id = WlanId,
+				      flags = ['beacon','probe_response'],
+				      ie = <<?WLAN_EID_HT_OPERATION, (byte_size(IE)):8, IE/bytes>>}
+     | IEs].
+
+
 internal_add_wlan(State, SSID, RadioID) ->
     WBID = 1,
     WlanId = 1,
+    Mode = '11g-only',
+    RateSet = rateset(Mode),
     Flags = [{frame,'802.3'}],
     MacMode = select_mac_mode(State#state.mac_types),
     TunnelMode = select_tunnel_mode(State#state.tunnel_modes, MacMode),
     Header = #capwap_header{radio_id = RadioID, wb_id = WBID, flags = Flags},
     State0 = State#state{mac_mode = MacMode, tunnel_mode = TunnelMode},
-    ReqElements = [#ieee_802_11_add_wlan{
+    ReqElements0 = [#ieee_802_11_add_wlan{
                       radio_id      = RadioID,
                       wlan_id       = WlanId,
                       capability    = [ess, short_slot_time],
                       auth_type     = open_system,
                       mac_mode      = MacMode,
                       tunnel_mode   = TunnelMode,
-                      suppress_ssid = 1,
+                      suppress_ssid = 0,
                       ssid          = SSID
                      }
                   ],
+    ReqElements1 = wlan_cfg_rateset(RadioID, WlanId, Mode, RateSet, ReqElements0),
+    ReqElements2 = wlan_cfg_wmm(RadioID, WlanId, ReqElements1),
+    ReqElements3 = wlan_cfg_ht_cap(RadioID, WlanId, ReqElements2),
+    ReqElements = wlan_cfg_ht_opmode(RadioID, WlanId, ReqElements3),
     State1 = send_request(Header, ieee_802_11_wlan_configuration_request, ReqElements, State0),
     set_radio(State1, #radio{radio_id = RadioID, ssid = SSID, started = true}).
 

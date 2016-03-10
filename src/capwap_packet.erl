@@ -1,6 +1,7 @@
 -module(capwap_packet).
 
 -export([decode/2, decode/3, encode/2, encode/4, msg_description/1]).
+-export([decode_rate/1, encode_rate/2]).
 -compile(export_all).
 
 -include("capwap_packet.hrl").
@@ -190,6 +191,8 @@ decode_vendor_subelements(<<Vendor:32/integer, Type:16/integer, Len:16/integer,
 			    Value:Len/bytes, Next/binary>>, Acc) ->
     decode_vendor_subelements(Next, [{{Vendor, Type}, Value}|Acc]).
 
+decode_rate(Rate) -> (Rate band 16#7F) * 5.
+
 %%%-------------------------------------------------------------------
 %%% encoder
 %%%-------------------------------------------------------------------
@@ -202,6 +205,21 @@ encode_bool(_)     -> 1.
 
 decode_bool(0) -> false;
 decode_bool(_) -> true.
+
+basic_rate('11b-only', Rate)
+  when Rate == 10; Rate == 20 ->
+    16#80;
+basic_rate('11g-only', Rate)
+  when Rate == 60; Rate == 120; Rate == 240 ->
+    16#80;
+basic_rate('11bg', Rate)
+  when Rate == 10; Rate == 20; Rate == 55; Rate == 110 ->
+    16#80;
+basic_rate(_, _) ->
+    0.
+
+encode_rate(Mode, Rate) ->
+    (Rate div 5) bor basic_rate(Mode, Rate).
 
 encode_flag(Key, List) ->
     encode_bool(proplists:get_bool(Key, List)).
