@@ -11,6 +11,7 @@
         pcapng,
         ssl,
         regine,
+        exometer_core,
         ctld
     ]},
     {mod, { capwap_app, []}},

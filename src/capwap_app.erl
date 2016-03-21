@@ -10,6 +10,9 @@
 %% ===================================================================
 
 start(_StartType, _StartArgs) ->
+    exometer:new([capwap, ac, wtp_count], counter, []),
+    exometer:new([capwap, ac, station_count], counter, []),
+
     case capwap_sup:start_link() of
 	{ok, _} = Ret ->
 	    capwap_trace:start_tracer(),

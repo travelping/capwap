@@ -223,6 +223,7 @@ stop_radio(CommonName, RadioId) ->
 init([WTPControlChannelAddress]) ->
     process_flag(trap_exit, true),
     lager:md([{control_channel_address, WTPControlChannelAddress}]),
+    exometer:update([capwap, ac, wtp_count], 1),
     capwap_wtp_reg:register(WTPControlChannelAddress),
     MTU = application:get_env(capwap, mtu, 1500),
     {ok, listen, #state{ctrl_channel_address = WTPControlChannelAddress,
@@ -318,7 +319,8 @@ idle({discovery_request, Seq, Elements, #capwap_header{
 
 idle({join_request, Seq, Elements, #capwap_header{
 			   radio_id = RadioId, wb_id = WBID, flags = Flags}},
-     State0 = #state{ctrl_channel_address = WTPControlChannelAddress, session = Session}) ->
+     State0 = #state{ctrl_channel_address = WTPControlChannelAddress,
+		     session = Session, id = CommonName}) ->
     {Address, _} = WTPControlChannelAddress,
     Version = get_wtp_version(Elements),
     SessionId = proplists:get_value(session_id, Elements),
@@ -337,6 +339,17 @@ idle({join_request, Seq, Elements, #capwap_header{
     State = send_response(Header, join_response, Seq, RespElements, State1),
     SessionOpts = wtp_accounting_infos(Elements, [{'CAPWAP-Radio-Id', RadioId}]),
     lager:info("WTP Session Start Opts: ~p", [SessionOpts]),
+
+    StartTime = erlang:system_time(milli_seconds),
+    exometer:update_or_create([capwap, wtp, CommonName, start_time], StartTime, gauge, []),
+    exometer:update_or_create([capwap, wtp, CommonName, stop_time], 0, gauge, []),
+    exometer:update_or_create([capwap, wtp, CommonName, station_count], 0, gauge, []),
+    lists:foreach(fun(X) ->
+			  exometer:update_or_create([capwap, wtp, CommonName, X], 0, gauge, [])
+		  end, ['InPackets', 'OutPackets', 'InOctets', 'OutOctets',
+			'Received-Fragments', 'Send-Fragments', 'Error-Invalid-Stations',
+			'Error-Fragment-Invalid', 'Error-Fragment-Too-Old']),
+
     ctld_session:start(Session, to_session(SessionOpts)),
     next_state(join, State);
 
@@ -479,14 +492,17 @@ run({new_station, BSS, SA}, _From, State = #state{id = WtpId, session_id = Sessi
                 lager:debug("Station ~p trying to associate, but wtp is full: ~p >= ~p", [SA, StationCount, MaxStations]),
                 {State, {error, too_many_clients}};
             {not_found, false} ->
+		NewState = State#state{station_count = StationCount + 1},
+		exometer:update([capwap, ac, station_count], 1),
+		exometer:update([capwap, wtp, WtpId, station_count], StationCount + 1),
                 case capwap_station_reg:lookup(SA) of
                     not_found ->
                         lager:debug("starting station: ~p", [SA]),
-                        {State#state{station_count = StationCount + 1},
+                        {NewState,
                          capwap_station_sup:new_station(self(), DataPath, WTPDataChannelAddress, WtpId, SessionId, BSS, SA, MacMode, TunnelMode)};
                     {ok, Station0} ->
                         lager:debug("TAKE-OVER: station ~p found as ~p", [{self(), SA}, Station0]),
-                        {State#state{station_count = StationCount + 1},
+                        {NewState,
                          ieee80211_station:take_over(Station0, self(), DataPath, WTPDataChannelAddress, WtpId, SessionId, BSS, MacMode, TunnelMode)}
                 end;
             {Ok = {ok, Station0}, _} ->
@@ -693,11 +709,13 @@ run(Event, State) ->
 %%                   {stop, Reason, NewState}
 %% @end
 %%--------------------------------------------------------------------
-handle_event(station_terminating, StateName, State=#state{station_count = SC}) ->
+handle_event(station_terminating, StateName, State=#state{id = WtpId, station_count = SC}) ->
     if SC == 0 ->
             lager:error("Station counter and stations got out of sync", []),
             next_state(StateName, State);
        true ->
+	    exometer:update([capwap, ac, station_count], -1),
+	    exometer:update([capwap, wtp, WtpId, station_count], SC - 1),
             next_state(StateName, State#state{station_count = SC - 1})
     end;
 
@@ -808,20 +826,22 @@ handle_info(Info, StateName, State) ->
 %% @end
 %%--------------------------------------------------------------------
 terminate(Reason, StateName,
-	  State = #state{data_channel_address = WTPDataChannelAddress,
-			 data_path = DataPath, socket = Socket,
-			 session = Session}) ->
-    error_logger:info_msg("AC session terminating in state ~p with state ~p with reason ~p~n", [StateName, State, Reason]),
-    case StateName of
-        run ->
-            DataPath ! {wtp_down, WTPDataChannelAddress},
-            ok;
-        _ ->
-            ok
-    end,
-    if Session /= undefined -> ctld_session:stop(Session, to_session([]));
+	  State = #state{socket = Socket, session = Session,
+			 id = CommonName, station_count = StationCount}) ->
+    error_logger:info_msg("AC session terminating in state ~p with state ~p with reason ~p~n",
+			  [StateName, State, Reason]),
+    AcctValues = stop_wtp(StateName, State),
+    if Session /= undefined ->
+	    ctld_session:stop(Session, to_session(AcctValues)),
+
+	    exometer:update([capwap, wtp, CommonName, station_count], 0),
+	    StopTime = erlang:system_time(milli_seconds),
+	    exometer:update_or_create([capwap, wtp, CommonName, stop_time], StopTime, gauge, []);
        true -> ok
     end,
+
+    exometer:update([capwap, ac, station_count], -StationCount),
+    exometer:update([capwap, ac, wtp_count], -1),
     socket_close(Socket),
     ok.
 
@@ -1358,12 +1378,20 @@ control_addresses(App) ->
 	end,
     [control_address(A) || A <- Addrs].
 
+get_wtp_count() ->
+    case exometer:get_value([capwap, ac, wtp_count]) of
+	{ok, {value, Value}}
+	  when is_integer(Value)
+	       -> Value;
+	_ -> 0
+    end.
+
 control_address({A,B,C,D}) ->
     #control_ipv4_address{ip_address = <<A,B,C,D>>,
-			  wtp_count = 0};
+			  wtp_count = get_wtp_count()};
 control_address({A,B,C,D,E,F,G,H}) ->
     #control_ipv6_address{ip_address = <<A:16,B:16,C:16,D:16,E:16,F:16,G:16,H:16>>,
-			  wtp_count = 0}.
+			  wtp_count = get_wtp_count()}.
 
 ac_addresses(App) ->
     Addrs =
@@ -1572,14 +1600,15 @@ accounting_update(WTP, SessionOpts) ->
 	{ok, WTPDataChannelAddress} ->
 	    WTPStats = capwap_dp:get_wtp(WTPDataChannelAddress),
 	    lager:debug("WTP: ~p, ~p, ~p", [WTP, WTPDataChannelAddress, WTPStats]),
+	    lager:debug("WTP SessionOpts: ~p", [SessionOpts]),
 	    {_, _STAs, _RefCnt, _MTU, Stats} = WTPStats,
-	    {RcvdPkts, SendPkts, RcvdBytes, SendBytes,
-	     _RcvdFragments, _SendFragments,
-	     _ErrInvalidStation, _ErrFragmentInvalid, _ErrFragmentTooOld} = Stats,
-	    Acc = [{'InPackets',  RcvdPkts},
-		   {'OutPackets', SendPkts},
-		   {'InOctets',   RcvdBytes},
-		   {'OutOctets',  SendBytes}],
+	    Acc = wtp_stats_to_accouting(Stats),
+
+	    CommonName = maps:get('Username', SessionOpts, <<"unknown">>),
+	    lists:foreach(fun ({Key, Value}) ->
+				  exometer:update([capwap, wtp, CommonName, Key], Value)
+			  end, Acc),
+
 	    ctld_session:merge(SessionOpts, to_session(Acc));
 	_ ->
 	    SessionOpts
@@ -1831,3 +1860,32 @@ start_change_state_pending_timer(#state{change_state_pending_timeout = Timeout}
 cancel_change_state_pending_timer(#state{protocol_timer = TRef} = State) ->
     gen_fsm:cancel_timer(TRef),
     State#state{protocol_timer = undefined}.
+
+wtp_stats_to_accouting({RcvdPkts, SendPkts, RcvdBytes, SendBytes,
+			RcvdFragments, SendFragments,
+			ErrInvalidStation, ErrFragmentInvalid, ErrFragmentTooOld}) ->
+    [{'InPackets',  RcvdPkts},
+     {'OutPackets', SendPkts},
+     {'InOctets',   RcvdBytes},
+     {'OutOctets',  SendBytes},
+     {'Received-Fragments',     RcvdFragments},
+     {'Send-Fragments',         SendFragments},
+     {'Error-Invalid-Stations', ErrInvalidStation},
+     {'Error-Fragment-Invalid', ErrFragmentInvalid},
+     {'Error-Fragment-Too-Old', ErrFragmentTooOld}];
+wtp_stats_to_accouting(_) ->
+    [].
+
+stop_wtp(run, #state{data_channel_address = WTPDataChannelAddress}) ->
+    lager:error("STOP_WTP in run"),
+    case catch (capwap_dp:del_wtp(WTPDataChannelAddress)) of
+	{ok, {WTPDataChannelAddress, _Stations, _RefCnt, _MTU, Stats} = Values} ->
+	    lager:debug("Delete WTP: ~p, ~p", [WTPDataChannelAddress, Values]),
+	    wtp_stats_to_accouting(Stats);
+	Other ->
+	    lager:debug("WTP del failed with: ~p", [Other]),
+	    []
+    end;
+stop_wtp(StateName, State) ->
+    lager:error("STOP_WTP in ~p with ~p", [StateName, State]),
+    [].
