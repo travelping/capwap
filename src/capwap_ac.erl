@@ -34,6 +34,7 @@
 %% TODO: convert constants into configuration values
 -define(IDLE_TIMEOUT, 30 * 1000).
 -define(SSL_ACCEPT_TIMEOUT, 30 * 1000).
+-define(ChangeStatePendingTimeout, 25 * 1000).
 -define(RetransmitInterval, 3 * 1000).
 -define(MaxRetransmit, 5).
 
@@ -58,6 +59,10 @@
 	  retransmit_counter,
 	  echo_request_timer,
 	  echo_request_timeout,
+
+	  change_state_pending_timeout,
+	  protocol_timer,	  	  %% used for the CAPWAP ChangeStatePendingTimer
+
 	  seqno = 0,
 	  version,
           station_count = 0,
@@ -220,6 +225,7 @@ init([WTPControlChannelAddress]) ->
     {ok, listen, #state{ctrl_channel_address = WTPControlChannelAddress,
 			request_queue = queue:new(),
 			ctrl_stream = capwap_stream:init(MTU),
+			change_state_pending_timeout = ?ChangeStatePendingTimeout,
                         radios = []}, 5000}.
 
 %%--------------------------------------------------------------------
@@ -394,9 +400,10 @@ join({configuration_status_request, Seq, Elements, #capwap_header{
 	++ radio_configuration(RadioId, State),
     Header = #capwap_header{radio_id = 0, wb_id = WBID, flags = Flags},
     State1 = send_response(Header, configuration_status_response, Seq, RespElements, State),
+    State2 = start_change_state_pending_timer(State1),
 
     EchoRequestTimeout = EchoRequestInterval * 2,
-    next_state(configure, State1#state{echo_request_timeout = EchoRequestTimeout});
+    next_state(configure, State2#state{echo_request_timeout = EchoRequestTimeout});
 
 join(Event, State) when ?IS_RUN_CONTROL_EVENT(Event) ->
     lager:debug("in JOIN got control event: ~p", [Event]),
@@ -419,7 +426,8 @@ configure({change_state_event_request, Seq, _Elements, #capwap_header{
 	  State) ->
     Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
     State1 = send_response(Header, change_state_event_response, Seq, [], State),
-    next_state(data_check, State1);
+    State2 = cancel_change_state_pending_timer(State1),
+    next_state(data_check, State2);
 
 configure(Event, State) when ?IS_RUN_CONTROL_EVENT(Event) ->
     lager:debug("in CONFIGURE got control event: ~p", [Event]),
@@ -1792,3 +1800,12 @@ get_admin_wifi_update([#ieee_802_11_tp_wlan{radio_id = RadioId,
             UpdatedWlan = Wlan#ieee_802_11_tp_wlan{ssid = LocalConfSSId, key = LocalConfKey},
             get_admin_wifi_update(RestWlan, AdminSSIds, [UpdatedWlan | Accu])
     end.
+
+start_change_state_pending_timer(#state{change_state_pending_timeout = Timeout}
+				 = State) ->
+    TRef = gen_fsm:send_event_after(Timeout, timeout),
+    State#state{protocol_timer = TRef}.
+
+cancel_change_state_pending_timer(#state{protocol_timer = TRef} = State) ->
+    gen_fsm:cancel_timer(TRef),
+    State#state{protocol_timer = undefined}.
