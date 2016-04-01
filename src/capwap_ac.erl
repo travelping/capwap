@@ -8,7 +8,7 @@
 
 %% Extern API
 -export([firmware_download/3,
-         set_ssid/3,
+         set_ssid/4,
          stop_radio/2]).
 
 %% gen_fsm callbacks
@@ -66,12 +66,13 @@
 	  seqno = 0,
 	  version,
           station_count = 0,
-          radios
+          wlans
 }).
 
--record(radio, {
-          radio_id,
+-record(wlan, {
+          wlan_identifier,
           ssid,
+	  suppress_ssid = 0,
           started = false,
           reply_to_after_start
          }).
@@ -184,18 +185,20 @@ firmware_download(CommonName, DownloadLink, Sha) ->
             {error, not_found}
     end.
 
-set_ssid(CommonName, SSID, RadioID) ->
+set_ssid(CommonName, RadioId, SSID, SuppressSSID) ->
+    WlanId = 1,
+    WlanIdent = {RadioId, WlanId},
     case capwap_wtp_reg:lookup(CommonName) of
         {ok, Pid} ->
-            gen_fsm:sync_send_all_state_event(Pid, {set_ssid, SSID, RadioID});
+            gen_fsm:sync_send_all_state_event(Pid, {set_ssid, WlanIdent, SSID, SuppressSSID});
         not_found ->
             {error, not_found}
     end.
 
-stop_radio(CommonName, RadioID) ->
+stop_radio(CommonName, RadioId) ->
     case capwap_wtp_reg:lookup(CommonName) of
         {ok, Pid} ->
-            gen_fsm:sync_send_all_state_event(Pid, {stop_radio, RadioID});
+            gen_fsm:sync_send_all_state_event(Pid, {stop_radio, RadioId});
         not_found ->
             {error, not_found}
     end.
@@ -226,7 +229,7 @@ init([WTPControlChannelAddress]) ->
 			request_queue = queue:new(),
 			ctrl_stream = capwap_stream:init(MTU),
 			change_state_pending_timeout = ?ChangeStatePendingTimeout,
-                        radios = []}, 5000}.
+                        wlans = []}, 5000}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -515,10 +518,9 @@ run({ieee_802_11_wlan_configuration_response, _Seq,
         case proplists:get_value(result_code, Elements) of
             0 ->
                 lager:debug("IEEE 802.11 WLAN Configuration ok"),
-                case lists:keyfind(false, #radio.started, State#state.radios) of
-                    #radio{ssid = SSID, radio_id = RadioId,
-                           reply_to_after_start=From} ->
-                        State0 = internal_add_wlan(State, SSID, RadioId),
+                case lists:keyfind(false, #wlan.started, State#state.wlans) of
+                    #wlan{reply_to_after_start = From} = Wlan ->
+                        State0 = internal_add_wlan(Wlan, State),
                         gen_fsm:reply(From, ok),
                         State0;
                     _ ->
@@ -568,10 +570,15 @@ run({wtp_event_request, Seq, Elements, RequestHeader =
     next_state(run, State3);
 
 run(configure, State = #state{id = WtpId, session = Session}) ->
-    lager:debug("configure WTP: ~p", [WtpId]),
+    lager:debug("configure WTP: ~p, Session: ~p", [WtpId, Session]),
     RadioId = 1,
+    WlanId = 1,
+    WLanIdent = {RadioId, WlanId},
     {ok, SSID} = ctld_session:get(Session, 'CAPWAP-SSID'),
-    State1 = internal_add_wlan(State, SSID, RadioId),
+    {ok, SuppressSSID} = ctld_session:get(Session, 'CAPWAP-Suppress-SSID'),
+    Wlan = #wlan{wlan_identifier = WLanIdent, started = false,
+		 ssid = SSID, suppress_ssid = SuppressSSID},
+    State1 = internal_add_wlan(Wlan, State),
     next_state(run, State1);
 
 run({add_station, #capwap_header{radio_id = RadioId, wb_id = WBID}, MAC, StaCaps}, State) ->
@@ -713,28 +720,32 @@ handle_event(_Event, StateName, State) ->
 %%                   {stop, Reason, Reply, NewState}
 %% @end
 %%--------------------------------------------------------------------
-handle_sync_event({set_ssid, SSID, RadioId}, From, run, State) ->
-    case get_radio(State, RadioId) of
+handle_sync_event({set_ssid, WlanIdent, SSID, SuppressSSID}, From, run, State) ->
+    case get_wlan(WlanIdent, State) of
         false ->
-            State1 = internal_add_wlan(State, SSID, RadioId),
-            reply(ok, run, State1);
-        #radio{} ->
-            State1 = internal_del_wlan(State, RadioId),
-            State2 = set_radio(State1, #radio{started=false,
-                                              reply_to_after_start=From,
-                                              ssid = SSID,
-                                              radio_id = RadioId}),
+	    Wlan = #wlan{wlan_identifier = WlanIdent, started = false,
+			 ssid = SSID, suppress_ssid = SuppressSSID},
+	    State1 = internal_add_wlan(Wlan, State),
+	    reply(ok, run, State1);
+
+        #wlan{} ->
+            State1 = internal_del_wlan(WlanIdent, State),
+
+	    Wlan = #wlan{wlan_identifier = WlanIdent, started = false,
+			 ssid = SSID, suppress_ssid = SuppressSSID,
+			 reply_to_after_start = From},
+            State2 = set_wlan(Wlan, State1),
             next_state(run, State2)
     end;
 
 handle_sync_event({stop_radio, RadioId}, _From, run, State) ->
-    case get_radio(State, RadioId) of
-        false ->
-            reply({error, not_active}, run, State);
-        #radio{} ->
-            State1 = internal_del_wlan(State, RadioId),
-            reply(ok, run, State1)
-    end;
+    State1 =
+	lists:foldl(fun(WlanIdent = {RId, _}, S) when RId == RadioId->
+			    internal_del_wlan(WlanIdent, S);
+		       (_, S) ->
+			    S
+		    end, State, State#state.wlans),
+    reply(ok, run, State1);
 
 handle_sync_event({set_ssid, _SSID, _RadioId}, _From, StateName, State)
   when StateName =/= run ->
@@ -1625,8 +1636,19 @@ wtp_config_get(LocalCnf, {DefaultName, LocalName, Default}) ->
 wtp_config_get(_, {DefaultName, Default}) ->
     application:get_env(capwap, DefaultName, Default).
 
+get_ssid_cfg(RadioId, SSIDs, DefaultSSIDSuppress) ->
+    case lists:keyfind(RadioId, 1, SSIDs) of
+	{_, SSID} ->
+	    {SSID, DefaultSSIDSuppress};
+	{_, SSID, SuppressSSID} ->
+	    {SSID, SuppressSSID};
+	_ ->
+	    {undefined, DefaultSSIDSuppress}
+    end.
+
 create_initial_ctld_params(CommonName) ->
-    [WlanHoldTime, PsmIdle, PsmBusy, MaxWifi, SSIDs, DefaultSSID,
+    [WlanHoldTime, PsmIdle, PsmBusy, MaxWifi, SSIDs,
+     DefaultSSID, DefaultSSIDSuppress,
      DynSSIDSuffixLen, EchoRequestInterval, DiscoveryInterval,
      IdleTimeout, DataChannelDeadInterval, ACJoinTimeout, AdminPW] =
         wtp_config_get(CommonName,
@@ -1636,6 +1658,7 @@ create_initial_ctld_params(CommonName) ->
                         {max_stations, max_stations, 100},
                         {ssids, ssids, []},
                         {default_ssid, <<"CAPWAP">>},
+                        {default_ssid_suppress, 0},
                         {dynamic_ssid_suffix_len, false},
                         {echo_request_interval, 10},
                         {discovery_interval, 20},
@@ -1645,7 +1668,7 @@ create_initial_ctld_params(CommonName) ->
                         {default_admin_pw, admin_pw, undefined}
                        ]),
     RadioId = 1,
-    SSID = proplists:get_value(RadioId, SSIDs),
+    {SSID, SuppressSSID} = get_ssid_cfg(RadioId, SSIDs, DefaultSSIDSuppress),
     SSID2 = case SSID of
                 undefined when is_integer(DynSSIDSuffixLen), is_binary(CommonName) ->
                     binary:list_to_bin([DefaultSSID, $-, binary:part(CommonName, size(CommonName) - DynSSIDSuffixLen, DynSSIDSuffixLen)]);
@@ -1656,6 +1679,7 @@ create_initial_ctld_params(CommonName) ->
      {'CAPWAP-Power-Save-Busy-Timeout', PsmBusy},
      {'CAPWAP-Max-WIFI-Clients', MaxWifi},
      {'CAPWAP-SSID', SSID2},
+     {'CAPWAP-Suppress-SSID', SuppressSSID},
      {'CAPWAP-Echo-Request-Interval', EchoRequestInterval},
      {'CAPWAP-Discovery-Interval', DiscoveryInterval},
      {'CAPWAP-Idle-Timeout', IdleTimeout},
@@ -1711,9 +1735,9 @@ wlan_cfg_ht_opmode(RadioId, WlanId, IEs) ->
      | IEs].
 
 
-internal_add_wlan(State, SSID, RadioID) ->
+internal_add_wlan(#wlan{wlan_identifier = {RadioID, WlanId}, ssid = SSID,
+			suppress_ssid = SuppressSSID} = Wlan, State) ->
     WBID = 1,
-    WlanId = 1,
     Mode = '11g-only',
     RateSet = rateset(Mode),
     Flags = [{frame,'802.3'}],
@@ -1728,7 +1752,7 @@ internal_add_wlan(State, SSID, RadioID) ->
                       auth_type     = open_system,
                       mac_mode      = MacMode,
                       tunnel_mode   = TunnelMode,
-                      suppress_ssid = 0,
+                      suppress_ssid = SuppressSSID,
                       ssid          = SSID
                      }
                   ],
@@ -1737,34 +1761,32 @@ internal_add_wlan(State, SSID, RadioID) ->
     ReqElements3 = wlan_cfg_ht_cap(RadioID, WlanId, ReqElements2),
     ReqElements = wlan_cfg_ht_opmode(RadioID, WlanId, ReqElements3),
     State1 = send_request(Header, ieee_802_11_wlan_configuration_request, ReqElements, State0),
-    set_radio(State1, #radio{radio_id = RadioID, ssid = SSID, started = true}).
+    set_wlan(Wlan#wlan{started = true}, State1).
 
-internal_del_wlan(State, RadioID) ->
+internal_del_wlan(WlanIdent = {RadioId, WlanId}, State) ->
     WBID = 1,
-    WlanId = 1,
     Flags = [{frame,'802.3'}],
-    MacMode = select_mac_mode(State#state.mac_types),
-    TunnelMode = select_tunnel_mode(State#state.tunnel_modes, MacMode),
-    Header = #capwap_header{radio_id = RadioID, wb_id = WBID, flags = Flags},
-    State0 = State#state{mac_mode = MacMode, tunnel_mode = TunnelMode},
+    Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
     ReqElemDel = [#ieee_802_11_delete_wlan{
-                     radio_id = RadioID,
+                     radio_id = RadioId,
                      wlan_id = WlanId}
                  ],
-    State1 = send_request(Header, ieee_802_11_wlan_configuration_request, ReqElemDel, State0),
-    remove_radio(State1, RadioID).
+    State0 = send_request(Header, ieee_802_11_wlan_configuration_request, ReqElemDel, State),
+    remove_wlan(WlanIdent, State0).
 
-remove_radio(State = #state{radios = Radios}, RadioId) ->
-    LessRadios = lists:keydelete(RadioId, 2, Radios),
-    State#state{radios = LessRadios}.
+remove_wlan(WlanIdent, State = #state{wlans = Wlans}) ->
+    LessWlans = lists:keydelete(WlanIdent, #wlan.wlan_identifier, Wlans),
+    State#state{wlans = LessWlans}.
 
-get_radio(#state{radios = Radios}, RadioId) ->
-    lists:keyfind(RadioId, #radio.radio_id, Radios).
+get_wlan(WlanIdent, #state{wlans = Wlans}) ->
+    lists:keyfind(WlanIdent, #wlan.wlan_identifier, Wlans).
 
-set_radio(State = #state{radios=Radios}, Radio = #radio{radio_id = RadioId})
-  when is_integer(RadioId), RadioId > 0 ->
-    Radios1 = lists:keystore(RadioId, #radio.radio_id, Radios, Radio),
-    State#state{radios = Radios1}.
+set_wlan(Wlan = #wlan{wlan_identifier = {RadioId, WlanId} = WlanIdent},
+	 State = #state{wlans = Wlans})
+  when is_integer(RadioId), RadioId > 0,
+       is_integer(WlanId),  WlanId > 0 ->
+    Wlans1 = lists:keystore(WlanIdent, #wlan.wlan_identifier, Wlans, Wlan),
+    State#state{wlans = Wlans1}.
 
 get_admin_wifi_updates(State, IEs) ->
     StartedWlans = [X || X <- IEs, element(1, X) == ieee_802_11_tp_wlan],

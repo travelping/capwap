@@ -31,6 +31,7 @@
                     {software, <<"SCG">>}]},
         {ac_name, <<"CAPWAP AC">>},
         {default_ssid, <<"DEV CAPWAP WIFI">>},
+        {default_ssid_suppress, 0},
         {dynamic_ssid_suffix_len, false},
         {echo_request_interval, 10},
         {discovery_interval, 20},
@@ -38,7 +39,8 @@
         {wtps, [{<<"id1">>, [{psm_idle_timeout, 60},
                              {psm_busy_timeout, 300},
                              {admin_pw, <<"secret_password">>},
-                             {ssids, [{1, <<"SSID">>}]},
+			     %% SSID format is {RadioId, <<"SSID">>, SupressSSID}
+                             {ssids, [{1, <<"SSID">>, 0}]},
                              {admin_ssids, [{{1,1}, <<"AdminSSID">>}]},
                              {max_stations, 10}]
                 }]

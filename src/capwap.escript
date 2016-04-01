@@ -62,7 +62,8 @@ main(_, ["set-ssid", CommonName, SSID]) ->
     main(["set-ssid", CommonName, SSID, "1"]);
 
 main(_, ["set-ssid", CommonName, SSID, RadioID]) ->
-    Res = rpc(capwap_ac, set_ssid, [list_to_binary(CommonName), list_to_binary(SSID), list_to_integer(RadioID)]),
+    Res = rpc(capwap_ac, set_ssid, [list_to_binary(CommonName), list_to_integer(RadioID),
+				    list_to_binary(SSID), 0]),
     io:format("~nResult: ~p~n", [Res]);
 
 main(_, ["stop-radio", CommonName, RadioID]) ->
