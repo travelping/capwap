@@ -268,6 +268,32 @@ connected({'802.3', Data}, _From,
     lager:debug("in CONNECTED got 802.3 Data:~n~s", [flower_tools:hexdump(Data)]),
     {reply, {flow, BSS, MAC, MacMode, TunnelMode}, connected, State, ?IDLE_TIMEOUT};
 
+connected(Event = {FrameType, _DA, _SA, BSS, 0, 0, Frame}, _From,
+	   State0 = #state{radio_mac = BSS, mac = MAC, mac_mode = MacMode,
+			   tunnel_mode = TunnelMode})
+  when MacMode == local_mac andalso
+       (FrameType == 'Association Request' orelse FrameType == 'Reassociation Request') ->
+    lager:debug("in CONNECTED Local-MAC Mode got Association Request: ~p", [Event]),
+
+    %% Mobility Event!!! The station Reattached to the SAME AP and the AP had not yet
+    %% deleted the Station
+
+    %% MAC blocks would go here!
+
+    %% RFC 5416, Sect. 2.2.2:
+    %%
+    %%   While the MAC is terminated on the WTP, it is necessary for the AC to
+    %%   be aware of mobility events within the WTPs.  Thus, the WTP MUST
+    %%   forward the IEEE 802.11 Association Request frames to the AC.  The AC
+    %%   MAY reply with a failed Association Response frame if it deems it
+    %%   necessary, and upon receipt of a failed Association Response frame
+    %%   from the AC, the WTP MUST send a Disassociation frame to the station.
+
+    State = update_sta_from_mgmt_frame(FrameType, Frame, State0),
+
+    Reply = {add, BSS, MAC, State#state.capabilities, MacMode, TunnelMode},
+    {reply, Reply, connected, State, ?IDLE_TIMEOUT};
+
 connected(Event = {'Deauthentication', _DA, _SA, BSS, 0, 0, _Frame}, _From,
 	   State = #state{radio_mac = BSS, mac = MAC, mac_mode = MacMode,
 			  tunnel_mode = TunnelMode}) ->
