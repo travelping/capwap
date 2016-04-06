@@ -3,6 +3,14 @@ capwap
 
 Erlang CAPWAP AC implementation.
 
+Version 1.6.0 - 06 Apr 2016
+---------------------------
+
+* support for 802.11n
+* initial support for WMM
+* include all IEs required by the RFC in messages
+* add exometer based statisticss
+
 Version 1.5.0 - 23 Apr 2015
 ---------------------------
 
