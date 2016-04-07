@@ -396,6 +396,31 @@ gen_auth_fail(DA, SA, BSS, _InFrame) ->
       SequenceControl:16,
       Frame/binary>>.
 
+station_from_mgmt_frame(DA, SA, BSS) ->
+    case BSS of
+	DA -> SA;
+	SA -> DA;
+	_  -> undefined
+    end.
+
+ieee80211_request(AC, FrameType, DA, SA, BSS, FromDS, ToDS, Frame)
+  when FrameType == 'Deauthentication';
+       FrameType == 'Disassociation' ->
+    lager:warning("got IEEE 802.11 Frame: ~p", [{FrameType, DA, SA, BSS, FromDS, ToDS, Frame}]),
+
+    STA = station_from_mgmt_frame(DA, SA, BSS),
+
+    lager:debug("search Station ~p", [{AC, STA}]),
+    case capwap_station_reg:lookup(AC, STA) of
+        not_found ->
+            lager:debug("not found"),
+            {ok, ignore};
+
+        {ok, Station} ->
+            lager:debug("found as ~p", [Station]),
+            gen_fsm:sync_send_event(Station, {FrameType, DA, SA, BSS, FromDS, ToDS, Frame})
+    end;
+
 ieee80211_request(_AC, _FrameType, _DA, SA, BSS, _FromDS, _ToDS, _Frame)
   when SA == BSS ->
     %% OpenCAPWAP is stupid, it mirrors our own Frame back to us....
@@ -420,22 +445,6 @@ ieee80211_request(AC, FrameType, DA, SA, BSS, FromDS, ToDS, Frame)
 	    gen_fsm:sync_send_event(Station, {FrameType, DA, SA, BSS, FromDS, ToDS, Frame});
 	Other ->
 	    Other
-    end;
-
-ieee80211_request(AC, FrameType, DA, SA, BSS, FromDS, ToDS, Frame)
-  when FrameType == 'Deauthentication';
-       FrameType == 'Disassociation' ->
-    lager:warning("got IEEE 802.11 Frame: ~p", [{FrameType, DA, SA, BSS, FromDS, ToDS, Frame}]),
-
-    lager:debug("search Station ~p", [{AC, SA}]),
-    case capwap_station_reg:lookup(AC, SA) of
-        not_found ->
-            lager:debug("not found"),
-            {ok, ignore};
-
-        {ok, Station} ->
-            lager:debug("found as ~p", [Station]),
-            gen_fsm:sync_send_event(Station, {FrameType, DA, SA, BSS, FromDS, ToDS, Frame})
     end;
 
 ieee80211_request(_AC, FrameType, _DA, _SA, _BSS, _FromDS, _ToDS, _Frame)
