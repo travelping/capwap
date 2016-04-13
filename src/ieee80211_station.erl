@@ -357,7 +357,7 @@ terminate(_Reason, StateName, State = #state{ac = AC, radio_mac = RadioMAC,
        true ->
 	    ok
     end,
-    capwap_ac:station_terminating(AC),
+    capwap_ac:station_detaching(AC),
     lager:warning("Station ~s terminated in State ~w", [format_mac(MAC), StateName]),
     ok.
 
@@ -459,7 +459,7 @@ handle_take_over({take_over, AC, DataPath, WTPDataChannelAddress, WtpId, Session
 		 State0 = #state{ac = OldAC, ac_monitor = OldACMonitor,
 				 data_path = _OldDataPath,
 				 radio_mac = OldRadioMAC, mac = ClientMAC,
-				 mac_mode = _OldMacMode, tunnel_mode = _OldTunnelMode}) ->
+				 mac_mode = OldMacMode, tunnel_mode = OldTunnelMode}) ->
     %% NOTE: we could build a real WIFI switch when we could build OF rules that sends
     %%       the traffic to all WTP's this client is still valid on!
     %%
@@ -469,10 +469,12 @@ handle_take_over({take_over, AC, DataPath, WTPDataChannelAddress, WtpId, Session
     lager:debug("Takeover station ~p as ~w", [{OldAC, OldRadioMAC, ClientMAC}, self()]),
     lager:debug("Register station ~p as ~w", [{AC, RadioMAC, ClientMAC}, self()]),
 
+    gen_fsm:send_event(OldAC, {detach_station, 1, 1, OldRadioMAC, ClientMAC, OldMacMode, OldTunnelMode}),
+    capwap_ac:station_detaching(OldAC),
     capwap_station_reg:unregister(OldAC, ClientMAC),
-    capwap_station_reg:register(AC, ClientMAC),
-
     erlang:demonitor(OldACMonitor, [flush]),
+
+    capwap_station_reg:register(AC, ClientMAC),
     ACMonitor = erlang:monitor(process, AC),
 
     State = State0#state{ac = AC, ac_monitor = ACMonitor,

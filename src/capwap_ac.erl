@@ -4,7 +4,7 @@
 
 %% API
 -export([start_link/1, accept/3, get_data_channel_address/1, take_over/1, new_station/3,
-         station_terminating/1]).
+         station_detaching/1]).
 
 %% Extern API
 -export([firmware_download/3,
@@ -170,8 +170,8 @@ take_over(WTP) ->
 new_station(WTP, BSS, SA) ->
     gen_fsm:sync_send_event(WTP, {new_station, BSS, SA}).
 
-station_terminating(AC) ->
-    gen_fsm:send_all_state_event(AC, station_terminating).
+station_detaching(AC) ->
+    gen_fsm:send_all_state_event(AC, station_detaching).
 
 %%%===================================================================
 %%% extern APIs
@@ -709,7 +709,7 @@ run(Event, State) ->
 %%                   {stop, Reason, NewState}
 %% @end
 %%--------------------------------------------------------------------
-handle_event(station_terminating, StateName, State=#state{id = WtpId, station_count = SC}) ->
+handle_event(station_detaching, StateName, State=#state{id = WtpId, station_count = SC}) ->
     if SC == 0 ->
             lager:error("Station counter and stations got out of sync", []),
             next_state(StateName, State);
