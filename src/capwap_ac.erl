@@ -1743,9 +1743,10 @@ wlan_cfg_wmm(RadioId, WlanId, IEs) ->
 
 wlan_cfg_ht_cap(RadioId, WlanId, IEs) ->
     IE = <<16#0c, 16#00, 16#1b, 16#ff, 16#ff, 16#00, 16#00, 16#00,
-	   16#00, 16#00, 16#00, 16#00, 16#00, 16#00, 16#00, 16#10,
+	   16#00, 16#00, 16#00, 16#00, 16#00, 16#00, 16#00, 16#01,
 	   16#00, 16#00, 16#00, 16#00, 16#00, 16#00, 16#00, 16#00,
 	   16#00, 16#00>>,
+
     [#ieee_802_11_information_element{radio_id = RadioId,
 				      wlan_id = WlanId,
 				      flags = ['beacon','probe_response'],
@@ -1754,7 +1755,7 @@ wlan_cfg_ht_cap(RadioId, WlanId, IEs) ->
 
 wlan_cfg_ht_opmode(RadioId, WlanId, IEs) ->
     Channel = ?RadioChannel,
-    IE = <<Channel:8, 16#08, 16#00, 16#00, 16#00, 16#00, 16#00, 16#00,
+    IE = <<Channel:8, 16#00, 16#00, 16#00, 16#00, 16#00, 16#00, 16#00,
 	   16#00, 16#00, 16#00, 16#00, 16#00, 16#00, 16#00, 16#00,
 	   16#00, 16#00, 16#00, 16#00, 16#00, 16#00>>,
     [#ieee_802_11_information_element{radio_id = RadioId,
@@ -1787,8 +1788,8 @@ internal_add_wlan(#wlan{wlan_identifier = {RadioID, WlanId}, ssid = SSID,
                   ],
     ReqElements1 = wlan_cfg_rateset(RadioID, WlanId, Mode, RateSet, ReqElements0),
     ReqElements2 = wlan_cfg_wmm(RadioID, WlanId, ReqElements1),
-    ReqElements3 = wlan_cfg_ht_cap(RadioID, WlanId, ReqElements2),
-    ReqElements = wlan_cfg_ht_opmode(RadioID, WlanId, ReqElements3),
+    ReqElements3 = wlan_cfg_ht_opmode(RadioID, WlanId, ReqElements2),
+    ReqElements = wlan_cfg_ht_cap(RadioID, WlanId, ReqElements3),
     State1 = send_request(Header, ieee_802_11_wlan_configuration_request, ReqElements, State0),
     set_wlan(Wlan#wlan{started = true}, State1).
 
