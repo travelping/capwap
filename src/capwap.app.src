@@ -31,21 +31,62 @@
         {versions, [{hardware, <<"SCG">>},
                     {software, <<"SCG">>}]},
         {ac_name, <<"CAPWAP AC">>},
+
         {default_ssid, <<"DEV CAPWAP WIFI">>},
         {default_ssid_suppress, 0},
-        {dynamic_ssid_suffix_len, false},
-        {echo_request_interval, 10},
-        {discovery_interval, 20},
-        {idle_timeout, 300},
-        {wtps, [{<<"id1">>, [{psm_idle_timeout, 60},
-                             {psm_busy_timeout, 300},
-                             {admin_pw, <<"secret_password">>},
-			     %% SSID format is {RadioId, <<"SSID">>, SupressSSID}
-                             {ssids, [{1, <<"SSID">>, 0}]},
-                             {admin_ssids, [{{1,1}, <<"AdminSSID">>}]},
-                             {max_stations, 10}]
-                }]
-        }
+        {dynamic_ssid_suffix_len, false}
+
+%%	{wtps, [
+%%		%% default for ALL WTP's
+%%		{defaults,
+%%		 [{psm_idle_timeout,           30},
+%%		  {psm_busy_timeout,           300},
+%%		  {max_stations,               100},
+%%		  {echo_request_interval,      60},
+%%		  {discovery_interval,         20},
+%%		  {idle_timeout,               300},
+%%		  {data_channel_dead_interval, 70},
+%%		  {ac_join_timeout,            70},
+%%		  {admin_pw,                   undefined},
+%%		  {wlan_hold_time,             15},
+%%		  {radio_settings,
+%%		   [{'802.11a', []},
+%%		    {'802.11b', []},
+%%		    {'802.11g',
+%%		     [{channel, 11},
+%%		      {wlans,   []}
+%%		     ]}
+%%		   ]}
+%%		 ]},
+%%
+%%		%% per WTP config
+%%		{<<"00900b3e0125">>,
+%%		 [{admin_pw, <<"secret_password">>},
+%%		  {max_stations, 10},
+%%		  {radio_settings,
+%%		   [{'802.11a', []},
+%%		    {'802.11b', []},
+%%		    {'802.11g',
+%%		     [{channel, 10},
+%%		      {wlans,   []}
+%%		     ]}
+%%		   ]},
+%%		  {radio,
+%%		   [{1,
+%%		     [{channel,  9},
+%%		      {wlans,
+%%		       [[{ssid,          "Test #1"},
+%%			 {suppress_ssid, false}
+%%			],
+%%			[{ssid,          "Test #2"},
+%%			 {suppress_ssid, false}
+%%			]
+%%		       ]}
+%%		     ]}
+%%		   ]}
+%%		 ]}
+%%	       ]}
+
         %% {ac_ipv4_list, [{92,43,52,4}]}
         %% {ac_address_list_with_prio, [{1, {80,154,129,132}}]}
     ]}
