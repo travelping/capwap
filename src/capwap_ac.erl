@@ -475,13 +475,18 @@ data_check({Msg, Seq, Elements, Header}, State) ->
     lager:warning("in DATA_CHECK got unexpexted: ~p", [{Msg, Seq, Elements, Header}]),
     next_state(data_check, State).
 
-run({new_station, BSS, SA}, _From, State = #state{id = WtpId, session_id = SessionId,
-						  data_channel_address = WTPDataChannelAddress, data_path = DataPath,
-                                                  mac_mode = MacMode, tunnel_mode = TunnelMode,
-                                                  station_count  = StationCount,
-                                                  session = Session}) ->
+run({new_station, BSS, SA}, _From,
+    State = #state{id = WtpId, session_id = SessionId,
+		   config = #wtp{max_stations = MaxStations},
+		   data_channel_address = WTPDataChannelAddress, data_path = DataPath,
+		   mac_mode = MacMode, tunnel_mode = TunnelMode,
+		   station_count  = StationCount,
+		   session = Session}) ->
     lager:info("in RUN got new_station: ~p", [SA]),
-    {ok, MaxStations} = ctld_session:get(Session, 'CAPWAP-Max-WIFI-Clients'),
+
+    %% TODO: rework session context to handle this again
+    %% {ok, MaxStations} = ctld_session:get(Session, 'CAPWAP-Max-WIFI-Clients'),
+
     WTPFullPred = StationCount + 1 > MaxStations,
     %% we have to repeat the search again to avoid a race
     lager:debug("search for station ~p", [{self(), SA}]),
