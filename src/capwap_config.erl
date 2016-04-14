@@ -77,16 +77,18 @@ wtp_config(CN) ->
     '#new-wtp'(WTP2).
 
 bool_to_int(true) -> 1;
-bool_to_int(X) when X > 0 -> 1;
+bool_to_int(X) when is_integer(X) andalso X > 0 -> 1;
 bool_to_int(_) -> 0.
 
 %% derive WLAN defaults from Radio settings
 wtp_init_wlan_radio_defaults(_Radio, WLAN) ->
-    WLAN#wtp_wlan{wlan_id  = 1,
+    WLAN#wtp_wlan{wlan_id = 1,
 		  suppress_ssid = bool_to_int(get(ac, suppress_ssid, false))}.
 
 wtp_init_wlan(_CN, _Radio, {ssid, _}, WLAN) ->
     WLAN;
+wtp_init_wlan(_CN, _Radio, {suppress_ssid, Value}, WLAN) ->
+    WLAN#wtp_wlan{suppress_ssid = bool_to_int(Value)};
 wtp_init_wlan(CN, Radio, Setting, WLAN) ->
     lager:debug("ignoring ~p on Radio (~w:~w)", [Setting, CN, Radio#wtp_radio.radio_id]),
     WLAN.
