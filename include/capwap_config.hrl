@@ -15,7 +15,26 @@
 -record(wtp_radio, {
 	  radio_id,
 	  radio_type,
+	  operation_mode,
 	  channel,
+	  beacon_interval,
+	  dtim_period,
+	  short_preamble,
+	  rts_threshold,
+	  short_retry,
+	  long_retry,
+	  fragmentation_threshold,
+	  tx_msdu_lifetime,
+	  rx_msdu_lifetime,
+	  tx_power,
+	  channel_assessment,
+	  energy_detect_threshold,
+	  band_support,
+	  ti_threshold,
+	  diversity,
+	  combiner,
+	  antenna_selection,
+	  report_interval,
 	  wlans
 	 }).
 

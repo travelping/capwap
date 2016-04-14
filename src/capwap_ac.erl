@@ -1,5 +1,7 @@
 -module(capwap_ac).
 
+-compile({parse_transform, cut}).
+
 -behaviour(gen_fsm).
 
 %% API
@@ -1237,57 +1239,130 @@ rateset('11g-only') ->
 rateset('11bg') ->
     [10, 20, 55, 110, 60, 90, 120, 180, 240, 360, 480, 540].
 
-radio_cfg_rateset(#wtp_radio{radio_id = RadioId}, Mode, RateSet, IEs) ->
+radio_cfg(decryption_error_report_period,
+	  #wtp_radio{radio_id = RadioId,
+		    report_interval = ReportInterval}, IEs) ->
+    [#decryption_error_report_period{
+	radio_id = RadioId,
+	report_interval = ReportInterval}
+     | IEs];
+
+radio_cfg(ieee_802_11_antenna,
+	  #wtp_radio{radio_id = RadioId,
+		     diversity = Diversity,
+		     combiner = Combiner,
+		     antenna_selection = AntennaSelection}, IEs) ->
+    [#ieee_802_11_antenna{
+	radio_id = RadioId,
+	diversity = Diversity,
+	combiner = Combiner,
+	antenna_selection = << <<X:8>> || X <- AntennaSelection >>}
+     | IEs];
+
+radio_cfg(ieee_802_11_direct_sequence_control,
+	  #wtp_radio{radio_id = RadioId,
+		     operation_mode = OperMode,
+		     channel = Channel,
+		     channel_assessment = CCA,
+		     energy_detect_threshold = EDT}, IEs)
+  when Channel >= 1 andalso
+       Channel =< 14 andalso
+       (OperMode == '802.11b' orelse
+	OperMode == '802.11g') ->
+    [#ieee_802_11_direct_sequence_control{
+	radio_id = RadioId,
+	current_chan = Channel,
+	current_cca = CCA,
+	energy_detect_threshold = EDT}
+     | IEs];
+
+radio_cfg(ieee_802_11_ofdm_control,
+	  #wtp_radio{radio_id = RadioId,
+		     operation_mode = OperMode,
+		     channel = Channel,
+		     band_support = BandSupport,
+		     ti_threshold = TIThreshold}, IEs)
+  when OperMode == '802.11a' ->
+    [#ieee_802_11_ofdm_control{
+	radio_id = RadioId,
+	current_chan = Channel,
+	band_support = BandSupport,
+	ti_threshold = TIThreshold}
+     | IEs];
+
+radio_cfg(ieee_802_11_mac_operation,
+	  #wtp_radio{radio_id = RadioId,
+		     rts_threshold = RTS_threshold,
+		     short_retry = ShortRetry,
+		     long_retry = LongRetry,
+		     fragmentation_threshold = FragThreshold,
+		     tx_msdu_lifetime = TX_msdu_lifetime,
+		     rx_msdu_lifetime = RX_msdu_lifetime}, IEs) ->
+    [#ieee_802_11_mac_operation{
+	radio_id = RadioId,
+	rts_threshold = RTS_threshold,
+	short_retry = ShortRetry,
+	long_retry = LongRetry,
+	fragmentation_threshold = FragThreshold,
+	tx_msdu_lifetime = TX_msdu_lifetime,
+	rx_msdu_lifetime = RX_msdu_lifetime}
+     | IEs];
+
+%% TODO: read and apply Regulatory Domain DB
+radio_cfg(ieee_802_11_multi_domain_capability,
+	  #wtp_radio{radio_id = RadioId}, IEs) ->
+    [#ieee_802_11_multi_domain_capability{
+	radio_id = RadioId,
+	first_channel = 1,
+	number_of_channels_ = 13,
+	max_tx_power_level = 100}
+     | IEs];
+
+radio_cfg(ieee_802_11_tx_power,
+	  #wtp_radio{radio_id = RadioId,
+		     tx_power = TxPower}, IEs) ->
+    [#ieee_802_11_tx_power{
+	radio_id = RadioId,
+	current_tx_power = TxPower}
+     | IEs];
+
+radio_cfg(ieee_802_11_wtp_radio_configuration,
+	  #wtp_radio{radio_id = RadioId,
+		     beacon_interval = BeaconInt,
+		     dtim_period = DTIM,
+		     short_preamble = ShortPreamble}, IEs) ->
+    [#ieee_802_11_wtp_radio_configuration{
+	radio_id = RadioId,
+	short_preamble = ShortPreamble,
+	num_of_bssids = 1,
+	dtim_period = DTIM,
+	bssid = <<0,0,0,0,0,0>>,
+	beacon_period = BeaconInt,
+	country_string = <<"DE", $X, 0>>}
+     | IEs];
+
+radio_cfg(ieee_802_11_rate_set,
+	  #wtp_radio{radio_id = RadioId}, IEs) ->
+    Mode = '11g-only',
+    RateSet = rateset(Mode),
+
     {Rates, _} =  lists:split(8, RateSet),
     Basic = [capwap_packet:encode_rate(Mode, X) || X <- Rates],
     [#ieee_802_11_rate_set{
 	radio_id = RadioId,
 	rate_set = Basic}
-     | IEs].
+     | IEs];
 
-radio_configuration(#wtp_radio{radio_id = RadioId,
-			       channel = Channel} = Radio, IEs0) ->
-    Mode = '11g-only',
-    RateSet = rateset(Mode),
-    IEs = [#decryption_error_report_period{
-	      radio_id = RadioId,
-	      report_interval = 15},
-	   #ieee_802_11_antenna{
-	      radio_id = RadioId,
-	      diversity = disabled,
-	      combiner = omni,
-	      antenna_selection = <<1>>},
-	   #ieee_802_11_direct_sequence_control{
-	      radio_id = RadioId,
-	      current_chan = Channel,
-	      current_cca = csonly,
-	      energy_detect_threshold = 100},
-	   #ieee_802_11_mac_operation{
-	      radio_id = RadioId,
-	      rts_threshold = 2347,
-	      short_retry = 7,
-	      long_retry = 4,
-	      fragmentation_threshold = 2346,
-	      tx_msdu_lifetime = 512,
-	      rx_msdu_lifetime = 512},
-	   #ieee_802_11_multi_domain_capability{
-	      radio_id = RadioId,
-	      first_channel = 1,
-	      number_of_channels_ = 11,
-	      max_tx_power_level = 100},
-	   #ieee_802_11_tx_power{
-	      radio_id = RadioId,
-	      current_tx_power = 100},
-	   #ieee_802_11_wtp_radio_configuration{
-	      radio_id = RadioId,
-	      short_preamble = supported,
-	      num_of_bssids = 1,
-	      dtim_period = 1,
-	      bssid = <<0,0,0,0,0,0>>,
-	      beacon_period = 100,
-	      country_string = <<"DE", $X, 0>>}
-	   | IEs0 ],
-    radio_cfg_rateset(Radio, Mode, RateSet, IEs).
+radio_cfg(_, _Radio, IEs) ->
+    IEs.
+
+radio_configuration(Radio, IEs) ->
+    Settings = [decryption_error_report_period, ieee_802_11_antenna,
+		ieee_802_11_direct_sequence_control, ieee_802_11_mac_operation,
+		ieee_802_11_multi_domain_capability, ieee_802_11_ofdm_control,
+		ieee_802_11_tx_power, ieee_802_11_wtp_radio_configuration,
+		ieee_802_11_rate_set],
+    lists:foldl(radio_cfg(_, Radio, _), IEs, Settings).
 
 reset_echo_request_timer(State = #state{echo_request_timer = Timer, echo_request_timeout = Timeout}) ->
     if is_reference(Timer) -> gen_fsm:cancel_timer(Timer);
