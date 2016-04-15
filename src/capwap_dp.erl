@@ -245,6 +245,27 @@ cancel_timer(Ref) when is_reference(Ref) ->
 cancel_timer(_) ->
     false.
 
+wtp_stats_sum({RcvdPkts0, SendPkts0, RcvdBytes0, SendBytes0,
+	       RcvdFragments0, SendFragments0,
+	       ErrInvalidStation0, ErrFragmentInvalid0, ErrFragmentTooOld0,
+	       ErrInvalidWtp0, ErrHdrLengthInvalid0,
+	       ErrTooShort0, RatelimitUnknownWtp0},
+	      {RcvdPkts1, SendPkts1, RcvdBytes1, SendBytes1,
+	       RcvdFragments1, SendFragments1,
+	       ErrInvalidStation1, ErrFragmentInvalid1, ErrFragmentTooOld1,
+	       ErrInvalidWtp1, ErrHdrLengthInvalid1,
+	       ErrTooShort1, RatelimitUnknownWtp1}) ->
+    {RcvdPkts0 + RcvdPkts1, SendPkts0 + SendPkts1,
+     RcvdBytes0 + RcvdBytes1, SendBytes0 + SendBytes1,
+     RcvdFragments0 + RcvdFragments1, SendFragments0 + SendFragments1,
+     ErrInvalidStation0 + ErrInvalidStation1,
+     ErrFragmentInvalid0 + ErrFragmentInvalid1,
+     ErrFragmentTooOld0 + ErrFragmentTooOld1,
+     ErrInvalidWtp0 + ErrInvalidWtp1,
+     ErrHdrLengthInvalid0 + ErrHdrLengthInvalid1,
+     ErrTooShort0 + ErrTooShort1,
+     RatelimitUnknownWtp0 + RatelimitUnknownWtp1}.
+
 wtp_stats_to_accouting({RcvdPkts, SendPkts, RcvdBytes, SendBytes,
 			RcvdFragments, SendFragments,
 			ErrInvalidStation, ErrFragmentInvalid, ErrFragmentTooOld,
@@ -266,17 +287,22 @@ wtp_stats_to_accouting({RcvdPkts, SendPkts, RcvdBytes, SendBytes,
 wtp_stats_to_accouting(_) ->
     [].
 
-report_stats(ProcessStats, Cnt) ->
+exo_report_stats(Thread, ProcessStats) ->
     Acc = wtp_stats_to_accouting(ProcessStats),
     lists:foreach(fun ({Key, Value}) ->
-			  exometer:update_or_create([capwap, dp, integer_to_list(Cnt), Key], Value, gauge, [])
-		  end, Acc),
-    Cnt + 1.
+			  exometer:update_or_create([capwap, dp, Thread, Key], Value, gauge, [])
+		  end, Acc).
+
+report_stats(ProcessStats, {Cnt, Sum}) ->
+    exo_report_stats(integer_to_list(Cnt), ProcessStats),
+    {Cnt + 1, wtp_stats_sum(ProcessStats, Sum)}.
 
 report_stats() ->
     case call({get_stats}, 100) of
 	Stats when is_list(Stats) ->
-	    lists:foldl(fun report_stats/2, 0, Stats),
+	    SumInit = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+	    {_Cnt, Sum} = lists:foldl(fun report_stats/2, {0, SumInit}, Stats),
+	    exo_report_stats("all", Sum),
 	    ok;
 	Other ->
 	    lager:warning("WTP Stats: ~p", [Other]),
