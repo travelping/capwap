@@ -56,6 +56,13 @@
 	  tunnel_modes,
 	  mac_mode,
 	  tunnel_mode,
+
+	  %% Join Information
+	  location,
+	  board_data,
+	  descriptor,
+	  name,
+
 	  last_response,
 	  request_queue,
 	  retransmit_timer,
@@ -342,7 +349,12 @@ idle({join_request, Seq, Elements, #capwap_header{
     TunnelModes = ie(wtp_frame_tunnel_mode, Elements),
     State1 = State0#state{config = Config,
 			  session_id = SessionId, mac_types = MacTypes,
-			  tunnel_modes = TunnelModes, version = Version},
+			  tunnel_modes = TunnelModes, version = Version,
+			  location = ie(location_data, Elements),
+			  board_data = get_ie(wtp_board_data, Elements),
+			  descriptor = get_ie(wtp_descriptor, Elements),
+			  name = ie(wtp_name, Elements)
+			 },
 
     RespElements = ac_info_version(join, Version)
 	++ [#ecn_support{ecn_support = full},
@@ -1714,6 +1726,15 @@ start_session(Socket, _State) ->
 
 ie(Key, Elements) ->
     proplists:get_value(Key, Elements).
+
+get_ie(Key, Elements) ->
+    get_ie(Key, Elements, undefined).
+
+get_ie(Key, Elements, Default) ->
+    case lists:keyfind(Key, 1, Elements) of
+	false -> Default;
+	Value -> Value
+    end.
 
 get_ies(Key, Elements) ->
     [E || E <- Elements, element(1, E) == Key].

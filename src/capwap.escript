@@ -2,6 +2,7 @@
 %%! -hidden -connect_all false -smp disable -kernel inet_dist_use_interface {127,0,0,1}
 -mode(compile).
 
+-include_lib("capwap/include/capwap_packet.hrl").
 -include_lib("capwap/include/capwap_config.hrl").
 
 main(_, []) ->
@@ -134,6 +135,10 @@ fmt_ip(IP) ->
 	    io_lib:format("~w", [IP])
     end.
 
+fmt_mac(<<A:8, B:8, C:8, D:8, E:8, F:8>>) ->
+    io_lib:format("~2.16.0b:~2.16.0b:~2.16.0b:~2.16.0b:~2.16.0b:~2.16.0b",
+		  [A,B,C,D,E,F]).
+
 print_wtp_config(#{config := Config}) ->
     io:format("CAPWAP Config Settings:~n"
 	      "  Power Save Mode Timeouts, Idle: ~w sec, Busy: ~w sec~n"
@@ -212,9 +217,69 @@ print_wtp_radios(#{config :=
 		   wlans := Wlans}) ->
     [print_wtp_radio(Radio, Wlans) || Radio <- Radios].
 
+format_wtp_board_data_sub_element({0, Value}) ->
+    io_lib:format("      Model:      ~s", [Value]);
+format_wtp_board_data_sub_element({1, Value}) ->
+    io_lib:format("      Serial:     ~s", [Value]);
+format_wtp_board_data_sub_element({2, Value}) ->
+    io_lib:format("      Board Id:   ~s", [Value]);
+format_wtp_board_data_sub_element({3, Value}) ->
+    io_lib:format("      Board Rev.: ~s", [Value]);
+format_wtp_board_data_sub_element({4, Value})
+  when is_binary(Value), size(Value) == 6 ->
+    ["      Base MAC:   ", fmt_mac(Value)];
+format_wtp_board_data_sub_element({4, Value}) ->
+    io_lib:format("      Base MAC:   ~w", [Value]);
+format_wtp_board_data_sub_element({Id, Value}) ->
+    io_lib:format("      ~w: ~s (~w)", [Id, Value, Value]).
+
+vendor_id_str(18681) -> "Travelping GmbH";
+vendor_id_str(31496) -> "NetModule AG";
+vendor_id_str(Id) -> integer_to_list(Id).
+
+format_wtp_board_data(#wtp_board_data{
+			 vendor = Vendor,
+			 board_data_sub_elements = SubElements}) ->
+    FmtSub = lists:map(fun format_wtp_board_data_sub_element/1, SubElements),
+    io_lib:format("    Vendor: ~8.16.0B (~s)~n"
+		  "    Sub Elements:~n~s",
+		  [Vendor, vendor_id_str(Vendor), string:join(FmtSub, "\n")]);
+format_wtp_board_data(BoardData) ->
+    io_lib:format("    undecoded: ~w", [BoardData]).
+
+format_wtp_descriptor_sub_element({{0, 0}, Value}) ->
+    io_lib:format("      Hardware Version: ~s", [Value]);
+format_wtp_descriptor_sub_element({{0, 1}, Value}) ->
+    io_lib:format("      Software Version: ~s", [Value]);
+format_wtp_descriptor_sub_element({{0, 2}, Value}) ->
+    io_lib:format("      Boot Version:     ~s", [Value]);
+format_wtp_descriptor_sub_element({{0, 3}, Value}) ->
+    io_lib:format("      Other Version:    ~s", [Value]);
+format_wtp_descriptor_sub_element({{Vendor, Id}, Value}) ->
+    io_lib:format("      ~w:~w: ~s (~w)", [Vendor, Id, Value, Value]).
+
+format_wtp_descriptor(#wtp_descriptor{
+			 max_radios = MaxRadios,
+			 radios_in_use = RadiosInUse,
+			 encryption_sub_element = EncSubElem,
+			 sub_elements = SubElements}) ->
+    FmtSub = lists:map(fun format_wtp_descriptor_sub_element/1, SubElements),
+    io_lib:format("    max Radios: ~w~n"
+		  "    Radios in use: ~w~n"
+		  "    Encryption Sub Element: ~w~n"
+		  "    Sub Elements:~n~s",
+		  [MaxRadios, RadiosInUse, EncSubElem,
+		   string:join(FmtSub, "\n")]);
+format_wtp_descriptor(Descriptor) ->
+    io_lib:format("    undecoded: ~w", [Descriptor]).
+
 print_wtp({ok, #{id := Id,
 		 station_count := StationCnt,
 		 version := Version,
+		 location := Location,
+		 board_data := BoardData,
+		 descriptor := Descriptor,
+		 name := Name,
 		 ctrl_channel_address := CtrlAddress,
 		 data_channel_address := DataAddress,
 		 session_id := SessionId,
@@ -224,6 +289,10 @@ print_wtp({ok, #{id := Id,
 		} = WTP}) ->
     io:format("WTP: ~s, ~w Stations~n"
 	      "  Version: ~w~n"
+	      "  Location: ~s~n"
+	      "  Board Data:~n~s~n"
+	      "  Descriptor:~n~s~n"
+	      "  Name: ~s~n"
 	      "  Control Channel Endpoint: ~s~n"
 	      "  Data Channel Endpoint: ~s~n"
 	      "  Session Id: ~32.16.0b~n"
@@ -231,6 +300,8 @@ print_wtp({ok, #{id := Id,
 	      "  Tunnel Mode: ~s~n"
 	      "  Echo Request Timeout: ~w sec~n",
 	      [Id, StationCnt, Version,
+	       Location, format_wtp_board_data(BoardData),
+	       format_wtp_descriptor(Descriptor), Name,
 	       fmt_endpoint(CtrlAddress), fmt_endpoint(DataAddress),
 	       SessionId, MacMode, TunnelMode, EchoReqTimeout]),
     print_wtp_config(WTP),
