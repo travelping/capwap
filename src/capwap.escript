@@ -2,12 +2,18 @@
 %%! -hidden -connect_all false -smp disable -kernel inet_dist_use_interface {127,0,0,1}
 -mode(compile).
 
+-include_lib("capwap/include/capwap_config.hrl").
+
 main(_, []) ->
     help();
 
 main(_, ["list"]) ->
     WTPs = rpc(capwap, list_wtps, []),
     [io:format("~s : ~s:~w~n", [CommonName, inet_parse:ntoa(Address), Port]) || {CommonName, {Address, Port}} <- WTPs];
+
+main(_, ["show", CN]) ->
+    WTP = rpc(capwap, get_wtp, [list_to_binary(CN)]),
+    print_wtp(WTP);
 
 main(Opts, ["dp", "wtp", "list"]) ->
     WTPs = rpc(capwap_dp, list_wtp, []),
@@ -90,6 +96,7 @@ help() ->
 	      "  -v, --verbose                               → verbose output~n~n"
               "CAPWAP commands:~n"
               "  list                                        → list all registered wtps~n"
+              "  show <common name>                          → show wtp information~n"
               "  update <common name> <link> <hash>          → update wtp~n"
               "  set-ssid <common name> <SSID> [RadioID]     → set ssid~n"
               "  stop-radio <common name> <RadioID>          → stop wifi radio~n"
@@ -116,6 +123,118 @@ mac_to_bin(MAC) ->
                 _ -> undefined
         end.
 
+fmt_endpoint({IP, Port}) ->
+    [fmt_ip(IP), $:, integer_to_list(Port)].
+
+fmt_ip(IP) ->
+    case inet:ntoa(IP) of
+	S when is_list(S) ->
+	    S;
+	_ ->
+	    io_lib:format("~w", [IP])
+    end.
+
+print_wtp_config(#{config := Config}) ->
+    io:format("CAPWAP Config Settings:~n"
+	      "  Power Save Mode Timeouts, Idle: ~w sec, Busy: ~w sec~n"
+	      "  Max Stations: ~w~n"
+	      "  Echo Request Interval: ~w sec~n"
+	      "  Discovery Interval: ~w sec~n"
+	      "  Station Idle Timeout: ~w sec~n"
+	      "  Data Channel Dead Interval: ~w sec~n"
+	      "  AC Join Timeout: ~w sec~n"
+	      "  Admin Password: ~s~n"
+	      "  WLAN Hold Time: ~w sec~n",
+	      [Config#wtp.psm_idle_timeout, Config#wtp.psm_busy_timeout,
+	       Config#wtp.max_stations, Config#wtp.echo_request_interval,
+	       Config#wtp.discovery_interval, Config#wtp.idle_timeout,
+	       Config#wtp.data_channel_dead_interval, Config#wtp.ac_join_timeout,
+	       Config#wtp.admin_pw, Config#wtp.wlan_hold_time]).
+
+print_wtp_radio_wlan(#wtp_radio{radio_id = RadioId},
+		     #wtp_wlan{wlan_id = WlanId} = Wlan,
+		     WlansState) ->
+
+    WlanState = case lists:keyfind({RadioId, WlanId}, 2, WlansState) of
+		    S when is_tuple(S) ->
+			%% TODO: accessing the wlan state record like this is a
+			%%       hack, will be replaced soonish
+			element(3, S);
+		    Other ->
+			Other
+		end,
+    io:format("WLAN #~w:~n"
+	      "  SSID: ~s~n"
+	      "  Hidden SSID: ~w~n"
+	      "  Running: ~w~n",
+	      [WlanId, Wlan#wtp_wlan.ssid, Wlan#wtp_wlan.suppress_ssid, WlanState]).
+
+print_wtp_radio(Radio, WlansState) ->
+    io:format("Radio #~w Config:~n"
+	      "  Type: ~w~n"
+	      "  Operation Mode: ~w~n"
+	      "  Channel: ~w~n"
+	      "  Beacon Period: ~w time units (~f ms)~n"
+	      "  DTIM Period: ~w~n"
+	      "  Short Preamble: ~w~n"
+	      "  RTS Threshold: ~w bytes~n"
+	      "  Short Retry: ~w~n"
+	      "  Long Retry: ~w~n"
+	      "  Fragmentation Threshold: ~w bytes~n"
+	      "  Tx MSDU Lifetime: ~w time units (~f ms)~n"
+	      "  Rx MSDU Lifetime: ~w time units (~f ms)~n"
+	      "  Tx Power: ~w dBm~n"
+	      "  (*) Channel Assessment Method: ~w~n"
+	      "  Energy Detect Threshold: ~w~n"
+	      "  Band Support: 0x~2.16.0b~n"
+	      "  (*) TI Threshold: ~w~n"
+	      "  Diversity: ~w~n"
+	      "  Combiner: ~w~n"
+	      "  Antenna Selection: ~w~n"
+	      "  (*) Report Interval: ~w sec~n",
+	      [Radio#wtp_radio.radio_id, Radio#wtp_radio.radio_type,
+	       Radio#wtp_radio.operation_mode, Radio#wtp_radio.channel,
+	       Radio#wtp_radio.beacon_interval, Radio#wtp_radio.beacon_interval * 1.024,
+	       Radio#wtp_radio.dtim_period, Radio#wtp_radio.short_preamble,
+	       Radio#wtp_radio.rts_threshold, Radio#wtp_radio.short_retry,
+	       Radio#wtp_radio.long_retry, Radio#wtp_radio.fragmentation_threshold,
+	       Radio#wtp_radio.tx_msdu_lifetime, Radio#wtp_radio.tx_msdu_lifetime * 1.024,
+	       Radio#wtp_radio.rx_msdu_lifetime, Radio#wtp_radio.rx_msdu_lifetime * 1.024,
+	       Radio#wtp_radio.tx_power, Radio#wtp_radio.channel_assessment,
+	       Radio#wtp_radio.energy_detect_threshold, Radio#wtp_radio.band_support,
+	       Radio#wtp_radio.ti_threshold, Radio#wtp_radio.diversity,
+	       Radio#wtp_radio.combiner, Radio#wtp_radio.antenna_selection,
+	       Radio#wtp_radio.report_interval]),
+    [print_wtp_radio_wlan(Radio, Wlan, WlansState) || Wlan <- Radio#wtp_radio.wlans].
+
+print_wtp_radios(#{config :=
+		       #wtp{radios = Radios},
+		   wlans := Wlans}) ->
+    [print_wtp_radio(Radio, Wlans) || Radio <- Radios].
+
+print_wtp({ok, #{id := Id,
+		 station_count := StationCnt,
+		 version := Version,
+		 ctrl_channel_address := CtrlAddress,
+		 data_channel_address := DataAddress,
+		 session_id := SessionId,
+		 mac_mode := MacMode,
+		 tunnel_mode := TunnelMode,
+		 echo_request_timeout := EchoReqTimeout
+		} = WTP}) ->
+    io:format("WTP: ~s, ~w Stations~n"
+	      "  Version: ~w~n"
+	      "  Control Channel Endpoint: ~s~n"
+	      "  Data Channel Endpoint: ~s~n"
+	      "  Session Id: ~32.16.0b~n"
+	      "  MAC Mode: ~s~n"
+	      "  Tunnel Mode: ~s~n"
+	      "  Echo Request Timeout: ~w sec~n",
+	      [Id, StationCnt, Version,
+	       fmt_endpoint(CtrlAddress), fmt_endpoint(DataAddress),
+	       SessionId, MacMode, TunnelMode, EchoReqTimeout]),
+    print_wtp_config(WTP),
+    print_wtp_radios(WTP).
 
 print_worker_stats(Label, [RcvdPkts, SendPkts, RcvdBytes, SendBytes,
 			   RcvdFragments, SendFragments,

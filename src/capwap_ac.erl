@@ -9,7 +9,8 @@
          station_detaching/1]).
 
 %% Extern API
--export([firmware_download/3,
+-export([get_state/1,
+	 firmware_download/3,
          set_ssid/4,
          stop_radio/2]).
 
@@ -182,6 +183,17 @@ with_cn(CN, Fun) ->
 	    Fun(Pid);
         not_found ->
             {error, not_found}
+    end.
+
+get_state(CN) ->
+    case with_cn(CN, gen_fsm:sync_send_all_state_event(_, get_state)) of
+	{ok, State} ->
+	    Fields = record_info(fields, state),
+	    [_Tag| Values] = tuple_to_list(State),
+	    PMap = maps:from_list(lists:zip(Fields, Values)),
+	    {ok, PMap};
+	Other ->
+	    Other
     end.
 
 firmware_download(CN, DownloadLink, Sha) ->
@@ -732,6 +744,9 @@ handle_event(_Event, StateName, State) ->
 %%                   {stop, Reason, Reply, NewState}
 %% @end
 %%--------------------------------------------------------------------
+
+handle_sync_event(get_state, _From, StateName, State) ->
+    reply({ok, State}, StateName, State);
 
 handle_sync_event({set_ssid, {RadioId, WlanId} = WlanIdent, SSID, SuppressSSID},
 		  From, run, #state{config = Config0} = State0) ->
