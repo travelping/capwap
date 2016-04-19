@@ -800,7 +800,7 @@ decode_element(1039, <<M_radio_id:8/integer,
 decode_element(1040, <<M_radio_id:8/integer,
                        M_supported_rates/binary>>) ->
     #ieee_802_11_supported_rates{radio_id = M_radio_id,
-                                 supported_rates = M_supported_rates};
+                                 supported_rates = [X || <<X:8>> <= M_supported_rates]};
 
 decode_element(1041, <<M_radio_id:8/integer,
                        _:8,
@@ -1643,7 +1643,7 @@ encode_element(#ieee_802_11_supported_rates{
                     radio_id = M_radio_id,
                     supported_rates = M_supported_rates}) ->
     encode_element(1040, <<M_radio_id:8,
-                           M_supported_rates/binary>>);
+                           (<< <<X:8>> || X <- M_supported_rates>>)/binary>>);
 
 encode_element(#ieee_802_11_tx_power{
                     radio_id = M_radio_id,

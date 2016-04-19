@@ -399,7 +399,9 @@ join(timeout, State) ->
 
 join({configuration_status_request, Seq, Elements, #capwap_header{
 						      wb_id = WBID, flags = Flags}},
-     #state{config = Config} = State) ->
+     #state{config = Config0} = State0) ->
+
+    Config = update_radio_sup_rates(Elements, Config0),
     #wtp{
        psm_idle_timeout           = PSMIdleTimeout,
        psm_busy_timeout           = PSMBusyTimeout,
@@ -417,7 +419,7 @@ join({configuration_status_request, Seq, Elements, #capwap_header{
 		   true ->
                         []
                 end,
-    AdminWlans = get_admin_wifi_updates(State, Elements),
+    AdminWlans = get_admin_wifi_updates(State0, Elements),
     RespElements0 = [#timers{discovery = DiscoveryInterval,
 			     echo_request = EchoRequestInterval},
 		     #tp_data_channel_dead_interval{data_channel_dead_interval = DataChannelDeadInterval},
@@ -433,11 +435,13 @@ join({configuration_status_request, Seq, Elements, #capwap_header{
     RespElements = lists:foldl(fun radio_configuration/2, RespElements0, Radios),
 
     Header = #capwap_header{radio_id = 0, wb_id = WBID, flags = Flags},
-    State1 = send_response(Header, configuration_status_response, Seq, RespElements, State),
+    State1 = send_response(Header, configuration_status_response, Seq, RespElements, State0),
     State2 = start_change_state_pending_timer(State1),
+    State = State2#state{
+	      config = Config,
+	      echo_request_timeout = EchoRequestInterval * 2},
 
-    EchoRequestTimeout = EchoRequestInterval * 2,
-    next_state(configure, State2#state{echo_request_timeout = EchoRequestTimeout});
+    next_state(configure, State);
 
 join(Event, State) when ?IS_RUN_CONTROL_EVENT(Event) ->
     lager:debug("in JOIN got control event: ~p", [Event]),
@@ -1258,6 +1262,29 @@ ac_info_version(Request, {Version, _AddOn}) ->
 				    {{0,5}, capwap_config:get(ac, [versions, software], <<"Software Ver. 1.0">>)}]},
      #ac_name{name = capwap_config:get(ac, ac_name, <<"My AC Name">>)}
     ] ++ control_addresses() ++ AcList.
+
+update_radio_info_sup_rates(SRates, #wtp_radio{supported_rates = SR} = Radio)
+  when is_list(SR) ->
+    Radio#wtp_radio{supported_rates = SR ++ SRates};
+update_radio_info_sup_rates(SRates, Radio) ->
+    Radio#wtp_radio{supported_rates = SRates}.
+
+update_radio_sup_rates([], Config) ->
+    Config;
+update_radio_sup_rates([#ieee_802_11_supported_rates{
+			   radio_id = RadioId,
+			   supported_rates = SRates} | Next],
+		       #wtp{radios = Radios0} = Config0) ->
+    Config = case lists:keyfind(RadioId, #wtp_radio.radio_id, Radios0) of
+		 #wtp_radio{} = Radio0 ->
+		     Radio = update_radio_info_sup_rates(SRates, Radio0),
+		     Config0#wtp{radios = lists:keystore(RadioId, #wtp_radio.radio_id, Radios0, Radio)};
+		 _ ->
+		     Config0
+	     end,
+    update_radio_sup_rates(Next, Config);
+update_radio_sup_rates([_ | Next], Config) ->
+    update_radio_sup_rates(Next, Config).
 
 rateset('11b-only') ->
     [10, 20, 55, 110];

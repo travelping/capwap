@@ -384,7 +384,7 @@
 
 -record(ieee_802_11_supported_rates, {
         radio_id = 0,
-        supported_rates = <<>>
+        supported_rates = []
 }).
 
 -record(ieee_802_11_tx_power, {

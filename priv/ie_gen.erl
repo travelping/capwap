@@ -289,7 +289,7 @@ ies() ->
        {"QoS CF Polls Unusable Count", 32, integer}]},
      {1040, "IEEE 802.11 Supported Rates",
       [{"Radio ID", 8, integer},
-       {"Supported Rates", 0, binary}]},
+       {"Supported Rates", '_', {array, 8}}]},
      {1041, "IEEE 802.11 Tx Power",
       [{"Radio ID", 8, integer},
        {'_', 8},

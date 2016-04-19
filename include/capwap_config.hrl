@@ -15,6 +15,7 @@
 -record(wtp_radio, {
 	  radio_id,
 	  radio_type,
+	  supported_rates,
 	  operation_mode,
 	  channel,
 	  beacon_interval,

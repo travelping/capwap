@@ -203,10 +203,15 @@ fmt_wtp_radio_oper_mode(#wtp_radio{
 		  "    Channel: ~w~n",
 		  [OperMode, Channel]).
 
+fmt_rate(Rate) when Rate rem 2 == 0 ->
+    Rate div 2;
+fmt_rate(Rate) ->
+    Rate / 2.
 
 print_wtp_radio(Radio, WlansState) ->
     io:format("Radio #~w Config:~n"
 	      "  Type: ~w~n"
+	      "  Supported Rates: ~w (Mbit)~n"
 	      "~s"
 	      "  Beacon Period: ~w time units (~f ms)~n"
 	      "  DTIM Period: ~w~n"
@@ -223,6 +228,7 @@ print_wtp_radio(Radio, WlansState) ->
 	      "  Antenna Selection: ~w~n"
 	      "  (*) Report Interval: ~w sec~n",
 	      [Radio#wtp_radio.radio_id, Radio#wtp_radio.radio_type,
+	       [fmt_rate(R) || R <- Radio#wtp_radio.supported_rates],
 	       fmt_wtp_radio_oper_mode(Radio),
 	       Radio#wtp_radio.beacon_interval, Radio#wtp_radio.beacon_interval * 1.024,
 	       Radio#wtp_radio.dtim_period, Radio#wtp_radio.short_preamble,
