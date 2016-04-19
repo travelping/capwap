@@ -296,13 +296,23 @@ format_wtp_descriptor(#wtp_descriptor{
 format_wtp_descriptor(Descriptor) ->
     io_lib:format("    undecoded: ~w", [Descriptor]).
 
+fmt_time_ms(StartTime) ->
+    MegaSecs = StartTime div 1000000000,
+    Rem1 = StartTime rem 1000000000,
+    Secs = Rem1 div 1000,
+    MilliSecs = StartTime rem 1000,
+    {{Year, Month, Day}, {Hour, Minute, Second}} =
+	calendar:now_to_universal_time({MegaSecs, Secs, MilliSecs * 1000}),
+    io_lib:format("~4.10.0b-~2.10.0b-~2.10.0b ~2.10.0b:~2.10.0b:~2.10.0b.~4.10.0b",
+		  [Year, Month, Day, Hour, Minute, Second, MilliSecs]).
+
 print_wtp({ok, #{id := Id,
 		 station_count := StationCnt,
-		 version := Version,
 		 location := Location,
 		 board_data := BoardData,
 		 descriptor := Descriptor,
 		 name := Name,
+		 start_time := StartTime,
 		 ctrl_channel_address := CtrlAddress,
 		 data_channel_address := DataAddress,
 		 session_id := SessionId,
@@ -310,8 +320,9 @@ print_wtp({ok, #{id := Id,
 		 tunnel_mode := TunnelMode,
 		 echo_request_timeout := EchoReqTimeout
 		} = WTP}) ->
+    Now = erlang:system_time(milli_seconds),
     io:format("WTP: ~s, ~w Stations~n"
-	      "  Version: ~w~n"
+	      "  Start Time: ~s (~.4f seconds ago)~n"
 	      "  Location: ~s~n"
 	      "  Board Data:~n~s~n"
 	      "  Descriptor:~n~s~n"
@@ -322,7 +333,7 @@ print_wtp({ok, #{id := Id,
 	      "  MAC Mode: ~s~n"
 	      "  Tunnel Mode: ~s~n"
 	      "  Echo Request Timeout: ~w sec~n",
-	      [Id, StationCnt, Version,
+	      [Id, StationCnt, fmt_time_ms(StartTime), (Now - StartTime) / 1000,
 	       Location, format_wtp_board_data(BoardData),
 	       format_wtp_descriptor(Descriptor), Name,
 	       fmt_endpoint(CtrlAddress), fmt_endpoint(DataAddress),

@@ -63,6 +63,8 @@
 	  descriptor,
 	  name,
 
+	  start_time,
+
 	  last_response,
 	  request_queue,
 	  retransmit_timer,
@@ -345,6 +347,7 @@ idle({join_request, Seq, Elements, #capwap_header{
     RadioInfos = get_ies(ieee_802_11_wtp_radio_information, Elements),
     Config = capwap_config:wtp_set_radio_infos(CommonName, RadioInfos, Config0),
 
+    StartTime = erlang:system_time(milli_seconds),
     MacTypes = ie(wtp_mac_type, Elements),
     TunnelModes = ie(wtp_frame_tunnel_mode, Elements),
     State1 = State0#state{config = Config,
@@ -353,7 +356,8 @@ idle({join_request, Seq, Elements, #capwap_header{
 			  location = ie(location_data, Elements),
 			  board_data = get_ie(wtp_board_data, Elements),
 			  descriptor = get_ie(wtp_descriptor, Elements),
-			  name = ie(wtp_name, Elements)
+			  name = ie(wtp_name, Elements),
+			  start_time = StartTime
 			 },
 
     RespElements = ac_info_version(join, Version)
@@ -365,7 +369,6 @@ idle({join_request, Seq, Elements, #capwap_header{
     SessionOpts = wtp_accounting_infos(Elements, [{'CAPWAP-Radio-Id', RadioId}]),
     lager:info("WTP Session Start Opts: ~p", [SessionOpts]),
 
-    StartTime = erlang:system_time(milli_seconds),
     exometer:update_or_create([capwap, wtp, CommonName, start_time], StartTime, gauge, []),
     exometer:update_or_create([capwap, wtp, CommonName, stop_time], 0, gauge, []),
     exometer:update_or_create([capwap, wtp, CommonName, station_count], 0, gauge, []),
