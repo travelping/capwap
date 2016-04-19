@@ -15,4 +15,11 @@ subscribe([capwap, ac, _Value] = Metric, _) ->
     Extra = [{tags, Tags}],
     {Metric, value, 30000, Extra};
 
+subscribe([capwap, dp, _Thread, _Value] = Metric, _) ->
+    Tags = [{type,     {from_name, 1}},
+	    {category, {from_name, 2}},
+	    {thread,   {from_name, 3}}],
+    Extra = [{tags, Tags}],
+    {Metric, value, 30000, Extra};
+
 subscribe(_, _) -> [].

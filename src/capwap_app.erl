@@ -3,13 +3,15 @@
 -behaviour(application).
 
 %% Application callbacks
--export([start/2, stop/1]).
+-export([start/2, stop/1, config_change/3]).
 
 %% ===================================================================
 %% Application callbacks
 %% ===================================================================
 
 start(_StartType, _StartArgs) ->
+    ok = capwap_config:validate(),
+
     exometer:new([capwap, ac, wtp_count], counter, []),
     exometer:new([capwap, ac, station_count], counter, []),
 
@@ -33,3 +35,6 @@ start(_StartType, _StartArgs) ->
 
 stop(_State) ->
     ok.
+
+config_change(_Changed, _New, _Removed) ->
+    capwap_config:validate().

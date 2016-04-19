@@ -1,10 +1,12 @@
 -module(capwap_ac).
 
+-compile({parse_transform, cut}).
+
 -behaviour(gen_fsm).
 
 %% API
 -export([start_link/1, accept/3, get_data_channel_address/1, take_over/1, new_station/3,
-         station_terminating/1]).
+         station_detaching/1]).
 
 %% Extern API
 -export([firmware_download/3,
@@ -22,6 +24,7 @@
 -include_lib("public_key/include/OTP-PUB-KEY.hrl").
 -include("capwap_debug.hrl").
 -include("capwap_packet.hrl").
+-include("capwap_config.hrl").
 -include("ieee80211.hrl").
 -include("ieee80211_station.hrl").
 
@@ -38,8 +41,6 @@
 -define(RetransmitInterval, 3 * 1000).
 -define(MaxRetransmit, 5).
 
--define(RadioChannel, 11).
-
 -record(state, {
 	  id,
 	  session_id,
@@ -49,6 +50,7 @@
 	  socket,
 	  ctrl_stream,
 	  session,
+	  config,
 	  mac_types,
 	  tunnel_modes,
 	  mac_mode,
@@ -71,8 +73,6 @@
 
 -record(wlan, {
           wlan_identifier,
-          ssid,
-	  suppress_ssid = 0,
           started = false,
           reply_to_after_start
          }).
@@ -170,8 +170,8 @@ take_over(WTP) ->
 new_station(WTP, BSS, SA) ->
     gen_fsm:sync_send_event(WTP, {new_station, BSS, SA}).
 
-station_terminating(AC) ->
-    gen_fsm:send_all_state_event(AC, station_terminating).
+station_detaching(AC) ->
+    gen_fsm:send_all_state_event(AC, station_detaching).
 
 %%%===================================================================
 %%% extern APIs
@@ -225,7 +225,7 @@ init([WTPControlChannelAddress]) ->
     lager:md([{control_channel_address, WTPControlChannelAddress}]),
     exometer:update([capwap, ac, wtp_count], 1),
     capwap_wtp_reg:register(WTPControlChannelAddress),
-    MTU = application:get_env(capwap, mtu, 1500),
+    MTU = capwap_config:get(ac, mtu, 1500),
     {ok, listen, #state{ctrl_channel_address = WTPControlChannelAddress,
 			request_queue = queue:new(),
 			ctrl_stream = capwap_stream:init(MTU),
@@ -256,12 +256,14 @@ listen({accept, udp, Socket}, State0) ->
     PeerName = iolist_to_binary(format_peer(WTPControlChannelAddress)),
 
     Opts = [{'Username', PeerName},
-	    {'Authentication-Method', {'TLS', 'Pre-Shared-Key'}}
-            | create_initial_ctld_params(PeerName)],
+	    {'Authentication-Method', {'TLS', 'Pre-Shared-Key'}},
+            {'WTP-Config', capwap_config:wtp_config(PeerName)}],
     case ctld_session:authenticate(Session, to_session(Opts)) of
 	success ->
 	    lager:info("AuthResult: success"),
+	    {ok, Config} = ctld_session:attr_get('WTP-Config', ctld_session:get(Session)),
 	    State1 = State0#state{session = Session,
+				  config = Config,
 				  socket = {udp, Socket},
 				  id = undefined},
 
@@ -273,9 +275,9 @@ listen({accept, udp, Socket}, State0) ->
     end;
 
 listen({accept, dtls, Socket}, State) ->
-    lager:info("ssl_accept on: ~p", [Socket]),
-
     {ok, Session} = start_session(Socket, State),
+    lager:info("ssl_accept on: ~p, Opts: ~p", [Socket, mk_ssl_opts(Session)]),
+
     case dtlsex:ssl_accept(Socket, mk_ssl_opts(Session), ?SSL_ACCEPT_TIMEOUT) of
         {ok, SslSocket} ->
             lager:info("ssl_accept: ~p", [SslSocket]),
@@ -289,7 +291,9 @@ listen({accept, dtls, Socket}, State) ->
             maybe_takeover(CommonName),
             capwap_wtp_reg:register_args(CommonName, WTPControlChannelAddress),
 
-            State1 = State#state{socket = {dtls, SslSocket}, session = Session, id = CommonName},
+	    {ok, Config} = ctld_session:attr_get('WTP-Config', ctld_session:get(Session)),
+            State1 = State#state{socket = {dtls, SslSocket}, session = Session,
+				 config = Config, id = CommonName},
             %% TODO: find old connection instance, take over their StationState and stop them
             next_state(idle, State1);
         Other ->
@@ -320,15 +324,20 @@ idle({discovery_request, Seq, Elements, #capwap_header{
 idle({join_request, Seq, Elements, #capwap_header{
 			   radio_id = RadioId, wb_id = WBID, flags = Flags}},
      State0 = #state{ctrl_channel_address = WTPControlChannelAddress,
-		     session = Session, id = CommonName}) ->
+		     session = Session, id = CommonName,
+		     config = Config0}) ->
     {Address, _} = WTPControlChannelAddress,
     Version = get_wtp_version(Elements),
     SessionId = proplists:get_value(session_id, Elements),
     capwap_wtp_reg:register_sessionid(Address, SessionId),
 
+    RadioInfos = get_ies(ieee_802_11_wtp_radio_information, Elements),
+    Config = capwap_config:wtp_set_radio_infos(CommonName, RadioInfos, Config0),
+
     MacTypes = ie(wtp_mac_type, Elements),
     TunnelModes = ie(wtp_frame_tunnel_mode, Elements),
-    State1 = State0#state{session_id = SessionId, mac_types = MacTypes,
+    State1 = State0#state{config = Config,
+			  session_id = SessionId, mac_types = MacTypes,
 			  tunnel_modes = TunnelModes, version = Version},
 
     RespElements = ac_info_version(join, Version)
@@ -371,49 +380,39 @@ join(timeout, State) ->
 
 join({configuration_status_request, Seq, Elements, #capwap_header{
 						      wb_id = WBID, flags = Flags}},
-     State) ->
-    App = capwap,
-    WlanId = 1,
-    RadioId = 1,
-    SessionOpts = ctld_session:get(State#state.session),
-    SessionAttrs = ['CAPWAP-Power-Save-Idle-Timeout',
-                    'CAPWAP-Power-Save-Busy-Timeout',
-                    'CAPWAP-Echo-Request-Interval',
-                    'CAPWAP-Discovery-Interval',
-                    'CAPWAP-Idle-Timeout',
-                    'CAPWAP-Data-Channel-Dead-Interval',
-                    'CAPWAP-AC-Join-Timeout'],
-    [PSMIdleTimeout, PSMBusyTimeout, EchoRequestInterval, DiscoveryInterval,
-     IdleTimeout, DataChannelDeadInterval, ACJoinTimeout] =
-        [Val || {ok, Val} <- [ctld_session:attr_get(Key, SessionOpts) || Key <- SessionAttrs]],
-    %% only add admin pw when defined
-    AdminPwIE = case ctld_session:attr_get('CAPWAP-Admin-PW', SessionOpts) of
-                    {ok, Val} when is_binary(Val) ->
-                        [#wtp_administrator_password_settings{password = Val}];
-                    _ ->
+     #state{config = Config} = State) ->
+    #wtp{
+       psm_idle_timeout           = PSMIdleTimeout,
+       psm_busy_timeout           = PSMBusyTimeout,
+       echo_request_interval      = EchoRequestInterval,
+       discovery_interval         = DiscoveryInterval,
+       idle_timeout               = IdleTimeout,
+       data_channel_dead_interval = DataChannelDeadInterval,
+       ac_join_timeout            = ACJoinTimeout,
+       admin_pw                   = AdminPW,
+       radios                     = Radios
+      } = Config,
+
+    AdminPwIE = if is_binary(AdminPW) ->
+                        [#wtp_administrator_password_settings{password = AdminPW}];
+		   true ->
                         []
                 end,
     AdminWlans = get_admin_wifi_updates(State, Elements),
-    {ok, WlanHoldTime} = ctld_session:attr_get('CAPWAP-Wlan-Hold-Time', SessionOpts),
-    RespElements = [#timers{discovery = DiscoveryInterval,
-                            echo_request = EchoRequestInterval},
-                    #tp_data_channel_dead_interval{data_channel_dead_interval = DataChannelDeadInterval},
-                    #tp_ac_join_timeout{ac_join_timeout = ACJoinTimeout},
-                    #decryption_error_report_period{
-                       radio_id = RadioId,
-                       report_interval = 15},
-                    #idle_timeout{timeout = IdleTimeout},
-		    #wtp_fallback{mode = disabled},
-                    #power_save_mode{idle_timeout = PSMIdleTimeout,
-                                     busy_timeout = PSMBusyTimeout},
-                    #tp_ieee_802_11_wlan_hold_time{radio_id  = RadioId,
-                                                   wlan_id   = WlanId,
-                                                   hold_time = WlanHoldTime}
-                   ]
+    RespElements0 = [#timers{discovery = DiscoveryInterval,
+			     echo_request = EchoRequestInterval},
+		     #tp_data_channel_dead_interval{data_channel_dead_interval = DataChannelDeadInterval},
+		     #tp_ac_join_timeout{ac_join_timeout = ACJoinTimeout},
+		     #idle_timeout{timeout = IdleTimeout},
+		     #wtp_fallback{mode = disabled},
+		     #power_save_mode{idle_timeout = PSMIdleTimeout,
+				      busy_timeout = PSMBusyTimeout}
+		    ]
 	++ AdminPwIE
 	++ AdminWlans
-	++ ac_addresses(App)
-	++ radio_configuration(RadioId, State),
+	++ ac_addresses(),
+    RespElements = lists:foldl(fun radio_configuration/2, RespElements0, Radios),
+
     Header = #capwap_header{radio_id = 0, wb_id = WBID, flags = Flags},
     State1 = send_response(Header, configuration_status_response, Seq, RespElements, State),
     State2 = start_change_state_pending_timer(State1),
@@ -476,13 +475,18 @@ data_check({Msg, Seq, Elements, Header}, State) ->
     lager:warning("in DATA_CHECK got unexpexted: ~p", [{Msg, Seq, Elements, Header}]),
     next_state(data_check, State).
 
-run({new_station, BSS, SA}, _From, State = #state{id = WtpId, session_id = SessionId,
-						  data_channel_address = WTPDataChannelAddress, data_path = DataPath,
-                                                  mac_mode = MacMode, tunnel_mode = TunnelMode,
-                                                  station_count  = StationCount,
-                                                  session = Session}) ->
+run({new_station, BSS, SA}, _From,
+    State = #state{id = WtpId, session_id = SessionId,
+		   config = #wtp{max_stations = MaxStations},
+		   data_channel_address = WTPDataChannelAddress, data_path = DataPath,
+		   mac_mode = MacMode, tunnel_mode = TunnelMode,
+		   station_count  = StationCount,
+		   session = Session}) ->
     lager:info("in RUN got new_station: ~p", [SA]),
-    {ok, MaxStations} = ctld_session:get(Session, 'CAPWAP-Max-WIFI-Clients'),
+
+    %% TODO: rework session context to handle this again
+    %% {ok, MaxStations} = ctld_session:get(Session, 'CAPWAP-Max-WIFI-Clients'),
+
     WTPFullPred = StationCount + 1 > MaxStations,
     %% we have to repeat the search again to avoid a race
     lager:debug("search for station ~p", [{self(), SA}]),
@@ -535,8 +539,9 @@ run({ieee_802_11_wlan_configuration_response, _Seq,
             0 ->
                 lager:debug("IEEE 802.11 WLAN Configuration ok"),
                 case lists:keyfind(false, #wlan.started, State#state.wlans) of
-                    #wlan{reply_to_after_start = From} = Wlan ->
-                        State0 = internal_add_wlan(Wlan, State),
+                    #wlan{wlan_identifier = {RadioId, WlanId},
+			  reply_to_after_start = From} ->
+                        State0 = internal_add_wlan(RadioId, WlanId, State),
                         gen_fsm:reply(From, ok),
                         State0;
                     _ ->
@@ -585,16 +590,13 @@ run({wtp_event_request, Seq, Elements, RequestHeader =
     State3 = reset_echo_request_timer(State2),
     next_state(run, State3);
 
-run(configure, State = #state{id = WtpId, session = Session}) ->
-    lager:debug("configure WTP: ~p, Session: ~p", [WtpId, Session]),
+run(configure, State = #state{id = WtpId, config = #wtp{radios = Radios},
+			      session = Session}) ->
+    lager:debug("configure WTP: ~p, Session: ~p, Radios: ~p", [WtpId, Session, Radios]),
     RadioId = 1,
     WlanId = 1,
-    WLanIdent = {RadioId, WlanId},
-    {ok, SSID} = ctld_session:get(Session, 'CAPWAP-SSID'),
-    {ok, SuppressSSID} = ctld_session:get(Session, 'CAPWAP-Suppress-SSID'),
-    Wlan = #wlan{wlan_identifier = WLanIdent, started = false,
-		 ssid = SSID, suppress_ssid = SuppressSSID},
-    State1 = internal_add_wlan(Wlan, State),
+
+    State1 = internal_add_wlan(RadioId, WlanId, State),
     next_state(run, State1);
 
 run({add_station, #capwap_header{radio_id = RadioId, wb_id = WBID}, MAC, StaCaps}, State) ->
@@ -709,7 +711,7 @@ run(Event, State) ->
 %%                   {stop, Reason, NewState}
 %% @end
 %%--------------------------------------------------------------------
-handle_event(station_terminating, StateName, State=#state{id = WtpId, station_count = SC}) ->
+handle_event(station_detaching, StateName, State=#state{id = WtpId, station_count = SC}) ->
     if SC == 0 ->
             lager:error("Station counter and stations got out of sync", []),
             next_state(StateName, State);
@@ -738,22 +740,25 @@ handle_event(_Event, StateName, State) ->
 %%                   {stop, Reason, Reply, NewState}
 %% @end
 %%--------------------------------------------------------------------
-handle_sync_event({set_ssid, WlanIdent, SSID, SuppressSSID}, From, run, State) ->
-    case get_wlan(WlanIdent, State) of
+
+handle_sync_event({set_ssid, {RadioId, WlanId} = WlanIdent, SSID, SuppressSSID},
+		  From, run, #state{config = Config0} = State0) ->
+    Settings = [{ssid, SSID}, {suppress_ssid, SuppressSSID}],
+    Config = capwap_config:update_wlan_config(RadioId, WlanId, Settings, Config0),
+    State1 = State0#state{config = Config},
+
+    case get_wlan(WlanIdent, State1) of
         false ->
-	    Wlan = #wlan{wlan_identifier = WlanIdent, started = false,
-			 ssid = SSID, suppress_ssid = SuppressSSID},
-	    State1 = internal_add_wlan(Wlan, State),
-	    reply(ok, run, State1);
+	    State = internal_add_wlan(RadioId, WlanId, State1),
+	    reply(ok, run, State);
 
         #wlan{} ->
-            State1 = internal_del_wlan(WlanIdent, State),
-
-	    Wlan = #wlan{wlan_identifier = WlanIdent, started = false,
-			 ssid = SSID, suppress_ssid = SuppressSSID,
-			 reply_to_after_start = From},
-            State2 = set_wlan(Wlan, State1),
-            next_state(run, State2)
+            State2 = internal_del_wlan(WlanIdent, State1),
+            State = update_wlan_state(WlanIdent,
+				      fun(W) ->
+					      W#wlan{started = false,reply_to_after_start = From}
+				      end, State2),
+            next_state(run, State)
     end;
 
 handle_sync_event({stop_radio, RadioId}, _From, run, State) ->
@@ -897,7 +902,7 @@ reply(Reply, NextStateName, State) ->
 %% non-DTLS join-reqeust, check app config
 handle_plain_join(Peer, Seq, _Elements, #capwap_header{
 					   wb_id = WBID, flags = Flags}) ->
-    case application:get_env(capwap, enforce_dtls_control, true) of
+    case capwap_config:get(ac, enforce_dtls_control, true) of
 	false ->
 	    lager:warning("Accepting JOIN without DTLS from ~s", [Peer]),
 	    accept;
@@ -1214,25 +1219,23 @@ ac_info(Request, Elements) ->
     ac_info_version(Request, Version).
 
 ac_info_version(Request, {Version, _AddOn}) ->
-    App = capwap,
-    Versions = application:get_env(App, versions, []),
     AcList = if (Version > 16#010104 andalso Request == discover)
 		orelse Version >= 16#010200 ->
-		     [map_aalwp(I) || I <- application:get_env(App, ac_address_list_with_prio, [])];
+		     [map_aalwp(I) || I <- capwap_config:get(ac, ac_address_list_with_prio, [])];
 		true -> []
 	     end,
     [#ac_descriptor{stations    = 0,
-		    limit       = application:get_env(App, limit, 200),
+		    limit       = capwap_config:get(ac, limit, 200),
 		    active_wtps = 0,
-		    max_wtps    = application:get_env(App, max_wtps, 200),
+		    max_wtps    = capwap_config:get(ac, max_wtps, 200),
 %%		    security    = ['pre-shared'],
-		    security    = application:get_env(App, security, ['x509']),
+		    security    = capwap_config:get(ac, security, ['x509']),
 		    r_mac       = supported,
 		    dtls_policy = ['clear-text'],
-		    sub_elements = [{{0,4}, proplists:get_value(hardware, Versions, <<"Hardware Ver. 1.0">>)},
-				    {{0,5}, proplists:get_value(software, Versions, <<"Software Ver. 1.0">>)}]},
-     #ac_name{name = application:get_env(App, ac_name, <<"My AC Name">>)}
-    ] ++ control_addresses(App) ++ AcList.
+		    sub_elements = [{{0,4}, capwap_config:get(ac, [versions, hardware], <<"Hardware Ver. 1.0">>)},
+				    {{0,5}, capwap_config:get(ac, [versions, software], <<"Software Ver. 1.0">>)}]},
+     #ac_name{name = capwap_config:get(ac, ac_name, <<"My AC Name">>)}
+    ] ++ control_addresses() ++ AcList.
 
 rateset('11b-only') ->
     [10, 20, 55, 110];
@@ -1241,53 +1244,130 @@ rateset('11g-only') ->
 rateset('11bg') ->
     [10, 20, 55, 110, 60, 90, 120, 180, 240, 360, 480, 540].
 
-radio_cfg_rateset(RadioId, Mode, RateSet, IEs) ->
+radio_cfg(decryption_error_report_period,
+	  #wtp_radio{radio_id = RadioId,
+		    report_interval = ReportInterval}, IEs) ->
+    [#decryption_error_report_period{
+	radio_id = RadioId,
+	report_interval = ReportInterval}
+     | IEs];
+
+radio_cfg(ieee_802_11_antenna,
+	  #wtp_radio{radio_id = RadioId,
+		     diversity = Diversity,
+		     combiner = Combiner,
+		     antenna_selection = AntennaSelection}, IEs) ->
+    [#ieee_802_11_antenna{
+	radio_id = RadioId,
+	diversity = Diversity,
+	combiner = Combiner,
+	antenna_selection = << <<X:8>> || X <- AntennaSelection >>}
+     | IEs];
+
+radio_cfg(ieee_802_11_direct_sequence_control,
+	  #wtp_radio{radio_id = RadioId,
+		     operation_mode = OperMode,
+		     channel = Channel,
+		     channel_assessment = CCA,
+		     energy_detect_threshold = EDT}, IEs)
+  when Channel >= 1 andalso
+       Channel =< 14 andalso
+       (OperMode == '802.11b' orelse
+	OperMode == '802.11g') ->
+    [#ieee_802_11_direct_sequence_control{
+	radio_id = RadioId,
+	current_chan = Channel,
+	current_cca = CCA,
+	energy_detect_threshold = EDT}
+     | IEs];
+
+radio_cfg(ieee_802_11_ofdm_control,
+	  #wtp_radio{radio_id = RadioId,
+		     operation_mode = OperMode,
+		     channel = Channel,
+		     band_support = BandSupport,
+		     ti_threshold = TIThreshold}, IEs)
+  when OperMode == '802.11a' ->
+    [#ieee_802_11_ofdm_control{
+	radio_id = RadioId,
+	current_chan = Channel,
+	band_support = BandSupport,
+	ti_threshold = TIThreshold}
+     | IEs];
+
+radio_cfg(ieee_802_11_mac_operation,
+	  #wtp_radio{radio_id = RadioId,
+		     rts_threshold = RTS_threshold,
+		     short_retry = ShortRetry,
+		     long_retry = LongRetry,
+		     fragmentation_threshold = FragThreshold,
+		     tx_msdu_lifetime = TX_msdu_lifetime,
+		     rx_msdu_lifetime = RX_msdu_lifetime}, IEs) ->
+    [#ieee_802_11_mac_operation{
+	radio_id = RadioId,
+	rts_threshold = RTS_threshold,
+	short_retry = ShortRetry,
+	long_retry = LongRetry,
+	fragmentation_threshold = FragThreshold,
+	tx_msdu_lifetime = TX_msdu_lifetime,
+	rx_msdu_lifetime = RX_msdu_lifetime}
+     | IEs];
+
+%% TODO: read and apply Regulatory Domain DB
+radio_cfg(ieee_802_11_multi_domain_capability,
+	  #wtp_radio{radio_id = RadioId}, IEs) ->
+    [#ieee_802_11_multi_domain_capability{
+	radio_id = RadioId,
+	first_channel = 1,
+	number_of_channels_ = 13,
+	max_tx_power_level = 100}
+     | IEs];
+
+radio_cfg(ieee_802_11_tx_power,
+	  #wtp_radio{radio_id = RadioId,
+		     tx_power = TxPower}, IEs) ->
+    [#ieee_802_11_tx_power{
+	radio_id = RadioId,
+	current_tx_power = TxPower}
+     | IEs];
+
+radio_cfg(ieee_802_11_wtp_radio_configuration,
+	  #wtp_radio{radio_id = RadioId,
+		     beacon_interval = BeaconInt,
+		     dtim_period = DTIM,
+		     short_preamble = ShortPreamble}, IEs) ->
+    [#ieee_802_11_wtp_radio_configuration{
+	radio_id = RadioId,
+	short_preamble = ShortPreamble,
+	num_of_bssids = 1,
+	dtim_period = DTIM,
+	bssid = <<0,0,0,0,0,0>>,
+	beacon_period = BeaconInt,
+	country_string = <<"DE", $X, 0>>}
+     | IEs];
+
+radio_cfg(ieee_802_11_rate_set,
+	  #wtp_radio{radio_id = RadioId}, IEs) ->
+    Mode = '11g-only',
+    RateSet = rateset(Mode),
+
     {Rates, _} =  lists:split(8, RateSet),
     Basic = [capwap_packet:encode_rate(Mode, X) || X <- Rates],
     [#ieee_802_11_rate_set{
 	radio_id = RadioId,
 	rate_set = Basic}
-     | IEs].
+     | IEs];
 
-radio_configuration(RadioId, _State) ->
-    Mode = '11g-only',
-    RateSet = rateset(Mode),
-    IEs = [#ieee_802_11_antenna{
-	      radio_id = RadioId,
-	      diversity = disabled,
-	      combiner = omni,
-	      antenna_selection = <<1>>},
-	   #ieee_802_11_direct_sequence_control{
-	      radio_id = RadioId,
-	      current_chan = ?RadioChannel,
-	      current_cca = csonly,
-	      energy_detect_threshold = 100},
-	   #ieee_802_11_mac_operation{
-	      radio_id = RadioId,
-	      rts_threshold = 2347,
-	      short_retry = 7,
-	      long_retry = 4,
-	      fragmentation_threshold = 2346,
-	      tx_msdu_lifetime = 512,
-	      rx_msdu_lifetime = 512},
-	   #ieee_802_11_multi_domain_capability{
-	      radio_id = RadioId,
-	      first_channel = 1,
-	      number_of_channels_ = 11,
-	      max_tx_power_level = 100},
-	   #ieee_802_11_tx_power{
-	      radio_id = RadioId,
-	      current_tx_power = 100},
-	   #ieee_802_11_wtp_radio_configuration{
-	      radio_id = RadioId,
-	      short_preamble = supported,
-	      num_of_bssids = 1,
-	      dtim_period = 1,
-	      bssid = <<0,0,0,0,0,0>>,
-	      beacon_period = 100,
-	      country_string = <<"DE", $X, 0>>}
-	  ],
-    radio_cfg_rateset(RadioId, Mode, RateSet, IEs).
+radio_cfg(_, _Radio, IEs) ->
+    IEs.
+
+radio_configuration(Radio, IEs) ->
+    Settings = [decryption_error_report_period, ieee_802_11_antenna,
+		ieee_802_11_direct_sequence_control, ieee_802_11_mac_operation,
+		ieee_802_11_multi_domain_capability, ieee_802_11_ofdm_control,
+		ieee_802_11_tx_power, ieee_802_11_wtp_radio_configuration,
+		ieee_802_11_rate_set],
+    lists:foldl(radio_cfg(_, Radio, _), IEs, Settings).
 
 reset_echo_request_timer(State = #state{echo_request_timer = Timer, echo_request_timeout = Timeout}) ->
     if is_reference(Timer) -> gen_fsm:cancel_timer(Timer);
@@ -1363,13 +1443,13 @@ dequeue_request_next(State = #state{request_queue = Queue0}) ->
     Queue1 = queue:drop(Queue0),
     {queue:peek(Queue1), State#state{request_queue = Queue1}}.
 
-control_addresses(App) ->
+control_addresses() ->
     Addrs =
-	case application:get_env(App, control_ips) of
+	case capwap_config:get(ac, control_ips) of
 	    {ok, IPs} when is_list(IPs) ->
 		IPs;
 	    _ ->
-		case application:get_env(App, server_ip) of
+		case capwap_config:get(ac, server_ip) of
 		    {ok, IP} ->
 			[IP];
 		    _ ->
@@ -1393,9 +1473,9 @@ control_address({A,B,C,D,E,F,G,H}) ->
     #control_ipv6_address{ip_address = <<A:16,B:16,C:16,D:16,E:16,F:16,G:16,H:16>>,
 			  wtp_count = get_wtp_count()}.
 
-ac_addresses(App) ->
+ac_addresses() ->
     Addrs =
-	case application:get_env(App, server_ip) of
+	case capwap_config:get(ac, server_ip) of
 	    {ok, IP} ->
 		[IP];
 	    _ ->
@@ -1485,8 +1565,8 @@ user_lookup(srp, Username, _UserState) ->
 user_lookup(psk, Username, Session) ->
     lager:debug("user_lookup: Username: ~p", [Username]),
     Opts = [{'Username', Username},
-	    {'Authentication-Method', {'TLS', 'Pre-Shared-Key'}}
-            | create_initial_ctld_params(Username)],
+	    {'Authentication-Method', {'TLS', 'Pre-Shared-Key'}},
+	    {'WTP-Config', capwap_config:wtp_config(Username)}],
     case ctld_session:authenticate(Session, to_session(Opts)) of
 	success ->
 	    lager:info("AuthResult: success"),
@@ -1527,13 +1607,14 @@ verify_cert(#'OTPCertificate'{
     end.
 
 verify_cert_auth_cn(CommonName, Session) ->
+    lager:info("AuthResult: attempt for ~p", [CommonName]),
     Opts = [{'Username', CommonName},
-	    {'Authentication-Method', {'TLS', 'X509-Subject-CN'}}
-            | create_initial_ctld_params(CommonName)],
+	    {'Authentication-Method', {'TLS', 'X509-Subject-CN'}},
+	    {'WTP-Config', capwap_config:wtp_config(CommonName)}],
     case ctld_session:authenticate(Session, to_session(Opts)) of
         success ->
             lager:info("AuthResult: success for ~p", [CommonName]),
-            {valid, Session};
+	    {valid, Session};
         {fail, Reason} ->
             lager:info("AuthResult: fail, ~p for ~p", [Reason, CommonName]),
             {fail, Reason};
@@ -1543,12 +1624,11 @@ verify_cert_auth_cn(CommonName, Session) ->
     end.
 
 mk_ssl_opts(Session) ->
-    App = capwap,
-    Dir = case application:get_env(App, certs) of
+    Dir = case capwap_config:get(ac, certs) of
 	      {ok, Path} ->
 		  Path;
 	      _ ->
-		  filename:join([code:lib_dir(App), "priv", "certs"])
+		  filename:join([code:lib_dir(capwap), "priv", "certs"])
 	  end,
 
     [{active, false},
@@ -1628,6 +1708,9 @@ start_session(Socket, _State) ->
 ie(Key, Elements) ->
     proplists:get_value(Key, Elements).
 
+get_ies(Key, Elements) ->
+    [E || E <- Elements, element(1, E) == Key].
+
 select_mac_mode(local) ->
     local_mac;
 select_mac_mode(split) ->
@@ -1665,60 +1748,8 @@ wtp_config_get(LocalCnf, {DefaultName, LocalName, Default}) ->
 wtp_config_get(_, {DefaultName, Default}) ->
     application:get_env(capwap, DefaultName, Default).
 
-get_ssid_cfg(RadioId, SSIDs, DefaultSSIDSuppress) ->
-    case lists:keyfind(RadioId, 1, SSIDs) of
-	{_, SSID} ->
-	    {SSID, DefaultSSIDSuppress};
-	{_, SSID, SuppressSSID} ->
-	    {SSID, SuppressSSID};
-	_ ->
-	    {undefined, DefaultSSIDSuppress}
-    end.
-
-create_initial_ctld_params(CommonName) ->
-    [WlanHoldTime, PsmIdle, PsmBusy, MaxWifi, SSIDs,
-     DefaultSSID, DefaultSSIDSuppress,
-     DynSSIDSuffixLen, EchoRequestInterval, DiscoveryInterval,
-     IdleTimeout, DataChannelDeadInterval, ACJoinTimeout, AdminPW] =
-        wtp_config_get(CommonName,
-                       [{wlan_hold_time, wlan_hold_time, 15},
-                        {psm_idle_timeout, psm_idle_timeout, 30},
-                        {psm_busy_timeout, psm_busy_timeout, 300},
-                        {max_stations, max_stations, 100},
-                        {ssids, ssids, []},
-                        {default_ssid, <<"CAPWAP">>},
-                        {default_ssid_suppress, 0},
-                        {dynamic_ssid_suffix_len, false},
-                        {echo_request_interval, 10},
-                        {discovery_interval, 20},
-                        {idle_timeout, 300},
-                        {data_channel_dead_interval, 70},
-                        {ac_join_timeout, 60},
-                        {default_admin_pw, admin_pw, undefined}
-                       ]),
-    RadioId = 1,
-    {SSID, SuppressSSID} = get_ssid_cfg(RadioId, SSIDs, DefaultSSIDSuppress),
-    SSID2 = case SSID of
-                undefined when is_integer(DynSSIDSuffixLen), is_binary(CommonName) ->
-                    binary:list_to_bin([DefaultSSID, $-, binary:part(CommonName, size(CommonName) - DynSSIDSuffixLen, DynSSIDSuffixLen)]);
-                undefined -> DefaultSSID;
-                _ -> SSID
-            end,
-    [{'CAPWAP-Power-Save-Idle-Timeout', PsmIdle},
-     {'CAPWAP-Power-Save-Busy-Timeout', PsmBusy},
-     {'CAPWAP-Max-WIFI-Clients', MaxWifi},
-     {'CAPWAP-SSID', SSID2},
-     {'CAPWAP-Suppress-SSID', SuppressSSID},
-     {'CAPWAP-Echo-Request-Interval', EchoRequestInterval},
-     {'CAPWAP-Discovery-Interval', DiscoveryInterval},
-     {'CAPWAP-Idle-Timeout', IdleTimeout},
-     {'CAPWAP-Data-Channel-Dead-Interval', DataChannelDeadInterval},
-     {'CAPWAP-AC-Join-Timeout', ACJoinTimeout},
-     {'CAPWAP-Admin-PW', AdminPW},
-     {'CAPWAP-Wlan-Hold-Time', WlanHoldTime}
-    ].
-
-wlan_cfg_rateset(RadioId, WlanId, Mode, RateSet, IEs) ->
+wlan_cfg_rateset(#wtp_radio{radio_id = RadioId},
+		 #wtp_wlan{wlan_id = WlanId}, Mode, RateSet, IEs) ->
     case lists:split(8, RateSet) of
 	{_, []} ->
 	    IEs;
@@ -1731,7 +1762,8 @@ wlan_cfg_rateset(RadioId, WlanId, Mode, RateSet, IEs) ->
 	     | IEs]
     end.
 
-wlan_cfg_wmm(RadioId, WlanId, IEs) ->
+wlan_cfg_wmm(#wtp_radio{radio_id = RadioId},
+	     #wtp_wlan{wlan_id = WlanId}, IEs) ->
     IE = <<16#00, 16#50, 16#f2, 16#02, 16#01, 16#01, 16#00, 16#00,
 	   16#03, 16#a4, 16#00, 16#00, 16#27, 16#a4, 16#00, 16#00,
 	   16#42, 16#43, 16#5e, 16#00, 16#62, 16#32, 16#2f, 16#00>>,
@@ -1741,20 +1773,24 @@ wlan_cfg_wmm(RadioId, WlanId, IEs) ->
 				      ie = <<?WLAN_EID_VENDOR_SPECIFIC, (byte_size(IE)):8, IE/bytes>>}
      | IEs].
 
-wlan_cfg_ht_cap(RadioId, WlanId, IEs) ->
+wlan_cfg_ht_cap(#wtp_radio{radio_id = RadioId},
+		#wtp_wlan{wlan_id = WlanId}, IEs) ->
     IE = <<16#0c, 16#00, 16#1b, 16#ff, 16#ff, 16#00, 16#00, 16#00,
-	   16#00, 16#00, 16#00, 16#00, 16#00, 16#00, 16#00, 16#10,
+	   16#00, 16#00, 16#00, 16#00, 16#00, 16#00, 16#00, 16#01,
 	   16#00, 16#00, 16#00, 16#00, 16#00, 16#00, 16#00, 16#00,
 	   16#00, 16#00>>,
+
     [#ieee_802_11_information_element{radio_id = RadioId,
 				      wlan_id = WlanId,
 				      flags = ['beacon','probe_response'],
 				      ie = <<?WLAN_EID_HT_CAP, (byte_size(IE)):8, IE/bytes>>}
      | IEs].
 
-wlan_cfg_ht_opmode(RadioId, WlanId, IEs) ->
-    Channel = ?RadioChannel,
-    IE = <<Channel:8, 16#08, 16#00, 16#00, 16#00, 16#00, 16#00, 16#00,
+wlan_cfg_ht_opmode(#wtp_radio{radio_id = RadioId,
+			      channel = Channel},
+		   #wtp_wlan{wlan_id = WlanId}, IEs) ->
+    Channel = Channel,
+    IE = <<Channel:8, 16#00, 16#00, 16#00, 16#00, 16#00, 16#00, 16#00,
 	   16#00, 16#00, 16#00, 16#00, 16#00, 16#00, 16#00, 16#00,
 	   16#00, 16#00, 16#00, 16#00, 16#00, 16#00>>,
     [#ieee_802_11_information_element{radio_id = RadioId,
@@ -1763,19 +1799,36 @@ wlan_cfg_ht_opmode(RadioId, WlanId, IEs) ->
 				      ie = <<?WLAN_EID_HT_OPERATION, (byte_size(IE)):8, IE/bytes>>}
      | IEs].
 
+wlan_cfg_tp_hold_time(#wtp_radio{radio_id = RadioId},
+		      #wtp_wlan{wlan_id = WlanId},
+		      #wtp{wlan_hold_time = WlanHoldTime}, IEs) ->
+    [#tp_ieee_802_11_wlan_hold_time{radio_id  = RadioId,
+				   wlan_id   = WlanId,
+				   hold_time = WlanHoldTime}
+     | IEs ].
 
-internal_add_wlan(#wlan{wlan_identifier = {RadioID, WlanId}, ssid = SSID,
-			suppress_ssid = SuppressSSID} = Wlan, State) ->
+internal_add_wlan(RadioId, WlanId,
+		  #state{config = #wtp{radios = Radios}} = State)
+  when is_integer(RadioId), is_integer(WlanId) ->
+    Radio = lists:keyfind(RadioId, #wtp_radio.radio_id, Radios),
+    WLAN = lists:keyfind(WlanId, #wtp_wlan.wlan_id, Radio#wtp_radio.wlans),
+    internal_add_wlan(Radio, WLAN, State);
+
+internal_add_wlan(#wtp_radio{radio_id = RadioId} = Radio,
+		  #wtp_wlan{wlan_id = WlanId,
+			    ssid = SSID,
+			    suppress_ssid = SuppressSSID} = Wlan,
+		  #state{config = Config} = State) ->
     WBID = 1,
     Mode = '11g-only',
     RateSet = rateset(Mode),
     Flags = [{frame,'802.3'}],
     MacMode = select_mac_mode(State#state.mac_types),
     TunnelMode = select_tunnel_mode(State#state.tunnel_modes, MacMode),
-    Header = #capwap_header{radio_id = RadioID, wb_id = WBID, flags = Flags},
+    Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
     State0 = State#state{mac_mode = MacMode, tunnel_mode = TunnelMode},
     ReqElements0 = [#ieee_802_11_add_wlan{
-                      radio_id      = RadioID,
+                      radio_id      = RadioId,
                       wlan_id       = WlanId,
                       capability    = [ess, short_slot_time],
                       auth_type     = open_system,
@@ -1785,12 +1838,13 @@ internal_add_wlan(#wlan{wlan_identifier = {RadioID, WlanId}, ssid = SSID,
                       ssid          = SSID
                      }
                   ],
-    ReqElements1 = wlan_cfg_rateset(RadioID, WlanId, Mode, RateSet, ReqElements0),
-    ReqElements2 = wlan_cfg_wmm(RadioID, WlanId, ReqElements1),
-    ReqElements3 = wlan_cfg_ht_cap(RadioID, WlanId, ReqElements2),
-    ReqElements = wlan_cfg_ht_opmode(RadioID, WlanId, ReqElements3),
+    ReqElements1 = wlan_cfg_rateset(Radio, Wlan, Mode, RateSet, ReqElements0),
+    ReqElements2 = wlan_cfg_wmm(Radio, Wlan, ReqElements1),
+    ReqElements3 = wlan_cfg_ht_opmode(Radio, Wlan, ReqElements2),
+    ReqElements4 = wlan_cfg_ht_cap(Radio, Wlan, ReqElements3),
+    ReqElements = wlan_cfg_tp_hold_time(Radio, Wlan, Config, ReqElements4),
     State1 = send_request(Header, ieee_802_11_wlan_configuration_request, ReqElements, State0),
-    set_wlan(Wlan#wlan{started = true}, State1).
+    update_wlan_state({RadioId, WlanId}, fun(W) -> W#wlan{started = true} end, State1).
 
 internal_del_wlan(WlanIdent = {RadioId, WlanId}, State) ->
     WBID = 1,
@@ -1810,12 +1864,17 @@ remove_wlan(WlanIdent, State = #state{wlans = Wlans}) ->
 get_wlan(WlanIdent, #state{wlans = Wlans}) ->
     lists:keyfind(WlanIdent, #wlan.wlan_identifier, Wlans).
 
-set_wlan(Wlan = #wlan{wlan_identifier = {RadioId, WlanId} = WlanIdent},
-	 State = #state{wlans = Wlans})
-  when is_integer(RadioId), RadioId > 0,
-       is_integer(WlanId),  WlanId > 0 ->
-    Wlans1 = lists:keystore(WlanIdent, #wlan.wlan_identifier, Wlans, Wlan),
-    State#state{wlans = Wlans1}.
+update_wlan_state(WlanIdent, Fun, State = #state{wlans = Wlans})
+  when is_function(Fun, 1) ->
+    Wlan =
+	case get_wlan(WlanIdent, State) of
+	    false ->
+		#wlan{wlan_identifier = WlanIdent};
+	    Tuple ->
+		Tuple
+	end,
+    State#state{wlans =
+		    lists:keystore(WlanIdent, #wlan.wlan_identifier, Wlans, Fun(Wlan))}.
 
 get_admin_wifi_updates(State, IEs) ->
     StartedWlans = [X || X <- IEs, element(1, X) == ieee_802_11_tp_wlan],
