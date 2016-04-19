@@ -176,32 +176,24 @@ station_detaching(AC) ->
 %%%===================================================================
 %%% extern APIs
 %%%===================================================================
-
-firmware_download(CommonName, DownloadLink, Sha) ->
-    case capwap_wtp_reg:lookup(CommonName) of
+with_cn(CN, Fun) ->
+    case capwap_wtp_reg:lookup(CN) of
         {ok, Pid} ->
-            gen_fsm:send_event(Pid, {firmware_download, DownloadLink, Sha});
+	    Fun(Pid);
         not_found ->
             {error, not_found}
     end.
 
-set_ssid(CommonName, RadioId, SSID, SuppressSSID) ->
+firmware_download(CN, DownloadLink, Sha) ->
+    with_cn(CN, gen_fsm:send_event(_, {firmware_download, DownloadLink, Sha})).
+
+set_ssid(CN, RadioId, SSID, SuppressSSID) ->
     WlanId = 1,
     WlanIdent = {RadioId, WlanId},
-    case capwap_wtp_reg:lookup(CommonName) of
-        {ok, Pid} ->
-            gen_fsm:sync_send_all_state_event(Pid, {set_ssid, WlanIdent, SSID, SuppressSSID});
-        not_found ->
-            {error, not_found}
-    end.
+    with_cn(CN, gen_fsm:sync_send_all_state_event(_, {set_ssid, WlanIdent, SSID, SuppressSSID})).
 
-stop_radio(CommonName, RadioId) ->
-    case capwap_wtp_reg:lookup(CommonName) of
-        {ok, Pid} ->
-            gen_fsm:sync_send_all_state_event(Pid, {stop_radio, RadioId});
-        not_found ->
-            {error, not_found}
-    end.
+stop_radio(CN, RadioId) ->
+    with_cn(CN, gen_fsm:sync_send_all_state_event(_, {stop_radio, RadioId})).
 
 %%%===================================================================
 %%% gen_fsm callbacks
