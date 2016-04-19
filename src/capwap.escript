@@ -174,11 +174,40 @@ print_wtp_radio_wlan(#wtp_radio{radio_id = RadioId},
 	      "  Running: ~w~n",
 	      [WlanId, Wlan#wtp_wlan.ssid, Wlan#wtp_wlan.suppress_ssid, WlanState]).
 
+fmt_wtp_radio_oper_mode(#wtp_radio{
+			   operation_mode = OperMode,
+			   channel = Channel,
+			   channel_assessment = CCA,
+			   energy_detect_threshold = EDT})
+  when OperMode == '802.11b'; OperMode == '802.11g' ->
+        io_lib:format("  Operation Mode: ~w~n"
+		      "    Channel: ~w~n"
+		      "    (*) Channel Assessment Method: ~w~n"
+		      "    Energy Detect Threshold: ~w~n",
+		      [OperMode, Channel, CCA, EDT]);
+fmt_wtp_radio_oper_mode(#wtp_radio{
+			   operation_mode = OperMode,
+			   channel = Channel,
+			   band_support = BandSupport,
+			   ti_threshold = TiThresHold})
+  when OperMode == '802.11a' ->
+    io_lib:format("  Operation Mode: 802.11a~n"
+		  "    Channel: ~w~n"
+		  "    Band Support: 0x~2.16.0b~n"
+		  "    (*) TI Threshold: ~w~n",
+		  [Channel, BandSupport, TiThresHold]);
+fmt_wtp_radio_oper_mode(#wtp_radio{
+			   operation_mode = OperMode,
+			   channel = Channel}) ->
+    io_lib:format("  Operation Mode: ~s~n"
+		  "    Channel: ~w~n",
+		  [OperMode, Channel]).
+
+
 print_wtp_radio(Radio, WlansState) ->
     io:format("Radio #~w Config:~n"
 	      "  Type: ~w~n"
-	      "  Operation Mode: ~w~n"
-	      "  Channel: ~w~n"
+	      "~s"
 	      "  Beacon Period: ~w time units (~f ms)~n"
 	      "  DTIM Period: ~w~n"
 	      "  Short Preamble: ~w~n"
@@ -189,25 +218,19 @@ print_wtp_radio(Radio, WlansState) ->
 	      "  Tx MSDU Lifetime: ~w time units (~f ms)~n"
 	      "  Rx MSDU Lifetime: ~w time units (~f ms)~n"
 	      "  Tx Power: ~w dBm~n"
-	      "  (*) Channel Assessment Method: ~w~n"
-	      "  Energy Detect Threshold: ~w~n"
-	      "  Band Support: 0x~2.16.0b~n"
-	      "  (*) TI Threshold: ~w~n"
 	      "  Diversity: ~w~n"
 	      "  Combiner: ~w~n"
 	      "  Antenna Selection: ~w~n"
 	      "  (*) Report Interval: ~w sec~n",
 	      [Radio#wtp_radio.radio_id, Radio#wtp_radio.radio_type,
-	       Radio#wtp_radio.operation_mode, Radio#wtp_radio.channel,
+	       fmt_wtp_radio_oper_mode(Radio),
 	       Radio#wtp_radio.beacon_interval, Radio#wtp_radio.beacon_interval * 1.024,
 	       Radio#wtp_radio.dtim_period, Radio#wtp_radio.short_preamble,
 	       Radio#wtp_radio.rts_threshold, Radio#wtp_radio.short_retry,
 	       Radio#wtp_radio.long_retry, Radio#wtp_radio.fragmentation_threshold,
 	       Radio#wtp_radio.tx_msdu_lifetime, Radio#wtp_radio.tx_msdu_lifetime * 1.024,
 	       Radio#wtp_radio.rx_msdu_lifetime, Radio#wtp_radio.rx_msdu_lifetime * 1.024,
-	       Radio#wtp_radio.tx_power, Radio#wtp_radio.channel_assessment,
-	       Radio#wtp_radio.energy_detect_threshold, Radio#wtp_radio.band_support,
-	       Radio#wtp_radio.ti_threshold, Radio#wtp_radio.diversity,
+	       Radio#wtp_radio.tx_power, Radio#wtp_radio.diversity,
 	       Radio#wtp_radio.combiner, Radio#wtp_radio.antenna_selection,
 	       Radio#wtp_radio.report_interval]),
     [print_wtp_radio_wlan(Radio, Wlan, WlansState) || Wlan <- Radio#wtp_radio.wlans].
