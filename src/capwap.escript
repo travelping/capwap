@@ -139,6 +139,9 @@ fmt_mac(<<A:8, B:8, C:8, D:8, E:8, F:8>>) ->
     io_lib:format("~2.16.0b:~2.16.0b:~2.16.0b:~2.16.0b:~2.16.0b:~2.16.0b",
 		  [A,B,C,D,E,F]).
 
+fmt_bool(X) when is_atom(X) -> X;
+fmt_bool(X) -> X > 0.
+
 print_wtp_config(#{config := Config}) ->
     io:format("CAPWAP Config Settings:~n"
 	      "  Power Save Mode Timeouts, Idle: ~w sec, Busy: ~w sec~n"
@@ -172,7 +175,9 @@ print_wtp_radio_wlan(#wtp_radio{radio_id = RadioId},
 	      "  SSID: ~s~n"
 	      "  Hidden SSID: ~w~n"
 	      "  Running: ~w~n",
-	      [WlanId, Wlan#wtp_wlan.ssid, Wlan#wtp_wlan.suppress_ssid, WlanState]).
+	      [WlanId, Wlan#wtp_wlan.ssid,
+	       fmt_bool(Wlan#wtp_wlan.suppress_ssid),
+	       WlanState]).
 
 fmt_wtp_radio_oper_mode(#wtp_radio{
 			   operation_mode = OperMode,
