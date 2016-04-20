@@ -81,8 +81,8 @@ bool_to_int(X) when is_integer(X) andalso X > 0 -> 1;
 bool_to_int(_) -> 0.
 
 %% derive WLAN defaults from Radio settings
-wtp_init_wlan_radio_defaults(_Radio, WLAN) ->
-    WLAN#wtp_wlan{wlan_id = 1,
+wtp_init_wlan_radio_defaults(Id, _Radio, WLAN) ->
+    WLAN#wtp_wlan{wlan_id = Id,
 		  suppress_ssid = bool_to_int(get(ac, suppress_ssid, false))}.
 
 wtp_init_wlan(_CN, _Radio, {ssid, _}, WLAN) ->
@@ -93,7 +93,7 @@ wtp_init_wlan(CN, Radio, Setting, WLAN) ->
     lager:debug("ignoring ~p on Radio (~w:~w)", [Setting, CN, Radio#wtp_radio.radio_id]),
     WLAN.
 
-wtp_init_wlan(CN, Radio, Settings) ->
+wtp_init_wlan_mf(CN, Radio, Settings, Count) ->
     DefaultSSID = get(ac, default_ssid, <<"CAPWAP">>),
     DynSSIDSuffixLen = get(ac, dynamic_ssid_suffix_len, false),
 
@@ -108,9 +108,10 @@ wtp_init_wlan(CN, Radio, Settings) ->
 						   DynSSIDSuffixLen)]);
 	       _ -> DefaultSSID
 	   end,
-    WLAN0 = wtp_init_wlan_radio_defaults(Radio, #wtp_wlan{ssid = SSID}),
-    lists:foldl(wtp_init_wlan(CN, Radio, _, _),
-		WLAN0, Settings).
+    WLAN0 = wtp_init_wlan_radio_defaults(Count, Radio, #wtp_wlan{ssid = SSID}),
+    WLAN = lists:foldl(wtp_init_wlan(CN, Radio, _, _),
+		       WLAN0, Settings),
+    {WLAN, Count + 1}.
 
 %% apply per RADIO type AC defaults
 wtp_init_radio_type_config(CN, RadioType, Radio) ->
@@ -155,10 +156,8 @@ wtp_init_radio_config(CN, #ieee_802_11_wtp_radio_information{
     RadioRec = '#new-wtp_radio'(Radio3),
 
     %% convert the remaining WLAN tupple list into a record list
-    R = RadioRec#wtp_radio{wlans =
-			       lists:map(wtp_init_wlan(CN, RadioRec, _), RadioRec#wtp_radio.wlans)},
-    lager:debug("Radio: ~p", [R]),
-    R.
+    {Wlans, _} = lists:mapfoldl(wtp_init_wlan_mf(CN, RadioRec, _, _), 1, RadioRec#wtp_radio.wlans),
+    RadioRec#wtp_radio{wlans = Wlans}.
 
 wtp_set_radio_infos(CN, RadioInfos, Config) ->
     Radios = lists:map(wtp_init_radio_config(CN, _), RadioInfos),
