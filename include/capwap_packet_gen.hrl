@@ -547,6 +547,19 @@
         gpsatc = <<>>
 }).
 
+-record(ieee_802_11n_wlan_radio_configuration, {
+        radio_id = 0,
+        a_msdu = 0,
+        a_mpdu = 0,
+        deny_non_11n = 0,
+        short_gi = 0,
+        bandwidth_binding = 0,
+        max_supported_mcs = 0,
+        max_mandatory_mcs = 0,
+        tx_antenna = 0,
+        rx_antenna = 0
+}).
+
 -record(ieee_802_11n_station_information, {
         mac_address = <<0,0,0,0,0,0>>,
         bandwith_40mhz = 0,

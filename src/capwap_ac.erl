@@ -401,7 +401,7 @@ join({configuration_status_request, Seq, Elements, #capwap_header{
 						      wb_id = WBID, flags = Flags}},
      #state{config = Config0} = State0) ->
 
-    Config = update_radio_sup_rates(Elements, Config0),
+    Config = update_radio_information(Elements, Config0),
     #wtp{
        psm_idle_timeout           = PSMIdleTimeout,
        psm_busy_timeout           = PSMBusyTimeout,
@@ -1263,28 +1263,55 @@ ac_info_version(Request, {Version, _AddOn}) ->
      #ac_name{name = capwap_config:get(ac, ac_name, <<"My AC Name">>)}
     ] ++ control_addresses() ++ AcList.
 
-update_radio_info_sup_rates(SRates, #wtp_radio{supported_rates = SR} = Radio)
+update_radio_sup_rates(SRates, #wtp_radio{supported_rates = SR} = Radio)
   when is_list(SR) ->
     Radio#wtp_radio{supported_rates = SR ++ SRates};
-update_radio_info_sup_rates(SRates, Radio) ->
+update_radio_sup_rates(SRates, Radio) ->
     Radio#wtp_radio{supported_rates = SRates}.
 
-update_radio_sup_rates([], Config) ->
-    Config;
-update_radio_sup_rates([#ieee_802_11_supported_rates{
+update_radio_80211n_cfg(#ieee_802_11n_wlan_radio_configuration{
+			   a_msdu            = AggMSDU,
+			   a_mpdu            = AggMPDU,
+			   deny_non_11n      = DenyNon11n,
+			   short_gi          = ShortGI,
+			   bandwidth_binding = BandwidthBinding,
+			   max_supported_mcs = MaxSupportedMCS,
+			   max_mandatory_mcs = MaxMandatoryMCS,
+			   tx_antenna        = RxAntenna,
+			   rx_antenna        = RxAntenna
+			  }, Radio) ->
+    Radio#wtp_radio{
+      a_msdu            = AggMSDU,
+      a_mpdu            = AggMPDU,
+      deny_non_11n      = DenyNon11n,
+      short_gi          = ShortGI,
+      bandwidth_binding = BandwidthBinding,
+      max_supported_mcs = MaxSupportedMCS,
+      max_mandatory_mcs = MaxMandatoryMCS,
+      tx_antenna        = RxAntenna,
+      rx_antenna        = RxAntenna
+     }.
+
+update_radio_cfg(Fun, RadioId, #wtp{radios = Radios} = Config) ->
+    case lists:keyfind(RadioId, #wtp_radio.radio_id, Radios) of
+	#wtp_radio{} = Radio ->
+	    Config#wtp{radios = lists:keystore(RadioId, #wtp_radio.radio_id, Radios, Fun(Radio))};
+	_ ->
+	    Config
+    end.
+
+update_radio_info(#ieee_802_11_supported_rates{
 			   radio_id = RadioId,
-			   supported_rates = SRates} | Next],
-		       #wtp{radios = Radios0} = Config0) ->
-    Config = case lists:keyfind(RadioId, #wtp_radio.radio_id, Radios0) of
-		 #wtp_radio{} = Radio0 ->
-		     Radio = update_radio_info_sup_rates(SRates, Radio0),
-		     Config0#wtp{radios = lists:keystore(RadioId, #wtp_radio.radio_id, Radios0, Radio)};
-		 _ ->
-		     Config0
-	     end,
-    update_radio_sup_rates(Next, Config);
-update_radio_sup_rates([_ | Next], Config) ->
-    update_radio_sup_rates(Next, Config).
+			   supported_rates = SRates}, Config) ->
+    update_radio_cfg(update_radio_sup_rates(SRates, _), RadioId, Config);
+update_radio_info(#ieee_802_11n_wlan_radio_configuration{
+			   radio_id = RadioId} = Cfg, Config) ->
+    update_radio_cfg(update_radio_80211n_cfg(Cfg, _), RadioId, Config);
+update_radio_info(_, Config) ->
+    Config.
+
+update_radio_information(Elements, Config) ->
+    lists:foldl(fun update_radio_info/2, Config, Elements).
 
 rateset('11b-only') ->
     [10, 20, 55, 110];

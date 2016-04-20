@@ -148,6 +148,10 @@ fmt_mac(<<A:8, B:8, C:8, D:8, E:8, F:8>>) ->
 fmt_bool(X) when is_atom(X) -> X;
 fmt_bool(X) -> X > 0.
 
+fmt_bool(X, _) when is_atom(X) -> X;
+fmt_bool(X, {True, _}) when X > 0 -> True;
+fmt_bool(_, {_, False}) -> False.
+
 print_wtp_config(#{config := Config}) ->
     io:format("CAPWAP Config Settings:~n"
 	      "  Power Save Mode Timeouts, Idle: ~w sec, Busy: ~w sec~n"
@@ -219,6 +223,36 @@ fmt_rate(Rate) when Rate rem 2 == 0 ->
 fmt_rate(Rate) ->
     Rate / 2.
 
+fmt_wtp_radio_80211n(_Radio, false) ->
+    [];
+fmt_wtp_radio_80211n(#wtp_radio{
+			a_msdu            = AggMSDU,
+			a_mpdu            = AggMPDU,
+			deny_non_11n      = DenyNon11n,
+			short_gi          = ShortGI,
+			bandwidth_binding = BandwidthBinding,
+			max_supported_mcs = MaxSupportedMCS,
+			max_mandatory_mcs = MaxMandatoryMCS,
+			tx_antenna        = RxAntenna,
+			rx_antenna        = RxAntenna}, _) ->
+    io_lib:format("  802.11n Settings:~n"
+		  "    A-MSDU: ~w~n"
+		  "    A-MPDU: ~w~n"
+		  "    11n Only: ~w~n"
+		  "    Short GI: ~w~n"
+		  "    Bandwidth Binding Mode: ~s~n"
+		  "    Max. supported MCS: ~w~n"
+		  "    Max. mandatory MCS: ~w~n"
+		  "    TxAntenna Cfg.: ~8.2.0b~n"
+		  "    RxAntenna Cfg.: ~8.2.0b~n",
+		  [fmt_bool(AggMSDU, {enabled, disabled}),
+		   fmt_bool(AggMPDU, {enabled, disabled}),
+		   fmt_bool(DenyNon11n),
+		   fmt_bool(ShortGI, {enabled, disabled}),
+		   fmt_bool(BandwidthBinding, {"20MHz", "40Mhz"}),
+		   MaxSupportedMCS,
+		   MaxMandatoryMCS, RxAntenna, RxAntenna]).
+
 print_wtp_radio(Radio, WlansState) ->
     io:format("Radio #~w Config:~n"
 	      "  Type: ~w~n"
@@ -237,7 +271,8 @@ print_wtp_radio(Radio, WlansState) ->
 	      "  Diversity: ~w~n"
 	      "  Combiner: ~w~n"
 	      "  Antenna Selection: ~w~n"
-	      "  (*) Report Interval: ~w sec~n",
+	      "  (*) Report Interval: ~w sec~n"
+	      "~s",
 	      [Radio#wtp_radio.radio_id, Radio#wtp_radio.radio_type,
 	       [fmt_rate(R) || R <- Radio#wtp_radio.supported_rates],
 	       fmt_wtp_radio_oper_mode(Radio),
@@ -249,7 +284,8 @@ print_wtp_radio(Radio, WlansState) ->
 	       Radio#wtp_radio.rx_msdu_lifetime, Radio#wtp_radio.rx_msdu_lifetime * 1.024,
 	       Radio#wtp_radio.tx_power, Radio#wtp_radio.diversity,
 	       Radio#wtp_radio.combiner, Radio#wtp_radio.antenna_selection,
-	       Radio#wtp_radio.report_interval]),
+	       Radio#wtp_radio.report_interval,
+	       fmt_wtp_radio_80211n(Radio, proplists:get_bool('802.11n', Radio#wtp_radio.radio_type))]),
     [print_wtp_radio_wlan(Radio, Wlan, WlansState) || Wlan <- Radio#wtp_radio.wlans].
 
 print_wtp_radios(#{config :=

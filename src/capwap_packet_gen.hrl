@@ -1043,6 +1043,29 @@ decode_vendor_element({18681,15}, <<M_timestamp:32/integer,
                                 wwan_id = M_wwan_id,
                                 gpsatc = M_gpsatc};
 
+decode_vendor_element({18681,16}, <<M_radio_id:8/integer,
+                                    M_a_msdu:1/integer,
+                                    M_a_mpdu:1/integer,
+                                    M_deny_non_11n:1/integer,
+                                    M_short_gi:1/integer,
+                                    M_bandwidth_binding:1/integer,
+                                    _:3,
+                                    M_max_supported_mcs:8/integer,
+                                    M_max_mandatory_mcs:8/integer,
+                                    M_tx_antenna:8/integer,
+                                    M_rx_antenna:8/integer,
+                                    _:16>>) ->
+    #ieee_802_11n_wlan_radio_configuration{radio_id = M_radio_id,
+                                           a_msdu = M_a_msdu,
+                                           a_mpdu = M_a_mpdu,
+                                           deny_non_11n = M_deny_non_11n,
+                                           short_gi = M_short_gi,
+                                           bandwidth_binding = M_bandwidth_binding,
+                                           max_supported_mcs = M_max_supported_mcs,
+                                           max_mandatory_mcs = M_max_mandatory_mcs,
+                                           tx_antenna = M_tx_antenna,
+                                           rx_antenna = M_rx_antenna};
+
 decode_vendor_element({18681,17}, <<M_mac_address:6/bytes,
                                     M_bandwith_40mhz:1/integer,
                                     M_power_save_mode:2/integer,
@@ -1905,6 +1928,30 @@ encode_element(#gps_last_acquired_position{
     encode_vendor_element({18681,15}, <<M_timestamp:32,
                                         M_wwan_id:8,
                                         M_gpsatc/binary>>);
+
+encode_element(#ieee_802_11n_wlan_radio_configuration{
+                    radio_id = M_radio_id,
+                    a_msdu = M_a_msdu,
+                    a_mpdu = M_a_mpdu,
+                    deny_non_11n = M_deny_non_11n,
+                    short_gi = M_short_gi,
+                    bandwidth_binding = M_bandwidth_binding,
+                    max_supported_mcs = M_max_supported_mcs,
+                    max_mandatory_mcs = M_max_mandatory_mcs,
+                    tx_antenna = M_tx_antenna,
+                    rx_antenna = M_rx_antenna}) ->
+    encode_vendor_element({18681,16}, <<M_radio_id:8,
+                                        M_a_msdu:1,
+                                        M_a_mpdu:1,
+                                        M_deny_non_11n:1,
+                                        M_short_gi:1,
+                                        M_bandwidth_binding:1,
+                                        0:3,
+                                        M_max_supported_mcs:8,
+                                        M_max_mandatory_mcs:8,
+                                        M_tx_antenna:8,
+                                        M_rx_antenna:8,
+                                        0:16>>);
 
 encode_element(#ieee_802_11n_station_information{
                     mac_address = M_mac_address,
