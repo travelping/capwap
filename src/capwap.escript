@@ -171,10 +171,10 @@ print_wtp_radio_wlan(#wtp_radio{radio_id = RadioId},
 		    Other ->
 			Other
 		end,
-    io:format("WLAN #~w:~n"
-	      "  SSID: ~s~n"
-	      "  Hidden SSID: ~w~n"
-	      "  Running: ~w~n",
+    io:format("  WLAN #~w:~n"
+	      "    SSID: ~s~n"
+	      "    Hidden SSID: ~w~n"
+	      "    Running: ~w~n",
 	      [WlanId, Wlan#wtp_wlan.ssid,
 	       fmt_bool(Wlan#wtp_wlan.suppress_ssid),
 	       WlanState]).
