@@ -13,8 +13,14 @@ main(_, ["list"]) ->
     [io:format("~s : ~s:~w~n", [CommonName, inet_parse:ntoa(Address), Port]) || {CommonName, {Address, Port}} <- WTPs];
 
 main(_, ["show", CN]) ->
-    WTP = rpc(capwap, get_wtp, [list_to_binary(CN)]),
-    print_wtp(WTP);
+    case rpc(capwap, get_wtp, [list_to_binary(CN)]) of
+	{ok, WTP} ->
+	    print_wtp(WTP);
+	{error, Reason} ->
+	    io:format("Error: ~p~n", [Reason]);
+	Other ->
+	    io:format("Error: ~p~n", [Other])
+    end;
 
 main(Opts, ["dp", "wtp", "list"]) ->
     WTPs = rpc(capwap_dp, list_wtp, []),
@@ -317,20 +323,20 @@ fmt_time_ms(StartTime) ->
     io_lib:format("~4.10.0b-~2.10.0b-~2.10.0b ~2.10.0b:~2.10.0b:~2.10.0b.~4.10.0b",
 		  [Year, Month, Day, Hour, Minute, Second, MilliSecs]).
 
-print_wtp({ok, #{id := Id,
-		 station_count := StationCnt,
-		 location := Location,
-		 board_data := BoardData,
-		 descriptor := Descriptor,
-		 name := Name,
-		 start_time := StartTime,
-		 ctrl_channel_address := CtrlAddress,
-		 data_channel_address := DataAddress,
-		 session_id := SessionId,
-		 mac_mode := MacMode,
-		 tunnel_mode := TunnelMode,
-		 echo_request_timeout := EchoReqTimeout
-		} = WTP}) ->
+print_wtp(#{id := Id,
+	    station_count := StationCnt,
+	    location := Location,
+	    board_data := BoardData,
+	    descriptor := Descriptor,
+	    name := Name,
+	    start_time := StartTime,
+	    ctrl_channel_address := CtrlAddress,
+	    data_channel_address := DataAddress,
+	    session_id := SessionId,
+	    mac_mode := MacMode,
+	    tunnel_mode := TunnelMode,
+	    echo_request_timeout := EchoReqTimeout
+	   } = WTP) ->
     Now = erlang:system_time(milli_seconds),
     io:format("WTP: ~s, ~w Stations~n"
 	      "  Start Time: ~s (~.4f seconds ago)~n"
