@@ -15,6 +15,7 @@
 -record(wtp_radio, {
 	  radio_id,
 	  radio_type,
+	  supported_rates,
 	  operation_mode,
 	  channel,
 	  beacon_interval,
@@ -35,6 +36,18 @@
 	  combiner,
 	  antenna_selection,
 	  report_interval,
+
+	  %% IEEE 802.11n settings
+	  a_msdu,
+	  a_mpdu,
+	  deny_non_11n,
+	  short_gi,
+	  bandwidth_binding,
+	  max_supported_mcs,
+	  max_mandatory_mcs,
+	  tx_antenna,
+	  rx_antenna,
+
 	  wlans
 	 }).
 

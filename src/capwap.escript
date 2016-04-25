@@ -2,12 +2,25 @@
 %%! -hidden -connect_all false -smp disable -kernel inet_dist_use_interface {127,0,0,1}
 -mode(compile).
 
+-include_lib("capwap/include/capwap_packet.hrl").
+-include_lib("capwap/include/capwap_config.hrl").
+
 main(_, []) ->
     help();
 
 main(_, ["list"]) ->
     WTPs = rpc(capwap, list_wtps, []),
     [io:format("~s : ~s:~w~n", [CommonName, inet_parse:ntoa(Address), Port]) || {CommonName, {Address, Port}} <- WTPs];
+
+main(_, ["show", CN]) ->
+    case rpc(capwap, get_wtp, [list_to_binary(CN)]) of
+	{ok, WTP} ->
+	    print_wtp(WTP);
+	{error, Reason} ->
+	    io:format("Error: ~p~n", [Reason]);
+	Other ->
+	    io:format("Error: ~p~n", [Other])
+    end;
 
 main(Opts, ["dp", "wtp", "list"]) ->
     WTPs = rpc(capwap_dp, list_wtp, []),
@@ -90,6 +103,7 @@ help() ->
 	      "  -v, --verbose                               → verbose output~n~n"
               "CAPWAP commands:~n"
               "  list                                        → list all registered wtps~n"
+              "  show <common name>                          → show wtp information~n"
               "  update <common name> <link> <hash>          → update wtp~n"
               "  set-ssid <common name> <SSID> [RadioID]     → set ssid~n"
               "  stop-radio <common name> <RadioID>          → stop wifi radio~n"
@@ -116,6 +130,269 @@ mac_to_bin(MAC) ->
                 _ -> undefined
         end.
 
+fmt_endpoint({IP, Port}) ->
+    [fmt_ip(IP), $:, integer_to_list(Port)].
+
+fmt_ip(IP) ->
+    case inet:ntoa(IP) of
+	S when is_list(S) ->
+	    S;
+	_ ->
+	    io_lib:format("~w", [IP])
+    end.
+
+fmt_mac(<<A:8, B:8, C:8, D:8, E:8, F:8>>) ->
+    io_lib:format("~2.16.0b:~2.16.0b:~2.16.0b:~2.16.0b:~2.16.0b:~2.16.0b",
+		  [A,B,C,D,E,F]).
+
+fmt_bool(X) when is_atom(X) -> X;
+fmt_bool(X) -> X > 0.
+
+fmt_bool(X, _) when is_atom(X) -> X;
+fmt_bool(X, {True, _}) when X > 0 -> True;
+fmt_bool(_, {_, False}) -> False.
+
+print_wtp_config(#{config := Config}) ->
+    io:format("CAPWAP Config Settings:~n"
+	      "  Power Save Mode Timeouts, Idle: ~w sec, Busy: ~w sec~n"
+	      "  Max Stations: ~w~n"
+	      "  Echo Request Interval: ~w sec~n"
+	      "  Discovery Interval: ~w sec~n"
+	      "  Station Idle Timeout: ~w sec~n"
+	      "  Data Channel Dead Interval: ~w sec~n"
+	      "  AC Join Timeout: ~w sec~n"
+	      "  Admin Password: ~s~n"
+	      "  WLAN Hold Time: ~w sec~n",
+	      [Config#wtp.psm_idle_timeout, Config#wtp.psm_busy_timeout,
+	       Config#wtp.max_stations, Config#wtp.echo_request_interval,
+	       Config#wtp.discovery_interval, Config#wtp.idle_timeout,
+	       Config#wtp.data_channel_dead_interval, Config#wtp.ac_join_timeout,
+	       Config#wtp.admin_pw, Config#wtp.wlan_hold_time]).
+
+print_wtp_radio_wlan(#wtp_radio{radio_id = RadioId},
+		     #wtp_wlan{wlan_id = WlanId} = Wlan,
+		     WlansState) ->
+
+    WlanState = case lists:keyfind({RadioId, WlanId}, 2, WlansState) of
+		    S when is_tuple(S) ->
+			%% TODO: accessing the wlan state record like this is a
+			%%       hack, will be replaced soonish
+			element(3, S);
+		    Other ->
+			Other
+		end,
+    io:format("  WLAN #~w:~n"
+	      "    SSID: ~s~n"
+	      "    Hidden SSID: ~w~n"
+	      "    Running: ~w~n",
+	      [WlanId, Wlan#wtp_wlan.ssid,
+	       fmt_bool(Wlan#wtp_wlan.suppress_ssid),
+	       WlanState]).
+
+fmt_wtp_radio_oper_mode(#wtp_radio{
+			   operation_mode = OperMode,
+			   channel = Channel,
+			   channel_assessment = CCA,
+			   energy_detect_threshold = EDT})
+  when OperMode == '802.11b'; OperMode == '802.11g' ->
+        io_lib:format("  Operation Mode: ~w~n"
+		      "    Channel: ~w~n"
+		      "    (*) Channel Assessment Method: ~w~n"
+		      "    Energy Detect Threshold: ~w~n",
+		      [OperMode, Channel, CCA, EDT]);
+fmt_wtp_radio_oper_mode(#wtp_radio{
+			   operation_mode = OperMode,
+			   channel = Channel,
+			   band_support = BandSupport,
+			   ti_threshold = TiThresHold})
+  when OperMode == '802.11a' ->
+    io_lib:format("  Operation Mode: 802.11a~n"
+		  "    Channel: ~w~n"
+		  "    Band Support: 0x~2.16.0b~n"
+		  "    (*) TI Threshold: ~w~n",
+		  [Channel, BandSupport, TiThresHold]);
+fmt_wtp_radio_oper_mode(#wtp_radio{
+			   operation_mode = OperMode,
+			   channel = Channel}) ->
+    io_lib:format("  Operation Mode: ~s~n"
+		  "    Channel: ~w~n",
+		  [OperMode, Channel]).
+
+fmt_rate(Rate) when Rate rem 2 == 0 ->
+    Rate div 2;
+fmt_rate(Rate) ->
+    Rate / 2.
+
+fmt_wtp_radio_80211n(_Radio, false) ->
+    [];
+fmt_wtp_radio_80211n(#wtp_radio{
+			a_msdu            = AggMSDU,
+			a_mpdu            = AggMPDU,
+			deny_non_11n      = DenyNon11n,
+			short_gi          = ShortGI,
+			bandwidth_binding = BandwidthBinding,
+			max_supported_mcs = MaxSupportedMCS,
+			max_mandatory_mcs = MaxMandatoryMCS,
+			tx_antenna        = RxAntenna,
+			rx_antenna        = RxAntenna}, _) ->
+    io_lib:format("  802.11n Settings:~n"
+		  "    A-MSDU: ~w~n"
+		  "    A-MPDU: ~w~n"
+		  "    11n Only: ~w~n"
+		  "    Short GI: ~w~n"
+		  "    Bandwidth Binding Mode: ~s~n"
+		  "    Max. supported MCS: ~w~n"
+		  "    Max. mandatory MCS: ~w~n"
+		  "    TxAntenna Cfg.: ~8.2.0b~n"
+		  "    RxAntenna Cfg.: ~8.2.0b~n",
+		  [fmt_bool(AggMSDU, {enabled, disabled}),
+		   fmt_bool(AggMPDU, {enabled, disabled}),
+		   fmt_bool(DenyNon11n),
+		   fmt_bool(ShortGI, {enabled, disabled}),
+		   fmt_bool(BandwidthBinding, {"20MHz", "40Mhz"}),
+		   MaxSupportedMCS,
+		   MaxMandatoryMCS, RxAntenna, RxAntenna]).
+
+print_wtp_radio(Radio, WlansState) ->
+    io:format("Radio #~w Config:~n"
+	      "  Type: ~w~n"
+	      "  Supported Rates: ~w (Mbit)~n"
+	      "~s"
+	      "  Beacon Period: ~w time units (~f ms)~n"
+	      "  DTIM Period: ~w~n"
+	      "  Short Preamble: ~w~n"
+	      "  RTS Threshold: ~w bytes~n"
+	      "  Short Retry: ~w~n"
+	      "  Long Retry: ~w~n"
+	      "  Fragmentation Threshold: ~w bytes~n"
+	      "  Tx MSDU Lifetime: ~w time units (~f ms)~n"
+	      "  Rx MSDU Lifetime: ~w time units (~f ms)~n"
+	      "  Tx Power: ~w dBm~n"
+	      "  Diversity: ~w~n"
+	      "  Combiner: ~w~n"
+	      "  Antenna Selection: ~w~n"
+	      "  (*) Report Interval: ~w sec~n"
+	      "~s",
+	      [Radio#wtp_radio.radio_id, Radio#wtp_radio.radio_type,
+	       [fmt_rate(R) || R <- Radio#wtp_radio.supported_rates],
+	       fmt_wtp_radio_oper_mode(Radio),
+	       Radio#wtp_radio.beacon_interval, Radio#wtp_radio.beacon_interval * 1.024,
+	       Radio#wtp_radio.dtim_period, Radio#wtp_radio.short_preamble,
+	       Radio#wtp_radio.rts_threshold, Radio#wtp_radio.short_retry,
+	       Radio#wtp_radio.long_retry, Radio#wtp_radio.fragmentation_threshold,
+	       Radio#wtp_radio.tx_msdu_lifetime, Radio#wtp_radio.tx_msdu_lifetime * 1.024,
+	       Radio#wtp_radio.rx_msdu_lifetime, Radio#wtp_radio.rx_msdu_lifetime * 1.024,
+	       Radio#wtp_radio.tx_power, Radio#wtp_radio.diversity,
+	       Radio#wtp_radio.combiner, Radio#wtp_radio.antenna_selection,
+	       Radio#wtp_radio.report_interval,
+	       fmt_wtp_radio_80211n(Radio, proplists:get_bool('802.11n', Radio#wtp_radio.radio_type))]),
+    [print_wtp_radio_wlan(Radio, Wlan, WlansState) || Wlan <- Radio#wtp_radio.wlans].
+
+print_wtp_radios(#{config :=
+		       #wtp{radios = Radios},
+		   wlans := Wlans}) ->
+    [print_wtp_radio(Radio, Wlans) || Radio <- Radios].
+
+format_wtp_board_data_sub_element({0, Value}) ->
+    io_lib:format("      Model:      ~s", [Value]);
+format_wtp_board_data_sub_element({1, Value}) ->
+    io_lib:format("      Serial:     ~s", [Value]);
+format_wtp_board_data_sub_element({2, Value}) ->
+    io_lib:format("      Board Id:   ~s", [Value]);
+format_wtp_board_data_sub_element({3, Value}) ->
+    io_lib:format("      Board Rev.: ~s", [Value]);
+format_wtp_board_data_sub_element({4, Value})
+  when is_binary(Value), size(Value) == 6 ->
+    ["      Base MAC:   ", fmt_mac(Value)];
+format_wtp_board_data_sub_element({4, Value}) ->
+    io_lib:format("      Base MAC:   ~w", [Value]);
+format_wtp_board_data_sub_element({Id, Value}) ->
+    io_lib:format("      ~w: ~s (~w)", [Id, Value, Value]).
+
+vendor_id_str(18681) -> "Travelping GmbH";
+vendor_id_str(31496) -> "NetModule AG";
+vendor_id_str(Id) -> integer_to_list(Id).
+
+format_wtp_board_data(#wtp_board_data{
+			 vendor = Vendor,
+			 board_data_sub_elements = SubElements}) ->
+    FmtSub = lists:map(fun format_wtp_board_data_sub_element/1, SubElements),
+    io_lib:format("    Vendor: ~8.16.0B (~s)~n"
+		  "    Sub Elements:~n~s",
+		  [Vendor, vendor_id_str(Vendor), string:join(FmtSub, "\n")]);
+format_wtp_board_data(BoardData) ->
+    io_lib:format("    undecoded: ~w", [BoardData]).
+
+format_wtp_descriptor_sub_element({{0, 0}, Value}) ->
+    io_lib:format("      Hardware Version: ~s", [Value]);
+format_wtp_descriptor_sub_element({{0, 1}, Value}) ->
+    io_lib:format("      Software Version: ~s", [Value]);
+format_wtp_descriptor_sub_element({{0, 2}, Value}) ->
+    io_lib:format("      Boot Version:     ~s", [Value]);
+format_wtp_descriptor_sub_element({{0, 3}, Value}) ->
+    io_lib:format("      Other Version:    ~s", [Value]);
+format_wtp_descriptor_sub_element({{Vendor, Id}, Value}) ->
+    io_lib:format("      ~w:~w: ~s (~w)", [Vendor, Id, Value, Value]).
+
+format_wtp_descriptor(#wtp_descriptor{
+			 max_radios = MaxRadios,
+			 radios_in_use = RadiosInUse,
+			 encryption_sub_element = EncSubElem,
+			 sub_elements = SubElements}) ->
+    FmtSub = lists:map(fun format_wtp_descriptor_sub_element/1, SubElements),
+    io_lib:format("    max Radios: ~w~n"
+		  "    Radios in use: ~w~n"
+		  "    Encryption Sub Element: ~w~n"
+		  "    Sub Elements:~n~s",
+		  [MaxRadios, RadiosInUse, EncSubElem,
+		   string:join(FmtSub, "\n")]);
+format_wtp_descriptor(Descriptor) ->
+    io_lib:format("    undecoded: ~w", [Descriptor]).
+
+fmt_time_ms(StartTime) ->
+    MegaSecs = StartTime div 1000000000,
+    Rem1 = StartTime rem 1000000000,
+    Secs = Rem1 div 1000,
+    MilliSecs = StartTime rem 1000,
+    {{Year, Month, Day}, {Hour, Minute, Second}} =
+	calendar:now_to_universal_time({MegaSecs, Secs, MilliSecs * 1000}),
+    io_lib:format("~4.10.0b-~2.10.0b-~2.10.0b ~2.10.0b:~2.10.0b:~2.10.0b.~4.10.0b",
+		  [Year, Month, Day, Hour, Minute, Second, MilliSecs]).
+
+print_wtp(#{id := Id,
+	    station_count := StationCnt,
+	    location := Location,
+	    board_data := BoardData,
+	    descriptor := Descriptor,
+	    name := Name,
+	    start_time := StartTime,
+	    ctrl_channel_address := CtrlAddress,
+	    data_channel_address := DataAddress,
+	    session_id := SessionId,
+	    mac_mode := MacMode,
+	    tunnel_mode := TunnelMode,
+	    echo_request_timeout := EchoReqTimeout
+	   } = WTP) ->
+    Now = erlang:system_time(milli_seconds),
+    io:format("WTP: ~s, ~w Stations~n"
+	      "  Start Time: ~s (~.4f seconds ago)~n"
+	      "  Location: ~s~n"
+	      "  Board Data:~n~s~n"
+	      "  Descriptor:~n~s~n"
+	      "  Name: ~s~n"
+	      "  Control Channel Endpoint: ~s~n"
+	      "  Data Channel Endpoint: ~s~n"
+	      "  Session Id: ~32.16.0b~n"
+	      "  MAC Mode: ~s~n"
+	      "  Tunnel Mode: ~s~n"
+	      "  Echo Request Timeout: ~w sec~n",
+	      [Id, StationCnt, fmt_time_ms(StartTime), (Now - StartTime) / 1000,
+	       Location, format_wtp_board_data(BoardData),
+	       format_wtp_descriptor(Descriptor), Name,
+	       fmt_endpoint(CtrlAddress), fmt_endpoint(DataAddress),
+	       SessionId, MacMode, TunnelMode, EchoReqTimeout]),
+    print_wtp_config(WTP),
+    print_wtp_radios(WTP).
 
 print_worker_stats(Label, [RcvdPkts, SendPkts, RcvdBytes, SendBytes,
 			   RcvdFragments, SendFragments,

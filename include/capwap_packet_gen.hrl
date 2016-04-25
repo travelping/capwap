@@ -384,7 +384,7 @@
 
 -record(ieee_802_11_supported_rates, {
         radio_id = 0,
-        supported_rates = <<>>
+        supported_rates = []
 }).
 
 -record(ieee_802_11_tx_power, {
@@ -545,6 +545,19 @@
         timestamp = 0,
         wwan_id = 0,
         gpsatc = <<>>
+}).
+
+-record(ieee_802_11n_wlan_radio_configuration, {
+        radio_id = 0,
+        a_msdu = 0,
+        a_mpdu = 0,
+        deny_non_11n = 0,
+        short_gi = 0,
+        bandwidth_binding = 0,
+        max_supported_mcs = 0,
+        max_mandatory_mcs = 0,
+        tx_antenna = 0,
+        rx_antenna = 0
 }).
 
 -record(ieee_802_11n_station_information, {

@@ -1,7 +1,10 @@
 -module(capwap).
 
--export([list_wtps/0]).
+-export([list_wtps/0, get_wtp/1]).
 -export([list_stations/0, detach_station/1]).
+
+get_wtp(CommonName) ->
+    capwap_ac:get_state(CommonName).
 
 list_wtps() ->
     capwap_wtp_reg:list_commonnames().

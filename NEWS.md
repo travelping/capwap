@@ -3,6 +3,16 @@ capwap
 
 Erlang CAPWAP AC implementation.
 
+Version 1.7.0 - 20 Apr 2016
+---------------------------
+
+* add extensive WTP status output to CLI
+* rework WTP/WLAN configuration setting, most WTP settings are now configurable
+  (backward incompatible format change)
+* enhanced data path statistics are now exported
+* correctly detach Stations that roam to another WTP
+* handle DeAuthentication and Disassociation frames sent from the WTP to the Station
+
 Version 1.6.0 - 06 Apr 2016
 ---------------------------
 

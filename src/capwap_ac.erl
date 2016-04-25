@@ -9,7 +9,8 @@
          station_detaching/1]).
 
 %% Extern API
--export([firmware_download/3,
+-export([get_state/1,
+	 firmware_download/3,
          set_ssid/4,
          stop_radio/2]).
 
@@ -55,6 +56,15 @@
 	  tunnel_modes,
 	  mac_mode,
 	  tunnel_mode,
+
+	  %% Join Information
+	  location,
+	  board_data,
+	  descriptor,
+	  name,
+
+	  start_time,
+
 	  last_response,
 	  request_queue,
 	  retransmit_timer,
@@ -176,32 +186,35 @@ station_detaching(AC) ->
 %%%===================================================================
 %%% extern APIs
 %%%===================================================================
-
-firmware_download(CommonName, DownloadLink, Sha) ->
-    case capwap_wtp_reg:lookup(CommonName) of
+with_cn(CN, Fun) ->
+    case capwap_wtp_reg:lookup(CN) of
         {ok, Pid} ->
-            gen_fsm:send_event(Pid, {firmware_download, DownloadLink, Sha});
+	    Fun(Pid);
         not_found ->
             {error, not_found}
     end.
 
-set_ssid(CommonName, RadioId, SSID, SuppressSSID) ->
+get_state(CN) ->
+    case with_cn(CN, gen_fsm:sync_send_all_state_event(_, get_state)) of
+	{ok, State} ->
+	    Fields = record_info(fields, state),
+	    [_Tag| Values] = tuple_to_list(State),
+	    PMap = maps:from_list(lists:zip(Fields, Values)),
+	    {ok, PMap};
+	Other ->
+	    Other
+    end.
+
+firmware_download(CN, DownloadLink, Sha) ->
+    with_cn(CN, gen_fsm:send_event(_, {firmware_download, DownloadLink, Sha})).
+
+set_ssid(CN, RadioId, SSID, SuppressSSID) ->
     WlanId = 1,
     WlanIdent = {RadioId, WlanId},
-    case capwap_wtp_reg:lookup(CommonName) of
-        {ok, Pid} ->
-            gen_fsm:sync_send_all_state_event(Pid, {set_ssid, WlanIdent, SSID, SuppressSSID});
-        not_found ->
-            {error, not_found}
-    end.
+    with_cn(CN, gen_fsm:sync_send_all_state_event(_, {set_ssid, WlanIdent, SSID, SuppressSSID})).
 
-stop_radio(CommonName, RadioId) ->
-    case capwap_wtp_reg:lookup(CommonName) of
-        {ok, Pid} ->
-            gen_fsm:sync_send_all_state_event(Pid, {stop_radio, RadioId});
-        not_found ->
-            {error, not_found}
-    end.
+stop_radio(CN, RadioId) ->
+    with_cn(CN, gen_fsm:sync_send_all_state_event(_, {stop_radio, RadioId})).
 
 %%%===================================================================
 %%% gen_fsm callbacks
@@ -334,11 +347,18 @@ idle({join_request, Seq, Elements, #capwap_header{
     RadioInfos = get_ies(ieee_802_11_wtp_radio_information, Elements),
     Config = capwap_config:wtp_set_radio_infos(CommonName, RadioInfos, Config0),
 
+    StartTime = erlang:system_time(milli_seconds),
     MacTypes = ie(wtp_mac_type, Elements),
     TunnelModes = ie(wtp_frame_tunnel_mode, Elements),
     State1 = State0#state{config = Config,
 			  session_id = SessionId, mac_types = MacTypes,
-			  tunnel_modes = TunnelModes, version = Version},
+			  tunnel_modes = TunnelModes, version = Version,
+			  location = ie(location_data, Elements),
+			  board_data = get_ie(wtp_board_data, Elements),
+			  descriptor = get_ie(wtp_descriptor, Elements),
+			  name = ie(wtp_name, Elements),
+			  start_time = StartTime
+			 },
 
     RespElements = ac_info_version(join, Version)
 	++ [#ecn_support{ecn_support = full},
@@ -349,7 +369,6 @@ idle({join_request, Seq, Elements, #capwap_header{
     SessionOpts = wtp_accounting_infos(Elements, [{'CAPWAP-Radio-Id', RadioId}]),
     lager:info("WTP Session Start Opts: ~p", [SessionOpts]),
 
-    StartTime = erlang:system_time(milli_seconds),
     exometer:update_or_create([capwap, wtp, CommonName, start_time], StartTime, gauge, []),
     exometer:update_or_create([capwap, wtp, CommonName, stop_time], 0, gauge, []),
     exometer:update_or_create([capwap, wtp, CommonName, station_count], 0, gauge, []),
@@ -380,7 +399,9 @@ join(timeout, State) ->
 
 join({configuration_status_request, Seq, Elements, #capwap_header{
 						      wb_id = WBID, flags = Flags}},
-     #state{config = Config} = State) ->
+     #state{config = Config0} = State0) ->
+
+    Config = update_radio_information(Elements, Config0),
     #wtp{
        psm_idle_timeout           = PSMIdleTimeout,
        psm_busy_timeout           = PSMBusyTimeout,
@@ -398,7 +419,7 @@ join({configuration_status_request, Seq, Elements, #capwap_header{
 		   true ->
                         []
                 end,
-    AdminWlans = get_admin_wifi_updates(State, Elements),
+    AdminWlans = get_admin_wifi_updates(State0, Elements),
     RespElements0 = [#timers{discovery = DiscoveryInterval,
 			     echo_request = EchoRequestInterval},
 		     #tp_data_channel_dead_interval{data_channel_dead_interval = DataChannelDeadInterval},
@@ -414,11 +435,13 @@ join({configuration_status_request, Seq, Elements, #capwap_header{
     RespElements = lists:foldl(fun radio_configuration/2, RespElements0, Radios),
 
     Header = #capwap_header{radio_id = 0, wb_id = WBID, flags = Flags},
-    State1 = send_response(Header, configuration_status_response, Seq, RespElements, State),
+    State1 = send_response(Header, configuration_status_response, Seq, RespElements, State0),
     State2 = start_change_state_pending_timer(State1),
+    State = State2#state{
+	      config = Config,
+	      echo_request_timeout = EchoRequestInterval * 2},
 
-    EchoRequestTimeout = EchoRequestInterval * 2,
-    next_state(configure, State2#state{echo_request_timeout = EchoRequestTimeout});
+    next_state(configure, State);
 
 join(Event, State) when ?IS_RUN_CONTROL_EVENT(Event) ->
     lager:debug("in JOIN got control event: ~p", [Event]),
@@ -740,6 +763,9 @@ handle_event(_Event, StateName, State) ->
 %%                   {stop, Reason, Reply, NewState}
 %% @end
 %%--------------------------------------------------------------------
+
+handle_sync_event(get_state, _From, StateName, State) ->
+    reply({ok, State}, StateName, State);
 
 handle_sync_event({set_ssid, {RadioId, WlanId} = WlanIdent, SSID, SuppressSSID},
 		  From, run, #state{config = Config0} = State0) ->
@@ -1237,6 +1263,56 @@ ac_info_version(Request, {Version, _AddOn}) ->
      #ac_name{name = capwap_config:get(ac, ac_name, <<"My AC Name">>)}
     ] ++ control_addresses() ++ AcList.
 
+update_radio_sup_rates(SRates, #wtp_radio{supported_rates = SR} = Radio)
+  when is_list(SR) ->
+    Radio#wtp_radio{supported_rates = SR ++ SRates};
+update_radio_sup_rates(SRates, Radio) ->
+    Radio#wtp_radio{supported_rates = SRates}.
+
+update_radio_80211n_cfg(#ieee_802_11n_wlan_radio_configuration{
+			   a_msdu            = AggMSDU,
+			   a_mpdu            = AggMPDU,
+			   deny_non_11n      = DenyNon11n,
+			   short_gi          = ShortGI,
+			   bandwidth_binding = BandwidthBinding,
+			   max_supported_mcs = MaxSupportedMCS,
+			   max_mandatory_mcs = MaxMandatoryMCS,
+			   tx_antenna        = RxAntenna,
+			   rx_antenna        = RxAntenna
+			  }, Radio) ->
+    Radio#wtp_radio{
+      a_msdu            = AggMSDU,
+      a_mpdu            = AggMPDU,
+      deny_non_11n      = DenyNon11n,
+      short_gi          = ShortGI,
+      bandwidth_binding = BandwidthBinding,
+      max_supported_mcs = MaxSupportedMCS,
+      max_mandatory_mcs = MaxMandatoryMCS,
+      tx_antenna        = RxAntenna,
+      rx_antenna        = RxAntenna
+     }.
+
+update_radio_cfg(Fun, RadioId, #wtp{radios = Radios} = Config) ->
+    case lists:keyfind(RadioId, #wtp_radio.radio_id, Radios) of
+	#wtp_radio{} = Radio ->
+	    Config#wtp{radios = lists:keystore(RadioId, #wtp_radio.radio_id, Radios, Fun(Radio))};
+	_ ->
+	    Config
+    end.
+
+update_radio_info(#ieee_802_11_supported_rates{
+			   radio_id = RadioId,
+			   supported_rates = SRates}, Config) ->
+    update_radio_cfg(update_radio_sup_rates(SRates, _), RadioId, Config);
+update_radio_info(#ieee_802_11n_wlan_radio_configuration{
+			   radio_id = RadioId} = Cfg, Config) ->
+    update_radio_cfg(update_radio_80211n_cfg(Cfg, _), RadioId, Config);
+update_radio_info(_, Config) ->
+    Config.
+
+update_radio_information(Elements, Config) ->
+    lists:foldl(fun update_radio_info/2, Config, Elements).
+
 rateset('11b-only') ->
     [10, 20, 55, 110];
 rateset('11g-only') ->
@@ -1707,6 +1783,15 @@ start_session(Socket, _State) ->
 
 ie(Key, Elements) ->
     proplists:get_value(Key, Elements).
+
+get_ie(Key, Elements) ->
+    get_ie(Key, Elements, undefined).
+
+get_ie(Key, Elements, Default) ->
+    case lists:keyfind(Key, 1, Elements) of
+	false -> Default;
+	Value -> Value
+    end.
 
 get_ies(Key, Elements) ->
     [E || E <- Elements, element(1, E) == Key].
