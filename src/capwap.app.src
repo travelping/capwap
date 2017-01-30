@@ -12,14 +12,14 @@
         ssl,
         regine,
         exometer_core,
-        ctld
+        ergw_aaa
     ]},
     {mod, { capwap_app, []}},
     {env, [
         {server_ip, {172,28,0,1}},
         {server_socket_opts, [{netns, "/var/run/netns/upstream"}, {recbuf, 1048576}, {sndbuf, 1048576}]},
-        %%  {ctld_provider, {ctld_mock, [{secret, <<"MySecret">>}]}}
-        {ctld_provider, {ctld_radius, [{nas_identifier, <<"MyNAS">>},
+        %%  {ergw_aaa_provider, {ergw_aaa_mock, [{secret, <<"MySecret">>}]}}
+        {ergw_aaa_provider, {ergw_aaa_radius, [{nas_identifier, <<"MyNAS">>},
                             {radius_auth_server, {{127,0,0,1}, 1812, <<"secret">>}},
                             {radius_acct_server, {{127,0,0,1}, 1813, <<"secret">>}}
                             ]}

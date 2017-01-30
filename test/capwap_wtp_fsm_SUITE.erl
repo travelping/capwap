@@ -69,14 +69,14 @@ all() ->
     [wtp_fsm].
 
 check_generic_session_args(Session) ->
-    case ctld_session:attr_get('Username', Session, undefined) of
+    case ergw_aaa_session:attr_get('Username', Session, undefined) of
 	V when is_binary(V) ->
 	    ok;
 	V ->
 	    erlang:error(badarg, [{'Username', V}])
     end,
 
-    case ctld_session:attr_get('Calling-Station', Session, undefined) of
+    case ergw_aaa_session:attr_get('Calling-Station', Session, undefined) of
 	"127.0.0.1" ->
 	    ok;
 	CS ->
@@ -85,7 +85,7 @@ check_generic_session_args(Session) ->
 
 check_session_args({Key, MatchSpec}, Session) ->
     CompiledMatchSpec = ets:match_spec_compile(MatchSpec),
-    Value = ctld_session:attr_get(Key, Session, undefined),
+    Value = ergw_aaa_session:attr_get(Key, Session, undefined),
 
     case ets:match_spec_run([Value], CompiledMatchSpec) of
 	[ok] ->
@@ -95,13 +95,13 @@ check_session_args({Key, MatchSpec}, Session) ->
     end.
 
 wtp_fsm(_Config) ->
-    meck:new(ctld_mock, [passthrough]),
-    meck:expect(ctld_mock, authenticate,
+    meck:new(ergw_aaa_mock, [passthrough]),
+    meck:expect(ergw_aaa_mock, authenticate,
 		fun(From, Session, State) ->
 			check_generic_session_args(Session),
 			meck:passthrough([From, Session, State])
 		end),
-    meck:expect(ctld_mock, interim,
+    meck:expect(ergw_aaa_mock, interim,
 		fun(Session, State) ->
 			IsIntOrUndefined = ets:fun2ms(fun(X) when is_integer(X) -> ok;
 							 (X) when X == undefined -> ok end),
@@ -153,8 +153,8 @@ wtp_fsm(_Config) ->
 
     catch stop_local_wtp(WTP),
 
-    meck:validate(ctld_mock),
-    meck:unload(ctld_mock),
+    meck:validate(ergw_aaa_mock),
+    meck:unload(ergw_aaa_mock),
 
     ok.
 
@@ -177,7 +177,7 @@ setup_applications() ->
 				 {lager_file_backend, [{file, "log/console.log"}, {level, debug}, {size, 0}, {date, ""}]}]}]},
 	    {capwap, [{server_ip, {127, 0, 0, 1}},
 		      {enforce_dtls_control, false},
-		      {ctld_provider, {ctld_mock, [{secret, <<"MySecret">>}]}},
+		      {ergw_aaa_provider, {ergw_aaa_mock, [{secret, <<"MySecret">>}]}},
 		      {server_socket_opts, [{recbuf, 1048576}, {sndbuf, 1048576}]}
 		     ]}
 	   ],

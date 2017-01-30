@@ -40,7 +40,7 @@
 -include("ieee80211.hrl").
 -include("ieee80211_station.hrl").
 
--import(ctld_session, [to_session/1, attr_get/2]).
+-import(ergw_aaa_session, [to_session/1, attr_get/2]).
 
 -define(SERVER, ?MODULE).
 -define(IDLE_TIMEOUT, 30 * 1000).
@@ -53,7 +53,7 @@
 -record(state, {
           ac,
           ac_monitor,
-	  ctld_session,
+	  aaa_session,
           data_path,
           data_channel_address,
 	  wtp_id,
@@ -199,7 +199,7 @@ init_assoc(Event = {FrameType, _DA, _SA, BSS, 0, 0, Frame}, _From,
     %%   from the AC, the WTP MUST send a Disassociation frame to the station.
 
     State1 = update_sta_from_mgmt_frame(FrameType, Frame, State0),
-    State = ctld_association(State1),
+    State = aaa_association(State1),
 
     Reply = {add, BSS, MAC, State#state.capabilities, MacMode, TunnelMode},
     {reply, Reply, connected, State, ?IDLE_TIMEOUT};
@@ -313,34 +313,34 @@ connected(Event = {'Deauthentication', _DA, _SA, BSS, 0, 0, _Frame}, _From,
 	   State = #state{radio_mac = BSS, mac = MAC, mac_mode = MacMode,
 			  tunnel_mode = TunnelMode}) ->
     lager:debug("in CONNECTED got Deauthentication: ~p", [Event]),
-    ctld_disassociation(State),
+    aaa_disassociation(State),
     {reply, {del, BSS, MAC, MacMode, TunnelMode}, initial_state(MacMode), State, ?SHUTDOWN_TIMEOUT};
 
 connected(Event = {'Disassociation', _DA, _SA, BSS, 0, 0, _Frame}, _From,
 	   State = #state{radio_mac = BSS, mac = MAC, mac_mode = MacMode,
 			  tunnel_mode = TunnelMode}) ->
     lager:debug("in CONNECTED got Disassociation: ~p", [Event]),
-    ctld_disassociation(State),
+    aaa_disassociation(State),
     {reply, {del, BSS, MAC, MacMode, TunnelMode}, init_assoc, State, ?SHUTDOWN_TIMEOUT};
 
 connected(Event, From, State)
   when element(1, Event) == take_over ->
     lager:debug("in CONNECTED got TAKE-OVER: ~p", [Event]),
-    ctld_disassociation(State),
+    aaa_disassociation(State),
     handle_take_over(Event, From, State);
 
 connected(delete, _From, State = #state{ac = AC, radio_mac = RadioMAC,
 						mac = MAC, mac_mode = MacMode,
 						tunnel_mode = TunnelMode}) ->
     gen_fsm:send_event(AC, {delete_station, 1, 1, RadioMAC, MAC, MacMode, TunnelMode}),
-    ctld_disassociation(State),
+    aaa_disassociation(State),
     {reply, ok, initial_state(MacMode), State, ?SHUTDOWN_TIMEOUT};
 
 connected(detach, _From, State = #state{ac = AC, radio_mac = RadioMAC,
 					mac = MAC, mac_mode = MacMode,
 					tunnel_mode = TunnelMode}) ->
     gen_fsm:send_event(AC, {detach_station, 1, 1, RadioMAC, MAC, MacMode, TunnelMode}),
-    ctld_disassociation(State),
+    aaa_disassociation(State),
     {reply, ok, initial_state(MacMode), State, ?SHUTDOWN_TIMEOUT};
 
 connected(Event, _From, State) ->
@@ -368,7 +368,7 @@ terminate(_Reason, StateName, State = #state{ac = AC, radio_mac = RadioMAC,
 					     tunnel_mode = TunnelMode}) ->
     if StateName == connected ->
 	    gen_fsm:send_event(AC, {detach_station, 1, 1, RadioMAC, MAC, MacMode, TunnelMode}),
-	    ctld_disassociation(State);
+	    aaa_disassociation(State);
        true ->
 	    ok
     end,
@@ -600,12 +600,12 @@ accounting_update(STA, SessionOpts) ->
 		    {'OutPackets', SendPkts},
 		    {'InOctets',   RcvdBytes},
 		    {'OutOctets',  SendBytes}],
-	    ctld_session:merge(SessionOpts, to_session(Acc));
+	    ergw_aaa_session:merge(SessionOpts, to_session(Acc));
 	_ ->
 	    SessionOpts
     end.
 
-ctld_association(State = #state{mac = MAC, data_channel_address = WTPDataChannelAddress,
+aaa_association(State = #state{mac = MAC, data_channel_address = WTPDataChannelAddress,
 				wtp_id = WtpId, wtp_session_id = WtpSessionId}) ->
     MACStr = format_mac(MAC),
     SessionData0 = [{'Accouting-Update-Fun', fun accounting_update/2},
@@ -617,13 +617,13 @@ ctld_association(State = #state{mac = MAC, data_channel_address = WTPDataChannel
 		    {'Location-Id', WtpId},
 		    {'CAPWAP-Session-Id', <<WtpSessionId:128>>}],
     SessionData1 = add_tunnel_info(WTPDataChannelAddress, SessionData0),
-    {ok, Session} = ctld_session_sup:new_session(self(), to_session(SessionData1)),
+    {ok, Session} = ergw_aaa_session_sup:new_session(self(), to_session(SessionData1)),
     lager:info("NEW session for ~w at ~p", [MAC, Session]),
-    ctld_session:start(Session, to_session([])),
-    State#state{ctld_session = Session}.
+    ergw_aaa_session:start(Session, to_session([])),
+    State#state{aaa_session = Session}.
 
-ctld_disassociation(#state{ctld_session = Session}) ->
-    ctld_session:stop(Session, to_session([])),
+aaa_disassociation(#state{aaa_session = Session}) ->
+    ergw_aaa_session:stop(Session, to_session([])),
     ok.
 
 %% Management

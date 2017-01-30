@@ -44,7 +44,7 @@
 -include("ieee80211.hrl").
 -include("ieee80211_station.hrl").
 
--import(ctld_session, [to_session/1]).
+-import(ergw_aaa_session, [to_session/1]).
 
 -define(SERVER, ?MODULE).
 -define(TRACE_LOCAL_CONTROL, {{127,0,0,1}, 5246}).
@@ -286,10 +286,10 @@ listen({accept, udp, Socket}, State0) ->
     Opts = [{'Username', PeerName},
 	    {'Authentication-Method', {'TLS', 'Pre-Shared-Key'}},
             {'WTP-Config', capwap_config:wtp_config(PeerName)}],
-    case ctld_session:authenticate(Session, to_session(Opts)) of
+    case ergw_aaa_session:authenticate(Session, to_session(Opts)) of
 	success ->
 	    lager:info("AuthResult: success"),
-	    {ok, Config} = ctld_session:attr_get('WTP-Config', ctld_session:get(Session)),
+	    {ok, Config} = ergw_aaa_session:attr_get('WTP-Config', ergw_aaa_session:get(Session)),
 	    State1 = State0#state{session = Session,
 				  config = Config,
 				  socket = {udp, Socket},
@@ -319,7 +319,7 @@ listen({accept, dtls, Socket}, State) ->
             maybe_takeover(CommonName),
             capwap_wtp_reg:register_args(CommonName, WTPControlChannelAddress),
 
-	    {ok, Config} = ctld_session:attr_get('WTP-Config', ctld_session:get(Session)),
+	    {ok, Config} = ergw_aaa_session:attr_get('WTP-Config', ergw_aaa_session:get(Session)),
             State1 = State#state{socket = {dtls, SslSocket}, session = Session,
 				 config = Config, id = CommonName},
             %% TODO: find old connection instance, take over their StationState and stop them
@@ -393,7 +393,7 @@ idle({join_request, Seq, Elements, #capwap_header{
 			'Received-Fragments', 'Send-Fragments', 'Error-Invalid-Stations',
 			'Error-Fragment-Invalid', 'Error-Fragment-Too-Old']),
 
-    ctld_session:start(Session, to_session(SessionOpts)),
+    ergw_aaa_session:start(Session, to_session(SessionOpts)),
     next_state(join, State);
 
 idle(Event, State) when ?IS_RUN_CONTROL_EVENT(Event) ->
@@ -523,7 +523,7 @@ run({new_station, BSS, SA}, _From,
     lager:info("in RUN got new_station: ~p", [SA]),
 
     %% TODO: rework session context to handle this again
-    %% {ok, MaxStations} = ctld_session:get(Session, 'CAPWAP-Max-WIFI-Clients'),
+    %% {ok, MaxStations} = ergw_aaa_session:get(Session, 'CAPWAP-Max-WIFI-Clients'),
 
     WTPFullPred = StationCount + 1 > MaxStations,
     %% we have to repeat the search again to avoid a race
@@ -878,7 +878,7 @@ terminate(Reason, StateName,
 			  [StateName, State, Reason]),
     AcctValues = stop_wtp(StateName, State),
     if Session /= undefined ->
-	    ctld_session:stop(Session, to_session(AcctValues)),
+	    ergw_aaa_session:stop(Session, to_session(AcctValues)),
 
 	    exometer:update([capwap, wtp, CommonName, station_count], 0),
 	    StopTime = erlang:system_time(milli_seconds),
@@ -1092,7 +1092,7 @@ maybe_takeover(CommonName) ->
 handle_wtp_event(Elements, Header, State = #state{session = Session}) ->
     SessionOptsList = lists:foldl(fun(Ev, SOptsList) -> handle_wtp_stats_event(Ev, Header, SOptsList) end, [], Elements),
     if length(SessionOptsList) /= 0 ->
-	    ctld_session:interim_batch(Session, SessionOptsList);
+	    ergw_aaa_session:interim_batch(Session, SessionOptsList);
        true -> ok
     end,
     lists:foldl(fun(Ev, State0) -> handle_wtp_action_event(Ev, Header, State0) end, State, Elements).
@@ -1658,10 +1658,10 @@ user_lookup(psk, Username, Session) ->
     Opts = [{'Username', Username},
 	    {'Authentication-Method', {'TLS', 'Pre-Shared-Key'}},
 	    {'WTP-Config', capwap_config:wtp_config(Username)}],
-    case ctld_session:authenticate(Session, to_session(Opts)) of
+    case ergw_aaa_session:authenticate(Session, to_session(Opts)) of
 	success ->
 	    lager:info("AuthResult: success"),
-	    case ctld_session:get(Session, 'TLS-Pre-Shared-Key') of
+	    case ergw_aaa_session:get(Session, 'TLS-Pre-Shared-Key') of
 		{ok, PSK} ->
 		    lager:info("AuthResult: PSK: ~p", [PSK]),
 		    {ok, PSK};
@@ -1702,7 +1702,7 @@ verify_cert_auth_cn(CommonName, Session) ->
     Opts = [{'Username', CommonName},
 	    {'Authentication-Method', {'TLS', 'X509-Subject-CN'}},
 	    {'WTP-Config', capwap_config:wtp_config(CommonName)}],
-    case ctld_session:authenticate(Session, to_session(Opts)) of
+    case ergw_aaa_session:authenticate(Session, to_session(Opts)) of
         success ->
             lager:info("AuthResult: success for ~p", [CommonName]),
 	    {valid, Session};
@@ -1780,7 +1780,7 @@ accounting_update(WTP, SessionOpts) ->
 				  exometer:update([capwap, wtp, CommonName, Key], Value)
 			  end, Acc),
 
-	    ctld_session:merge(SessionOpts, to_session(Acc));
+	    ergw_aaa_session:merge(SessionOpts, to_session(Acc));
 	_ ->
 	    SessionOpts
     end.
@@ -1794,7 +1794,7 @@ start_session(Socket, _State) ->
 		    {'Tunnel-Type', 'CAPWAP'},
 		    {'Tunnel-Medium-Type', tunnel_medium(Address)},
 		    {'Tunnel-Client-Endpoint', ip2str(Address)}],
-    ctld_session_sup:new_session(self(), to_session(SessionOpts)).
+    ergw_aaa_session_sup:new_session(self(), to_session(SessionOpts)).
 
 ie(Key, Elements) ->
     proplists:get_value(Key, Elements).
