@@ -2,8 +2,8 @@
 %%! -hidden -connect_all false -smp disable -kernel inet_dist_use_interface {127,0,0,1}
 -mode(compile).
 
--include_lib("capwap/include/capwap_packet.hrl").
--include_lib("capwap/include/capwap_config.hrl").
+-include("../include/capwap_packet.hrl").
+-include("../include/capwap_config.hrl").
 
 main(_, []) ->
     help();
