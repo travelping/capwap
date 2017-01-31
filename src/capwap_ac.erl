@@ -567,8 +567,7 @@ run({echo_request, Seq, Elements, #capwap_header{
     lager:debug("EchoReq in Run got: ~p", [{Seq, Elements}]),
     Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
     State1 = send_response(Header, echo_response, Seq, Elements, State),
-    State2 = reset_echo_request_timer(State1),
-    next_state(run, State2);
+    next_state(run, State1);
 
 run({ieee_802_11_wlan_configuration_response, _Seq,
      Elements, _Header}, State = #state{}) ->
@@ -589,8 +588,7 @@ run({ieee_802_11_wlan_configuration_response, _Seq,
                 lager:warning("IEEE 802.11 WLAN Configuration failed with ~w", [Code]),
                 State
         end,
-    State2 = reset_echo_request_timer(State1),
-    next_state(run, State2);
+    next_state(run, State1);
 
 run({station_configuration_response, _Seq,
      Elements, _Header}, State) ->
@@ -603,10 +601,9 @@ run({station_configuration_response, _Seq,
 	    lager:warning("Station Configuration failed with ~w", [Code]),
 	    ok
     end,
-    State1 = reset_echo_request_timer(State),
-    next_state(run, State1);
+    next_state(run, State);
 
-run({configuration_update_responce, _Seq,
+run({configuration_update_response, _Seq,
      Elements, _Header}, State) ->
     %% TODO: timeout and Error handling, e.g. shut the station process down when the Add Station failed
     case proplists:get_value(result_code, Elements) of
@@ -617,16 +614,14 @@ run({configuration_update_responce, _Seq,
         lager:warning("Configuration Update failed with ~w", [Code]),
         ok
     end,
-    State1 = reset_echo_request_timer(State),
-    next_state(run, State1);
+    next_state(run, State);
 
 run({wtp_event_request, Seq, Elements, RequestHeader =
 	 #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags}}, State) ->
     ResponseHeader = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
     State1 = send_response(ResponseHeader, wtp_event_response, Seq, [], State),
     State2 = handle_wtp_event(Elements, RequestHeader, State1),
-    State3 = reset_echo_request_timer(State2),
-    next_state(run, State3);
+    next_state(run, State2);
 
 run(configure, State = #state{id = WtpId, config = #wtp{radios = Radios},
 			      session = Session}) ->
@@ -1053,9 +1048,10 @@ handle_capwap_packet(Packet, StateName, State = #state{ctrl_channel_address = WT
     end.
 
 handle_capwap_message(Header, {Msg, 1, Seq, Elements}, StateName,
-		      State = #state{last_response = LastResponse}) ->
+		      State0 = #state{last_response = LastResponse}) ->
     %% Request
-    ?log_capwap_control(peer_log_str(State), Msg, Seq, Elements, Header),
+    ?log_capwap_control(peer_log_str(State0), Msg, Seq, Elements, Header),
+    State = reset_echo_request_timer(State0),
     case LastResponse of
 	{Seq, _} ->
 	    NewState = resend_response(State),
@@ -1460,11 +1456,19 @@ radio_configuration(Radio, IEs) ->
 		ieee_802_11_rate_set],
     lists:foldl(radio_cfg(_, Radio, _), IEs, Settings).
 
-reset_echo_request_timer(State = #state{echo_request_timer = Timer, echo_request_timeout = Timeout}) ->
-    if is_reference(Timer) -> gen_fsm:cancel_timer(Timer);
-       true -> ok
+reset_echo_request_timer(State = #state{echo_request_timer = Timer,
+					echo_request_timeout = Timeout}) ->
+    if is_reference(Timer) ->
+	    gen_fsm:cancel_timer(Timer);
+       true ->
+	    ok
     end,
-    State#state{echo_request_timer = gen_fsm:send_event_after(Timeout * 1000, echo_timeout)}.
+    TRef = if is_integer(Timeout) ->
+		   gen_fsm:send_event_after(Timeout * 1000, echo_timeout);
+	      true ->
+		   undefined
+	   end,
+    State#state{echo_request_timer = TRef}.
 
 send_info_after(Time, Event) ->
     erlang:start_timer(Time, self(), Event).
