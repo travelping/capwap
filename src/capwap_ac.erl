@@ -927,7 +927,7 @@ next_state(NextStateName, State)
   when NextStateName == idle; NextStateName == run ->
     {next_state, NextStateName, State};
 next_state(NextStateName, State) ->
-     {next_state, NextStateName, State, ?IDLE_TIMEOUT}.
+    {next_state, NextStateName, State, ?IDLE_TIMEOUT}.
 
 reply(Reply, NextStateName, State)
   when NextStateName == idle; NextStateName == run  ->
@@ -1040,11 +1040,11 @@ handle_capwap_packet(Packet, StateName, State = #state{ctrl_channel_address = WT
 	    handle_capwap_message(Header, Msg, StateName, State#state{ctrl_stream = CtrlStreamState1});
 
 	{ok, more, CtrlStreamState1} ->
-	    {next_state, StateName, State#state{ctrl_stream = CtrlStreamState1}, ?IDLE_TIMEOUT};
+	    next_state(StateName, State#state{ctrl_stream = CtrlStreamState1});
 
 	{error, Error} ->
 	    lager:error([{capwap_packet, decode}, {error, Error}], "Decode error ~p", [Error]),
-	    {next_state, StateName, State, ?IDLE_TIMEOUT}
+	    next_state(StateName, State)
     end.
 
 handle_capwap_message(Header, {Msg, 1, Seq, Elements}, StateName,
@@ -1055,10 +1055,10 @@ handle_capwap_message(Header, {Msg, 1, Seq, Elements}, StateName,
     case LastResponse of
 	{Seq, _} ->
 	    NewState = resend_response(State),
-	    {next_state, StateName, NewState, ?IDLE_TIMEOUT};
+	    next_state(StateName, NewState);
 	{LastSeq, _} when ?SEQ_LE(Seq, LastSeq) ->
 	    %% old request, silently ignore
-	    {next_state, StateName, State, ?IDLE_TIMEOUT};
+	    next_state(StateName, State);
 	_ ->
 	    ?MODULE:StateName({Msg, Seq, Elements, Header}, State)
     end;
@@ -1073,7 +1073,7 @@ handle_capwap_message(Header, {Msg, 0, Seq, Elements}, StateName,
 	    ?MODULE:StateName({Msg, Seq, Elements, Header}, State1);
 	_ ->
 	    %% invalid Seq, out-of-order packet, silently ignore,
-	    {next_state, StateName, State, ?IDLE_TIMEOUT}
+	    next_state(StateName, State)
     end.
 
 maybe_takeover(CommonName) ->
@@ -1508,7 +1508,7 @@ resend_request(StateName,
     {value, {_, Msg}} = queue:peek(Queue),
     State1 = stream_send(Msg, State0),
     State2 = init_retransmit(State1, RetransmitCounter - 1),
-    {next_state, StateName, State2, ?IDLE_TIMEOUT}.
+    next_state(StateName, State2).
 
 init_retransmit(State, Counter) ->
     State#state{retransmit_timer = send_info_after(?RetransmitInterval, retransmit),
