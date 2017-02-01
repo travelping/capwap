@@ -98,8 +98,7 @@
 
 -record(wlan, {
           wlan_identifier,
-          started = false,
-          reply_to_after_start
+          started = false
          }).
 
 -define(IS_RUN_CONTROL_EVENT(E),
@@ -570,25 +569,16 @@ run({echo_request, Seq, Elements, #capwap_header{
     next_state(run, State1);
 
 run({ieee_802_11_wlan_configuration_response, _Seq,
-     Elements, _Header}, State = #state{}) ->
-    State1 =
-        case proplists:get_value(result_code, Elements) of
-            0 ->
-                lager:debug("IEEE 802.11 WLAN Configuration ok"),
-                case lists:keyfind(false, #wlan.started, State#state.wlans) of
-                    #wlan{wlan_identifier = {RadioId, WlanId},
-			  reply_to_after_start = From} ->
-                        State0 = internal_add_wlan(RadioId, WlanId, State),
-                        gen_fsm:reply(From, ok),
-                        State0;
-                    _ ->
-                        State
-                end;
-            Code ->
-                lager:warning("IEEE 802.11 WLAN Configuration failed with ~w", [Code]),
-                State
-        end,
-    next_state(run, State1);
+     Elements, _Header}, State) ->
+    case proplists:get_value(result_code, Elements) of
+	0 ->
+	    lager:debug("IEEE 802.11 WLAN Configuration ok"),
+	    ok;
+	Code ->
+	    lager:warning("IEEE 802.11 WLAN Configuration failed with ~w", [Code]),
+            ok
+    end,
+    next_state(run, State);
 
 run({station_configuration_response, _Seq,
      Elements, _Header}, State) ->
@@ -605,7 +595,7 @@ run({station_configuration_response, _Seq,
 
 run({configuration_update_response, _Seq,
      Elements, _Header}, State) ->
-    %% TODO: timeout and Error handling, e.g. shut the station process down when the Add Station failed
+    %% TODO: Error handling
     case proplists:get_value(result_code, Elements) of
     0 ->
         lager:debug("Configuration Update ok"),
@@ -629,7 +619,7 @@ run(configure, State = #state{id = WtpId, config = #wtp{radios = Radios},
     RadioId = 1,
     WlanId = 1,
 
-    State1 = internal_add_wlan(RadioId, WlanId, State),
+    State1 = internal_add_wlan(RadioId, WlanId, undefined, State),
     next_state(run, State1);
 
 run({add_station, #capwap_header{radio_id = RadioId, wb_id = WBID}, MAC, StaCaps}, State) ->
@@ -783,24 +773,36 @@ handle_sync_event({set_ssid, {RadioId, WlanId} = WlanIdent, SSID, SuppressSSID},
     Config = capwap_config:update_wlan_config(RadioId, WlanId, Settings, Config0),
     State1 = State0#state{config = Config},
 
-    case get_wlan(WlanIdent, State1) of
-        false ->
-	    State = internal_add_wlan(RadioId, WlanId, State1),
-	    reply(ok, run, State);
+    AddResponseFun = fun(Code, _, DState) ->
+			     lager:debug("AddResponseFun: ~w", [Code]),
+			     case Code of
+				 0 -> gen_fsm:reply(From, ok);
+				 _ -> gen_fsm:reply(From, {error, Code})
+			     end,
+			     DState
+		     end,
 
-        #wlan{} ->
-            State2 = internal_del_wlan(WlanIdent, State1),
-            State = update_wlan_state(WlanIdent,
-				      fun(W) ->
-					      W#wlan{started = false,reply_to_after_start = From}
-				      end, State2),
-            next_state(run, State)
-    end;
+    State =
+	case get_wlan(WlanIdent, State1) of
+	    false ->
+		internal_add_wlan(RadioId, WlanId, AddResponseFun, State1);
+
+	    #wlan{} ->
+		DelResponseFun = fun(0, _, DState) ->
+					 lager:debug("DelResponseFun: success"),
+					 internal_add_wlan(RadioId, WlanId, AddResponseFun, DState);
+				    (Code, Arg, DState) ->
+					 lager:debug("DelResponseFun: ~w", [Code]),
+					 AddResponseFun(Code, Arg, DState)
+				 end,
+		internal_del_wlan(WlanIdent, DelResponseFun, State1)
+	end,
+    next_state(run, State);
 
 handle_sync_event({stop_radio, RadioId}, _From, run, State) ->
     State1 =
 	lists:foldl(fun(WlanIdent = {RId, _}, S) when RId == RadioId->
-			    internal_del_wlan(WlanIdent, S);
+			    internal_del_wlan(WlanIdent, undefined, S);
 		       (_, S) ->
 			    S
 		    end, State, State#state.wlans),
@@ -1068,9 +1070,11 @@ handle_capwap_message(Header, {Msg, 0, Seq, Elements}, StateName,
     %% Response
     ?log_capwap_control(peer_log_str(State), Msg, Seq, Elements, Header),
     case queue:peek(Queue) of
-	{value, {Seq, _}} ->
+	{value, {Seq, _, NotifyFun}} ->
 	    State1 = ack_request(State),
-	    ?MODULE:StateName({Msg, Seq, Elements, Header}, State1);
+	    State2 = response_notify(NotifyFun, proplists:get_value(result_code, Elements),
+				     {Msg, Elements, Header}, State1),
+	    ?MODULE:StateName({Msg, Seq, Elements, Header}, State2);
 	_ ->
 	    %% invalid Seq, out-of-order packet, silently ignore,
 	    next_state(StateName, State)
@@ -1485,10 +1489,14 @@ resend_response(State = #state{last_response = {SeqNo, Msg}}) ->
     lager:warning("resend capwap response ~w", [SeqNo]),
     stream_send(Msg, State).
 
-send_request(Header, MsgType, ReqElements, State0 = #state{request_queue = Queue, seqno = SeqNo}) ->
+send_request(Header, MsgType, ReqElements, State) ->
+    send_request(Header, MsgType, ReqElements, undefined, State).
+
+send_request(Header, MsgType, ReqElements, NotfiyFun,
+	     State0 = #state{request_queue = Queue, seqno = SeqNo}) ->
     ?log_capwap_control(peer_log_str(State0), MsgType, SeqNo, ReqElements, Header),
     Msg = {Header, {MsgType, SeqNo, ReqElements}},
-    State1 = queue_request(State0, {SeqNo, Msg}),
+    State1 = queue_request(State0, {SeqNo, Msg, NotfiyFun}),
     State2 = bump_seqno(State1),
     case queue:is_empty(Queue) of
         true ->
@@ -1505,7 +1513,7 @@ resend_request(StateName,
 	       State0 = #state{request_queue = Queue,
 			       retransmit_counter = RetransmitCounter}) ->
     lager:warning("resend capwap request", []),
-    {value, {_, Msg}} = queue:peek(Queue),
+    {value, {_, Msg, _}} = queue:peek(Queue),
     State1 = stream_send(Msg, State0),
     State2 = init_retransmit(State1, RetransmitCounter - 1),
     next_state(StateName, State2).
@@ -1518,7 +1526,7 @@ init_retransmit(State, Counter) ->
 ack_request(State0) ->
     State1 = cancel_retransmit(State0),
     case dequeue_request_next(State1) of
-        {{value, {_, Msg}}, State2} ->
+        {{value, {_, Msg, _}}, State2} ->
 	    State3 = stream_send(Msg, State2),
             init_retransmit(State3, ?MaxRetransmit);
         {empty, State2} ->
@@ -1531,8 +1539,8 @@ cancel_retransmit(State = #state{retransmit_timer = Timer}) ->
     gen_fsm:cancel_timer(Timer),
     State#state{retransmit_timer = undefined}.
 
-queue_request(State = #state{request_queue = Queue}, {SeqNo, BinMsg}) ->
-    State#state{request_queue = queue:in({SeqNo, BinMsg}, Queue)}.
+queue_request(State = #state{request_queue = Queue}, Request) ->
+    State#state{request_queue = queue:in(Request, Queue)}.
 
 dequeue_request_next(State = #state{request_queue = Queue0}) ->
     Queue1 = queue:drop(Queue0),
@@ -1911,17 +1919,18 @@ wlan_cfg_tp_hold_time(#wtp_radio{radio_id = RadioId},
 				   hold_time = WlanHoldTime}
      | IEs ].
 
-internal_add_wlan(RadioId, WlanId,
+internal_add_wlan(RadioId, WlanId, NotifyFun,
 		  #state{config = #wtp{radios = Radios}} = State)
   when is_integer(RadioId), is_integer(WlanId) ->
     Radio = lists:keyfind(RadioId, #wtp_radio.radio_id, Radios),
     WLAN = lists:keyfind(WlanId, #wtp_wlan.wlan_id, Radio#wtp_radio.wlans),
-    internal_add_wlan(Radio, WLAN, State);
+    internal_add_wlan(Radio, WLAN, NotifyFun, State);
 
 internal_add_wlan(#wtp_radio{radio_id = RadioId} = Radio,
 		  #wtp_wlan{wlan_id = WlanId,
 			    ssid = SSID,
 			    suppress_ssid = SuppressSSID} = Wlan,
+		  NotifyFun,
 		  #state{config = Config} = State) ->
     WBID = 1,
     Mode = '11g-only',
@@ -1947,10 +1956,16 @@ internal_add_wlan(#wtp_radio{radio_id = RadioId} = Radio,
     ReqElements3 = wlan_cfg_ht_opmode(Radio, Wlan, ReqElements2),
     ReqElements4 = wlan_cfg_ht_cap(Radio, Wlan, ReqElements3),
     ReqElements = wlan_cfg_tp_hold_time(Radio, Wlan, Config, ReqElements4),
-    State1 = send_request(Header, ieee_802_11_wlan_configuration_request, ReqElements, State0),
-    update_wlan_state({RadioId, WlanId}, fun(W) -> W#wlan{started = true} end, State1).
+    State1 = send_request(Header, ieee_802_11_wlan_configuration_request, ReqElements, NotifyFun, State0),
+    update_wlan_state({RadioId, WlanId}, fun(W) -> W#wlan{started = true} end, State1);
 
-internal_del_wlan(WlanIdent = {RadioId, WlanId}, State) ->
+internal_add_wlan(RadioId, WlanId, NotifyFun, State)
+  when RadioId == false orelse WlanId == false ->
+    %% the requested Radio/WLan combination might not be configured,
+    %% do nothing....
+    response_notify(NotifyFun, -1, unconfigured, State).
+
+internal_del_wlan(WlanIdent = {RadioId, WlanId}, NotifyFun, State) ->
     WBID = 1,
     Flags = [{frame,'802.3'}],
     Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
@@ -1958,7 +1973,7 @@ internal_del_wlan(WlanIdent = {RadioId, WlanId}, State) ->
                      radio_id = RadioId,
                      wlan_id = WlanId}
                  ],
-    State0 = send_request(Header, ieee_802_11_wlan_configuration_request, ReqElemDel, State),
+    State0 = send_request(Header, ieee_802_11_wlan_configuration_request, ReqElemDel, NotifyFun, State),
     remove_wlan(WlanIdent, State0).
 
 remove_wlan(WlanIdent, State = #state{wlans = Wlans}) ->
@@ -2052,3 +2067,15 @@ stop_wtp(run, #state{data_channel_address = WTPDataChannelAddress}) ->
 stop_wtp(StateName, State) ->
     lager:error("STOP_WTP in ~p with ~p", [StateName, State]),
     [].
+
+response_notify(NotifyFun, Code, Arg, State)
+  when is_function(NotifyFun, 3) ->
+    try
+	NotifyFun(Code, Arg, State)
+    catch
+	Class:Cause ->
+	    lager:debug("notify failed with ~p:~p", [Class, Cause]),
+	    State
+    end;
+response_notify(_, _, _, State) ->
+    State.
