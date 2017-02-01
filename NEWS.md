@@ -3,6 +3,12 @@ capwap
 
 Erlang CAPWAP AC implementation.
 
+Version 1.7.1 - 31 Jan 2017
+---------------------------
+
+* relicense 1.7.0 under AGPL
+* move from ctld to ergw_aaa
+
 Version 1.7.0 - 20 Apr 2016
 ---------------------------
 
