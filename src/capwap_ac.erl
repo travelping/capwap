@@ -528,7 +528,7 @@ run({new_station, BSS, SA}, _From,
     %% we have to repeat the search again to avoid a race
     lager:debug("search for station ~p", [{self(), SA}]),
     {State0, Reply} =
-        case {capwap_station_reg:lookup(self(), SA),  WTPFullPred} of
+        case {capwap_station_reg:lookup(self(), BSS, SA),  WTPFullPred} of
             {not_found, true} ->
                 lager:debug("Station ~p trying to associate, but wtp is full: ~p >= ~p", [SA, StationCount, MaxStations]),
                 {State, {error, too_many_clients}};
@@ -975,10 +975,10 @@ handle_capwap_data(DataPath, WTPDataChannelAddress, Header, true, PayLoad) ->
 
 handle_capwap_data(_DataPath, WTPDataChannelAddress,
 		   Header = #capwap_header{
-		     flags = Flags,
-		     radio_id = RadioId, wb_id = WBID},
+			       radio_id = RadioId, wb_id = WBID,
+			       flags = Flags, radio_mac = RecvRadioMAC},
 		   false, Frame) ->
-    lager:debug("CAPWAP Data PayLoad:~n~p~n~p", [Header, Frame]),
+    lager:debug("CAPWAP Data PayLoad:~n~p~n~p", [lager:pr(Header, ?MODULE), Frame]),
 
     case capwap_wtp_reg:lookup(WTPDataChannelAddress) of
 	not_found ->
@@ -989,14 +989,14 @@ handle_capwap_data(_DataPath, WTPDataChannelAddress,
 	    case proplists:get_value(frame, Flags) of
 		'802.3' ->
 		    lager:warning("got 802.3 payload Frame, what TODO with it???"),
-		    case ieee80211_station:handle_ieee802_3_frame(AC, Frame) of
+		    case ieee80211_station:handle_ieee802_3_frame(AC, RecvRadioMAC, Frame) of
 			{add, RadioMAC, MAC, StaCaps, MacMode, TunnelMode} ->
 			    gen_fsm:send_event(AC, {add_station, Header, MAC, StaCaps}),
 			    lager:debug("MacMode: ~w, TunnelMode ~w", [MacMode, TunnelMode]),
-			    {add_flow, self(), WTPDataChannelAddress, RadioMAC, MAC, MacMode, TunnelMode, true};
+			    {add_flow, self(), WTPDataChannelAddress, RadioId, RadioMAC, MAC, MacMode, TunnelMode, true};
 
 			{flow, RadioMAC, MAC, MacMode, TunnelMode} ->
-			    {add_flow, self(), WTPDataChannelAddress, RadioMAC, MAC, MacMode, TunnelMode, true};
+			    {add_flow, self(), WTPDataChannelAddress, RadioId, RadioMAC, MAC, MacMode, TunnelMode, true};
 
 			Other ->
 			    Other
@@ -1017,14 +1017,14 @@ handle_capwap_data(_DataPath, WTPDataChannelAddress,
 			{add, RadioMAC, MAC, StaCaps, MacMode, TunnelMode} ->
 			    gen_fsm:send_event(AC, {add_station, Header, MAC, StaCaps}),
 			    lager:debug("MacMode: ~w, TunnelMode ~w", [MacMode, TunnelMode]),
-			    {add_flow, self(), WTPDataChannelAddress, RadioMAC, MAC, MacMode, TunnelMode, false};
+			    {add_flow, self(), WTPDataChannelAddress, RadioId, RadioMAC, MAC, MacMode, TunnelMode, false};
 
 			{flow, RadioMAC, MAC, MacMode, TunnelMode} ->
-			    {add_flow, self(), WTPDataChannelAddress, RadioMAC, MAC, MacMode, TunnelMode, false};
+			    {add_flow, self(), WTPDataChannelAddress, RadioId, RadioMAC, MAC, MacMode, TunnelMode, false};
 
 			{del, RadioMAC, MAC, MacMode, TunnelMode} ->
 			    gen_fsm:send_event(AC, {del_station, Header, MAC}),
-			    {del_flow, self(), WTPDataChannelAddress, RadioMAC, MAC, MacMode, TunnelMode};
+			    {del_flow, self(), WTPDataChannelAddress, RadioId, RadioMAC, MAC, MacMode, TunnelMode};
 
 			Other ->
 			    Other
@@ -1098,8 +1098,8 @@ handle_wtp_event(Elements, Header, State = #state{session = Session}) ->
     end,
     lists:foldl(fun(Ev, State0) -> handle_wtp_action_event(Ev, Header, State0) end, State, Elements).
 
-handle_wtp_action_event(#delete_station{mac = MAC}, _Header, State) ->
-    case capwap_station_reg:lookup(self(), MAC) of
+handle_wtp_action_event(#delete_station{radio_id = RadioId, mac = MAC}, _Header, State) ->
+    case capwap_station_reg:lookup(self(), RadioId, MAC) of
 	{ok, Station} ->
 	    ieee80211_station:delete(Station);
 	Other ->

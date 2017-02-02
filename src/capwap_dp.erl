@@ -23,7 +23,7 @@
 %% C-Node wrapper
 -export([bind/1, clear/0, get_stats/0]).
 -export([add_wtp/2, del_wtp/1, get_wtp/1, list_wtp/0]).
--export([attach_station/2, detach_station/1, get_station/1, list_stations/0]).
+-export([attach_station/4, detach_station/1, get_station/1, list_stations/0]).
 -export([sendto/2]).
 
 %% gen_server callbacks
@@ -70,8 +70,8 @@ get_wtp(WTP) ->
 list_wtp() ->
     call({list_wtp}).
 
-attach_station(WTP, STA) ->
-    call({attach_station, WTP, STA}).
+attach_station(WTP, STA, RadioId, BSS) ->
+    call({attach_station, WTP, STA, RadioId, BSS}).
 
 detach_station(STA) ->
     call({detach_station, STA}).
@@ -161,13 +161,13 @@ handle_info({capwap_in, WTPDataChannelAddress, Msg}, State) ->
 	    sendto(WTPDataChannelAddress, Reply),
 	    ok;
 
-	{add_flow, _Owner, _WTPDataChannelAddress, _RadioMAC, MAC, _MacMode, _TunnelMode, _Forward} ->
+	{add_flow, _Owner, _WTPDataChannelAddress, RadioId, RadioMAC, MAC, _MacMode, _TunnelMode, _Forward} ->
 	    %% add STA to WTP
-	    Ret = attach_station(WTPDataChannelAddress, MAC),
+	    Ret = attach_station(WTPDataChannelAddress, MAC, RadioId, RadioMAC),
 	    lager:debug("attach_station(~p, ~p): ~p", [WTPDataChannelAddress, MAC, Ret]),
 	    ok;
 
-	{del_flow, _Owner, _WTPDataChannelAddress, _RadioMAC, MAC, _MacMode, _TunnelMode} ->
+	{del_flow, _Owner, _WTPDataChannelAddress, _RadioId, _RadioMAC, MAC, _MacMode, _TunnelMode} ->
 	    %% remove STA from WTP
 	    Ret = detach_station(MAC),
 	    lager:debug("detach_station(~p, ~p): ~p", [WTPDataChannelAddress, MAC, Ret]),
@@ -341,7 +341,9 @@ run_loop(WTP) ->
 	    case {flower_mac_learning:eth_addr_is_reserved(MAC), flower_mac_learning:may_learn(MAC)} of
 		{false, true} ->
 		    io:format("install STA: ~p~n", [MAC]),
-		    attach_station(WTP, MAC);
+		    RadioId = 1,
+		    BSS = <<1,1,1,1,1,1>>,
+		    attach_station(WTP, MAC, RadioId, BSS);
 
 		_ ->
 		    ok

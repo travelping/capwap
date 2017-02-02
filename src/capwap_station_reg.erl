@@ -19,7 +19,7 @@
 
 %% API
 -export([start_link/0]).
--export([register/2, unregister/2, lookup/2, register/1, unregister/1, lookup/1]).
+-export([register/3, unregister/3, lookup/3, register/1, unregister/1, lookup/1]).
 -export([list_stations/0]).
 
 %% regine_server callbacks
@@ -42,14 +42,14 @@ start_link() ->
 register(ClientMAC) ->
     regine_server:register(?SERVER, self(), ClientMAC, undefined).
 
-register(AC, Station) ->
-    regine_server:register(?SERVER, self(), {AC, Station}, undefined).
+register(AC, BSS, Station) ->
+    regine_server:register(?SERVER, self(), {AC, BSS, Station}, undefined).
 
 unregister(ClientMAC) ->
     regine_server:unregister(?SERVER, ClientMAC, undefined).
 
-unregister(AC, Station) ->
-    regine_server:unregister(?SERVER, {AC, Station}, undefined).
+unregister(AC, BSS, Station) ->
+    regine_server:unregister(?SERVER, {AC, BSS, Station}, undefined).
 
 lookup(ClientMAC) ->
     case ets:lookup(?SERVER, ClientMAC) of
@@ -57,14 +57,14 @@ lookup(ClientMAC) ->
 	[{_, RadioMAC}] -> {ok, RadioMAC}
     end.
 
-lookup(AC, Station) ->
-    case ets:lookup(?SERVER, {AC, Station}) of
+lookup(AC, BSS, Station) ->
+    case ets:lookup(?SERVER, {AC, BSS, Station}) of
 	[] -> not_found;
 	[{_, Pid}] -> {ok, Pid}
     end.
 
 list_stations() ->
-    ets:select(?SERVER, ets:fun2ms(fun({{AC, MAC}, _}) when is_binary(MAC) -> {AC, MAC} end)).
+    ets:select(?SERVER, ets:fun2ms(fun({{AC, _BSS, MAC}, _}) when is_binary(MAC) -> {AC, MAC} end)).
 
 %%%===================================================================
 %%% regine_server functions

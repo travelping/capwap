@@ -435,10 +435,10 @@ print_dp_wtp_stats(_, {RcvdPkts, SendPkts, RcvdBytes, SendBytes,
 
 print_dp_wtp_stas(_, []) ->
     ok;
-print_dp_wtp_stas(false, [{MAC, _Stats}|STAs]) ->
+print_dp_wtp_stas(false, [{MAC, _RadioId, _BSS, _Stats}|STAs]) ->
     io:format("  ~s~n", [ieee80211_station:format_mac(MAC)]),
     print_dp_wtp_stas(false, STAs);
-print_dp_wtp_stas(true, [{MAC, Stats}|STAs]) ->
+print_dp_wtp_stas(true, [{MAC, _RadioId, _BSS, Stats}|STAs]) ->
     {RcvdPkts, SendPkts, RcvdBytes, SendBytes} = Stats,
     io:format("  ~s, In:  #bytes: ~20.w, #pkts: ~10.w, Out: #bytes: ~20.w, #pkts: ~10.w~n",
 	      [ieee80211_station:format_mac(MAC), RcvdBytes, RcvdPkts, SendBytes, SendPkts]),

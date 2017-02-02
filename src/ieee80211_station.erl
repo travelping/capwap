@@ -18,7 +18,7 @@
 -behavior(gen_fsm).
 
 %% API
--export([start_link/9, handle_ieee80211_frame/2, handle_ieee802_3_frame/2,
+-export([start_link/9, handle_ieee80211_frame/2, handle_ieee802_3_frame/3,
          take_over/9, detach/1, delete/1]).
 %% Helpers
 -export([format_mac/1]).
@@ -91,15 +91,15 @@ handle_ieee80211_frame(_, Frame) ->
     lager:warning("unhandled IEEE802.11 Frame:~n~s", [flower_tools:hexdump(Frame)]),
     {error, unhandled}.
 
-handle_ieee802_3_frame(AC, <<_EthDst:6/bytes, EthSrc:6/bytes, _/binary>> = Frame) ->
-    case capwap_station_reg:lookup(AC, EthSrc) of
+handle_ieee802_3_frame(AC, RadioMAC, <<_EthDst:6/bytes, EthSrc:6/bytes, _/binary>> = Frame) ->
+    case capwap_station_reg:lookup(AC, RadioMAC, EthSrc) of
 	not_found ->
 	    lager:warning("got 802.3 from unknown Ethern station"),
 	    {error, invalid_station};
 	{ok, Station} ->
 	    gen_fsm:sync_send_event(Station, {'802.3', Frame})
     end;
-handle_ieee802_3_frame(_, _Frame) ->
+handle_ieee802_3_frame(_, _, _Frame) ->
     {error, unhandled}.
 
 take_over(Pid, AC, DataPath, WTPDataChannelAddress, WtpId, SessionId, RadioMAC, MacMode, TunnelMode) ->
@@ -122,7 +122,7 @@ delete(Pid) when is_pid(Pid) ->
 init([AC, DataPath, WTPDataChannelAddress, WtpId, SessionId, RadioMAC, ClientMAC, MacMode, TunnelMode]) ->
     lager:debug("Register station ~p as ~w", [{AC, RadioMAC, ClientMAC}, self()]),
     capwap_station_reg:register(ClientMAC),
-    capwap_station_reg:register(AC, ClientMAC),
+    capwap_station_reg:register(AC, RadioMAC, ClientMAC),
     ACMonitor = erlang:monitor(process, AC),
     State = #state{ac = AC, ac_monitor = ACMonitor, data_path = DataPath,
 		   data_channel_address = WTPDataChannelAddress, wtp_id = WtpId, wtp_session_id = SessionId,
@@ -209,6 +209,11 @@ init_assoc(Event = {'Authentication', _DA, _SA, _BSS, 0, 0, _Frame}, From, State
     %% fall-back to init_auth....
     init_auth(Event, From, State);
 
+init_assoc(Event = {'Deauthentication', _DA, _SA, BSS, 0, 0, _Frame}, _From,
+	   State = #state{radio_mac = BSS, mac_mode = MacMode}) ->
+    lager:debug("in INIT_ASSOC got Deauthentication: ~p", [Event]),
+    {reply, {ok, ignore}, initial_state(MacMode), State, ?SHUTDOWN_TIMEOUT};
+
 init_assoc(Event = {FrameType, DA, SA, BSS, 0, 0, _Frame}, _From, State)
   when (FrameType == 'Association Request' orelse FrameType == 'Reassociation Request') ->
     lager:debug("in INIT_ASSOC got Association Request: ~p", [Event]),
@@ -251,6 +256,20 @@ init_assoc(Event, _From, State) ->
 init_start(timeout, State) ->
     lager:warning("idle timeout in INIT_START"),
     {stop, normal, State}.
+
+init_start(Event = {'Disassociation', _DA, _SA, BSS, 0, 0, _Frame}, _From,
+	   State = #state{radio_mac = BSS, mac = MAC, mac_mode = MacMode,
+			  tunnel_mode = TunnelMode}) ->
+    lager:debug("in INIT_START got Disassociation: ~p", [Event]),
+    aaa_disassociation(State),
+    {reply, {del, BSS, MAC, MacMode, TunnelMode}, init_assoc, State, ?SHUTDOWN_TIMEOUT};
+
+init_start(Event = {'Deauthentication', _DA, _SA, BSS, 0, 0, _Frame}, _From,
+	   State = #state{radio_mac = BSS, mac = MAC, mac_mode = MacMode,
+			  tunnel_mode = TunnelMode}) ->
+    lager:debug("in INIT_START got Deauthentication: ~p", [Event]),
+    aaa_disassociation(State),
+    {reply, {del, BSS, MAC, MacMode, TunnelMode}, initial_state(MacMode), State, ?SHUTDOWN_TIMEOUT};
 
 init_start(Event = {'Null', _DA, _SA, BSS, 0, 1, <<>>}, _From,
 	   State = #state{radio_mac = BSS, mac = MAC, mac_mode = MacMode,
@@ -309,19 +328,19 @@ connected(Event = {FrameType, _DA, _SA, BSS, 0, 0, Frame}, _From,
     Reply = {add, BSS, MAC, State#state.capabilities, MacMode, TunnelMode},
     {reply, Reply, connected, State, ?IDLE_TIMEOUT};
 
-connected(Event = {'Deauthentication', _DA, _SA, BSS, 0, 0, _Frame}, _From,
-	   State = #state{radio_mac = BSS, mac = MAC, mac_mode = MacMode,
-			  tunnel_mode = TunnelMode}) ->
-    lager:debug("in CONNECTED got Deauthentication: ~p", [Event]),
-    aaa_disassociation(State),
-    {reply, {del, BSS, MAC, MacMode, TunnelMode}, initial_state(MacMode), State, ?SHUTDOWN_TIMEOUT};
-
 connected(Event = {'Disassociation', _DA, _SA, BSS, 0, 0, _Frame}, _From,
 	   State = #state{radio_mac = BSS, mac = MAC, mac_mode = MacMode,
 			  tunnel_mode = TunnelMode}) ->
     lager:debug("in CONNECTED got Disassociation: ~p", [Event]),
     aaa_disassociation(State),
     {reply, {del, BSS, MAC, MacMode, TunnelMode}, init_assoc, State, ?SHUTDOWN_TIMEOUT};
+
+connected(Event = {'Deauthentication', _DA, _SA, BSS, 0, 0, _Frame}, _From,
+	   State = #state{radio_mac = BSS, mac = MAC, mac_mode = MacMode,
+			  tunnel_mode = TunnelMode}) ->
+    lager:debug("in CONNECTED got Deauthentication: ~p", [Event]),
+    aaa_disassociation(State),
+    {reply, {del, BSS, MAC, MacMode, TunnelMode}, initial_state(MacMode), State, ?SHUTDOWN_TIMEOUT};
 
 connected(Event, From, State)
   when element(1, Event) == take_over ->
@@ -426,7 +445,7 @@ ieee80211_request(AC, FrameType, DA, SA, BSS, FromDS, ToDS, Frame)
     STA = station_from_mgmt_frame(DA, SA, BSS),
 
     lager:debug("search Station ~p", [{AC, STA}]),
-    case capwap_station_reg:lookup(AC, STA) of
+    case capwap_station_reg:lookup(AC, BSS, STA) of
         not_found ->
             lager:debug("not found"),
             {ok, ignore};
@@ -447,7 +466,7 @@ ieee80211_request(AC, FrameType, DA, SA, BSS, FromDS, ToDS, Frame)
        FrameType == 'Reassociation Request';
        FrameType == 'Null' ->
     lager:debug("search Station ~p", [{AC, SA}]),
-    Found = case capwap_station_reg:lookup(AC, SA) of
+    Found = case capwap_station_reg:lookup(AC, BSS, SA) of
 		not_found ->
 		    lager:debug("not found"),
 		    capwap_ac:new_station(AC, BSS, SA);
@@ -486,10 +505,10 @@ handle_take_over({take_over, AC, DataPath, WTPDataChannelAddress, WtpId, Session
 
     gen_fsm:send_event(OldAC, {detach_station, 1, 1, OldRadioMAC, ClientMAC, OldMacMode, OldTunnelMode}),
     capwap_ac:station_detaching(OldAC),
-    capwap_station_reg:unregister(OldAC, ClientMAC),
+    capwap_station_reg:unregister(OldAC, OldRadioMAC, ClientMAC),
     erlang:demonitor(OldACMonitor, [flush]),
 
-    capwap_station_reg:register(AC, ClientMAC),
+    capwap_station_reg:register(AC, RadioMAC, ClientMAC),
     ACMonitor = erlang:monitor(process, AC),
 
     State = State0#state{ac = AC, ac_monitor = ACMonitor,
@@ -595,7 +614,7 @@ accounting_update(STA, SessionOpts) ->
 	{ok, MAC} ->
 	    STAStats = capwap_dp:get_station(MAC),
 	    lager:debug("STA Stats: ~p", [STAStats]),
-	    {_MAC, {RcvdPkts, SendPkts, RcvdBytes, SendBytes}} = STAStats,
+	    {_MAC, _RadioId, _BSS, {RcvdPkts, SendPkts, RcvdBytes, SendBytes}} = STAStats,
 	    Acc = [{'InPackets',  RcvdPkts},
 		    {'OutPackets', SendPkts},
 		    {'InOctets',   RcvdBytes},
