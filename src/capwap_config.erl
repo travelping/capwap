@@ -17,7 +17,7 @@
 
 -compile({parse_transform, cut}).
 -compile({parse_transform, exprecs}).
--export_records([wtp, wtp_radio]).
+-export_records([wtp, wtp_radio, wtp_wlan]).
 
 -export([validate/0, get/2, get/3, wtp_config/1,
 	 wtp_set_radio_infos/3, update_wlan_config/4]).
