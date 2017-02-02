@@ -1443,7 +1443,7 @@ radio_cfg(ieee_802_11_rate_set,
     RateSet = rateset(Mode),
 
     {Rates, _} =  lists:split(8, RateSet),
-    Basic = [capwap_packet:encode_rate(Mode, X) || X <- Rates],
+    Basic = [(X div 5) || X <- Rates],
     [#ieee_802_11_rate_set{
 	radio_id = RadioId,
 	rate_set = Basic}
