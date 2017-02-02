@@ -616,10 +616,11 @@ run({wtp_event_request, Seq, Elements, RequestHeader =
 run(configure, State = #state{id = WtpId, config = #wtp{radios = Radios},
 			      session = Session}) ->
     lager:debug("configure WTP: ~p, Session: ~p, Radios: ~p", [WtpId, Session, Radios]),
-    RadioId = 1,
-    WlanId = 1,
 
-    State1 = internal_add_wlan(RadioId, WlanId, undefined, State),
+    State1 =
+	lists:foldl(fun(#wtp_radio{wlans = Wlans} = Radio, RState) ->
+			    lists:foldl(internal_add_wlan(Radio, _, undefined, _), RState, Wlans)
+		    end, State, Radios),
     next_state(run, State1);
 
 run({add_station, #capwap_header{radio_id = RadioId, wb_id = WBID}, MAC, StaCaps}, State) ->
