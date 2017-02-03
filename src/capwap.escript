@@ -173,21 +173,23 @@ print_wtp_radio_wlan(#wtp_radio{radio_id = RadioId},
 		     #wtp_wlan{wlan_id = WlanId} = Wlan,
 		     WlansState) ->
 
-    WlanState = case lists:keyfind({RadioId, WlanId}, 2, WlansState) of
-		    S when is_tuple(S) ->
-			%% TODO: accessing the wlan state record like this is a
-			%%       hack, will be replaced soonish
-			element(3, S);
-		    Other ->
-			Other
-		end,
+    {BSS, WlanState} =
+	case lists:keyfind({RadioId, WlanId}, 2, WlansState) of
+	    S when is_tuple(S) ->
+		%% TODO: accessing the wlan state record like this is a
+		%%       hack, will be replaced soonish
+		{element(3, S), element(4, S)};
+	    Other ->
+		Other
+	end,
     io:format("  WLAN #~w:~n"
 	      "    SSID: ~s~n"
 	      "    Hidden SSID: ~w~n"
+	      "    BSS: ~s~n"
 	      "    Running: ~w~n",
 	      [WlanId, Wlan#wtp_wlan.ssid,
 	       fmt_bool(Wlan#wtp_wlan.suppress_ssid),
-	       WlanState]).
+	       fmt_mac(BSS), WlanState]).
 
 fmt_wtp_radio_oper_mode(#wtp_radio{
 			   operation_mode = OperMode,

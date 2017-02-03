@@ -97,7 +97,7 @@ handle_ieee802_3_frame(AC, RadioMAC, <<_EthDst:6/bytes, EthSrc:6/bytes, _/binary
 	    lager:warning("got 802.3 from unknown Ethern station"),
 	    {error, invalid_station};
 	{ok, Station} ->
-	    gen_fsm:sync_send_event(Station, {'802.3', Frame})
+	    gen_fsm:send_event(Station, {'802.3', Frame})
     end;
 handle_ieee802_3_frame(_, _, _Frame) ->
     {error, unhandled}.
@@ -139,22 +139,26 @@ init([AC, DataPath, WTPDataChannelAddress, WtpId, SessionId, RadioMAC, ClientMAC
 %%
 init_auth(timeout, State) ->
     lager:warning("idle timeout in INIT_AUTH"),
-    {stop, normal, State}.
+    {stop, normal, State};
 
-init_auth(Event = {'Authentication', DA, SA, BSS, 0, 0, Frame}, _From, State) ->
+init_auth(Event = {'Authentication', DA, SA, BSS, 0, 0, Frame}, State) ->
     lager:debug("in INIT_AUTH got Authentication Request: ~p", [Event]),
     AuthFrame = decode_auth_frame(Frame),
     case AuthFrame of
 	#auth_frame{algo   = ?OPEN_SYSTEM,
 		    status = ?SUCCESS} ->
 	    %% send Auth OK
-	    Reply = gen_auth_ok(DA, SA, BSS, Frame),
-	    {reply, {reply, Reply}, init_assoc, State, ?IDLE_TIMEOUT};
+	    wtp_send_80211(gen_auth_ok(DA, SA, BSS, Frame), State),
+	    {next_state, init_assoc, State, ?IDLE_TIMEOUT};
 	_ ->
 	    %% send Auth Fail
-	    Reply = gen_auth_fail(DA, SA, BSS, Frame),
-	    {reply, {reply, Reply}, init_auth, State, ?IDLE_TIMEOUT}
+	    wtp_send_80211(gen_auth_fail(DA, SA, BSS, Frame), State),
+	    {next_state, init_auth, State, ?IDLE_TIMEOUT}
     end;
+
+init_auth(Event, State) ->
+    lager:warning("in INIT_AUTH got unexpexted: ~p", [Event]),
+    {next_state, init_auth, State, ?IDLE_TIMEOUT}.
 
 init_auth(Event, From, State)
   when element(1, Event) == take_over ->
@@ -162,27 +166,22 @@ init_auth(Event, From, State)
     handle_take_over(Event, From, State);
 
 init_auth(Event, _From, State) when Event == detach; Event == delete ->
-    {reply, {error, not_attached}, init_auth, State, ?IDLE_TIMEOUT};
-
-init_auth(Event, _From, State) ->
-    lager:warning("in INIT_AUTH got unexpexted: ~p", [Event]),
-    {reply, {error, unexpected}, init_auth, State, ?IDLE_TIMEOUT}.
+    {reply, {error, not_attached}, init_auth, State, ?IDLE_TIMEOUT}.
 
 %%
 %% State 2
 %%
 init_assoc(timeout, State) ->
     lager:warning("idle timeout in INIT_ASSOC"),
-    {stop, normal, State}.
+    {stop, normal, State};
 
-init_assoc(Event = {'Authentication', _DA, _SA, _BSS, 0, 0, _Frame}, _From, State)
+init_assoc(Event = {'Authentication', _DA, _SA, _BSS, 0, 0, _Frame}, State)
   when State#state.mac_mode == local_mac ->
     lager:debug("in INIT_ASSOC Local-MAC Mode got Authentication Request: ~p", [Event]),
-    {reply, {ok, ignore}, init_assoc, State, ?IDLE_TIMEOUT};
+    {next_state, init_assoc, State, ?IDLE_TIMEOUT};
 
-init_assoc(Event = {FrameType, _DA, _SA, BSS, 0, 0, Frame}, _From,
-	   State0 = #state{radio_mac = BSS, mac = MAC, mac_mode = MacMode,
-			   tunnel_mode = TunnelMode})
+init_assoc(Event = {FrameType, _DA, _SA, BSS, 0, 0, Frame},
+	   State0 = #state{radio_mac = BSS, mac_mode = MacMode})
   when MacMode == local_mac andalso
        (FrameType == 'Association Request' orelse FrameType == 'Reassociation Request') ->
     lager:debug("in INIT_ASSOC Local-MAC Mode got Association Request: ~p", [Event]),
@@ -201,20 +200,20 @@ init_assoc(Event = {FrameType, _DA, _SA, BSS, 0, 0, Frame}, _From,
     State1 = update_sta_from_mgmt_frame(FrameType, Frame, State0),
     State = aaa_association(State1),
 
-    Reply = {add, BSS, MAC, State#state.capabilities, MacMode, TunnelMode},
-    {reply, Reply, connected, State, ?IDLE_TIMEOUT};
+    wtp_add_station(State),
+    {next_state, connected, State, ?IDLE_TIMEOUT};
 
-init_assoc(Event = {'Authentication', _DA, _SA, _BSS, 0, 0, _Frame}, From, State) ->
+init_assoc(Event = {'Authentication', _DA, _SA, _BSS, 0, 0, _Frame}, State) ->
     lager:debug("in INIT_ASSOC got Authentication Request: ~p", [Event]),
     %% fall-back to init_auth....
-    init_auth(Event, From, State);
+    init_auth(Event, State);
 
-init_assoc(Event = {'Deauthentication', _DA, _SA, BSS, 0, 0, _Frame}, _From,
+init_assoc(Event = {'Deauthentication', _DA, _SA, BSS, 0, 0, _Frame},
 	   State = #state{radio_mac = BSS, mac_mode = MacMode}) ->
     lager:debug("in INIT_ASSOC got Deauthentication: ~p", [Event]),
-    {reply, {ok, ignore}, initial_state(MacMode), State, ?SHUTDOWN_TIMEOUT};
+    {next_state, initial_state(MacMode), State, ?SHUTDOWN_TIMEOUT};
 
-init_assoc(Event = {FrameType, DA, SA, BSS, 0, 0, _Frame}, _From, State)
+init_assoc(Event = {FrameType, DA, SA, BSS, 0, 0, _Frame}, State)
   when (FrameType == 'Association Request' orelse FrameType == 'Reassociation Request') ->
     lager:debug("in INIT_ASSOC got Association Request: ~p", [Event]),
     %% Fake Assoc Details
@@ -231,12 +230,17 @@ init_assoc(Event = {FrameType, DA, SA, BSS, 0, 0, _Frame}, _From, State)
     FrameControl = <<SubType:4, Type:2, 0:2, 0:6, 0:1, 0:1>>,
     Duration = 0,
     SequenceControl = 0,
-    Reply = <<FrameControl/binary,
+    Frame = <<FrameControl/binary,
 	      Duration:16/integer-little,
 	      SA:6/bytes, DA:6/bytes, BSS:6/bytes,
 	      SequenceControl:16,
 	      Frame/binary>>,
-    {reply, {reply, Reply}, init_start, State, ?IDLE_TIMEOUT};
+    wtp_send_80211(Frame, State),
+    {next_state, init_start, State, ?IDLE_TIMEOUT};
+
+init_assoc(Event, State) ->
+    lager:warning("in INIT_ASSOC got unexpexted: ~p", [Event]),
+    {next_state, init_assoc, State, ?IDLE_TIMEOUT}.
 
 init_assoc(Event, From, State)
   when element(1, Event) == take_over ->
@@ -244,39 +248,37 @@ init_assoc(Event, From, State)
     handle_take_over(Event, From, State);
 
 init_assoc(Event, _From, State) when Event == detach; Event == delete ->
-    {reply, {error, not_attached}, init_assoc, State, ?IDLE_TIMEOUT};
-
-init_assoc(Event, _From, State) ->
-    lager:warning("in INIT_ASSOC got unexpexted: ~p", [Event]),
-    {reply, {error, unexpected}, init_assoc, State, ?IDLE_TIMEOUT}.
+    {reply, {error, not_attached}, init_assoc, State, ?IDLE_TIMEOUT}.
 
 %%
 %% State 3
 %%
 init_start(timeout, State) ->
     lager:warning("idle timeout in INIT_START"),
-    {stop, normal, State}.
+    {stop, normal, State};
 
-init_start(Event = {'Disassociation', _DA, _SA, BSS, 0, 0, _Frame}, _From,
-	   State = #state{radio_mac = BSS, mac = MAC, mac_mode = MacMode,
-			  tunnel_mode = TunnelMode}) ->
+init_start(Event = {'Disassociation', _DA, _SA, BSS, 0, 0, _Frame},
+	   State = #state{radio_mac = BSS}) ->
     lager:debug("in INIT_START got Disassociation: ~p", [Event]),
+    wtp_del_station(State),
     aaa_disassociation(State),
-    {reply, {del, BSS, MAC, MacMode, TunnelMode}, init_assoc, State, ?SHUTDOWN_TIMEOUT};
+    {next_state, init_assoc, State, ?SHUTDOWN_TIMEOUT};
 
-init_start(Event = {'Deauthentication', _DA, _SA, BSS, 0, 0, _Frame}, _From,
-	   State = #state{radio_mac = BSS, mac = MAC, mac_mode = MacMode,
-			  tunnel_mode = TunnelMode}) ->
+init_start(Event = {'Deauthentication', _DA, _SA, BSS, 0, 0, _Frame},
+	   State = #state{radio_mac = BSS, mac_mode = MacMode}) ->
     lager:debug("in INIT_START got Deauthentication: ~p", [Event]),
+    wtp_del_station(State),
     aaa_disassociation(State),
-    {reply, {del, BSS, MAC, MacMode, TunnelMode}, initial_state(MacMode), State, ?SHUTDOWN_TIMEOUT};
+    {next_state, initial_state(MacMode), State, ?SHUTDOWN_TIMEOUT};
 
-init_start(Event = {'Null', _DA, _SA, BSS, 0, 1, <<>>}, _From,
-	   State = #state{radio_mac = BSS, mac = MAC, mac_mode = MacMode,
-			  tunnel_mode = TunnelMode, capabilities = StaCaps}) ->
+init_start(Event = {'Null', _DA, _SA, BSS, 0, 1, <<>>}, State = #state{radio_mac = BSS}) ->
     lager:debug("in INIT_START got Null: ~p", [Event]),
-    Reply = {add, BSS, MAC, StaCaps, MacMode, TunnelMode},
-    {reply, Reply, connected, State, ?IDLE_TIMEOUT};
+    wtp_add_station(State),
+    {next_state, connected, State, ?IDLE_TIMEOUT};
+
+init_start(Event, State) ->
+    lager:warning("in INIT_START got unexpexted: ~p", [Event]),
+    {next_state, init_start, State, ?IDLE_TIMEOUT}.
 
 init_start(Event, From, State)
   when element(1, Event) == take_over ->
@@ -284,27 +286,21 @@ init_start(Event, From, State)
     handle_take_over(Event, From, State);
 
 init_start(Event, _From, State) when Event == detach; Event == delete ->
-    {reply, {error, not_attached}, init_start, State, ?IDLE_TIMEOUT};
-
-init_start(Event, _From, State) ->
-    lager:warning("in INIT_START got unexpexted: ~p", [Event]),
-    {reply, {error, unexpected}, init_start, State, ?IDLE_TIMEOUT}.
+    {reply, {error, not_attached}, init_start, State, ?IDLE_TIMEOUT}.
 
 %%
 %% State 4
 %%
 connected(timeout, State) ->
     lager:warning("idle timeout in CONNECTED"),
-    {next_state, connected, State, ?IDLE_TIMEOUT}.
+    {next_state, connected, State, ?IDLE_TIMEOUT};
 
-connected({'802.3', Data}, _From,
-	  State = #state{radio_mac = BSS, mac = MAC, mac_mode = MacMode, tunnel_mode = TunnelMode}) ->
-    lager:debug("in CONNECTED got 802.3 Data:~n~s", [flower_tools:hexdump(Data)]),
-    {reply, {flow, BSS, MAC, MacMode, TunnelMode}, connected, State, ?IDLE_TIMEOUT};
+connected({'802.3', Data}, State) ->
+    lager:error("in CONNECTED got 802.3 Data:~n~s", [flower_tools:hexdump(Data)]),
+    {next_state, connected, State, ?IDLE_TIMEOUT};
 
-connected(Event = {FrameType, _DA, _SA, BSS, 0, 0, Frame}, _From,
-	   State0 = #state{radio_mac = BSS, mac = MAC, mac_mode = MacMode,
-			   tunnel_mode = TunnelMode})
+connected(Event = {FrameType, _DA, _SA, BSS, 0, 0, Frame},
+	  State0 = #state{radio_mac = BSS, mac_mode = MacMode})
   when MacMode == local_mac andalso
        (FrameType == 'Association Request' orelse FrameType == 'Reassociation Request') ->
     lager:debug("in CONNECTED Local-MAC Mode got Association Request: ~p", [Event]),
@@ -324,23 +320,26 @@ connected(Event = {FrameType, _DA, _SA, BSS, 0, 0, Frame}, _From,
     %%   from the AC, the WTP MUST send a Disassociation frame to the station.
 
     State = update_sta_from_mgmt_frame(FrameType, Frame, State0),
+    wtp_add_station(State),
+    {next_state, connected, State, ?IDLE_TIMEOUT};
 
-    Reply = {add, BSS, MAC, State#state.capabilities, MacMode, TunnelMode},
-    {reply, Reply, connected, State, ?IDLE_TIMEOUT};
-
-connected(Event = {'Disassociation', _DA, _SA, BSS, 0, 0, _Frame}, _From,
-	   State = #state{radio_mac = BSS, mac = MAC, mac_mode = MacMode,
-			  tunnel_mode = TunnelMode}) ->
+connected(Event = {'Disassociation', _DA, _SA, BSS, 0, 0, _Frame},
+	  State = #state{radio_mac = BSS}) ->
     lager:debug("in CONNECTED got Disassociation: ~p", [Event]),
+    wtp_del_station(State),
     aaa_disassociation(State),
-    {reply, {del, BSS, MAC, MacMode, TunnelMode}, init_assoc, State, ?SHUTDOWN_TIMEOUT};
+    {next_state, init_assoc, State, ?SHUTDOWN_TIMEOUT};
 
-connected(Event = {'Deauthentication', _DA, _SA, BSS, 0, 0, _Frame}, _From,
-	   State = #state{radio_mac = BSS, mac = MAC, mac_mode = MacMode,
-			  tunnel_mode = TunnelMode}) ->
+connected(Event = {'Deauthentication', _DA, _SA, BSS, 0, 0, _Frame},
+	   State = #state{radio_mac = BSS, mac_mode = MacMode}) ->
     lager:debug("in CONNECTED got Deauthentication: ~p", [Event]),
+    wtp_del_station(State),
     aaa_disassociation(State),
-    {reply, {del, BSS, MAC, MacMode, TunnelMode}, initial_state(MacMode), State, ?SHUTDOWN_TIMEOUT};
+    {next_state, initial_state(MacMode), State, ?SHUTDOWN_TIMEOUT};
+
+connected(Event, State) ->
+    lager:warning("in CONNECTED got unexpexted: ~p", [Event]),
+    {next_state, connected, State, ?IDLE_TIMEOUT}.
 
 connected(Event, From, State)
   when element(1, Event) == take_over ->
@@ -348,23 +347,15 @@ connected(Event, From, State)
     aaa_disassociation(State),
     handle_take_over(Event, From, State);
 
-connected(delete, _From, State = #state{ac = AC, radio_mac = RadioMAC,
-						mac = MAC, mac_mode = MacMode,
-						tunnel_mode = TunnelMode}) ->
-    gen_fsm:send_event(AC, {delete_station, 1, 1, RadioMAC, MAC, MacMode, TunnelMode}),
+connected(delete, _From, State = #state{mac_mode = MacMode}) ->
+    wtp_del_station(State),
     aaa_disassociation(State),
     {reply, ok, initial_state(MacMode), State, ?SHUTDOWN_TIMEOUT};
 
-connected(detach, _From, State = #state{ac = AC, radio_mac = RadioMAC,
-					mac = MAC, mac_mode = MacMode,
-					tunnel_mode = TunnelMode}) ->
-    gen_fsm:send_event(AC, {detach_station, 1, 1, RadioMAC, MAC, MacMode, TunnelMode}),
+connected(detach, _From, State = #state{mac_mode = MacMode}) ->
+    wtp_del_station(State),
     aaa_disassociation(State),
-    {reply, ok, initial_state(MacMode), State, ?SHUTDOWN_TIMEOUT};
-
-connected(Event, _From, State) ->
-    lager:warning("in CONNECTED got unexpexted: ~p", [Event]),
-    {reply, {error, unexpected}, connected, State, ?IDLE_TIMEOUT}.
+    {reply, ok, initial_state(MacMode), State, ?SHUTDOWN_TIMEOUT}.
 
 handle_event(_Event, StateName, State) ->
     {next_state, StateName, State, ?IDLE_TIMEOUT}.
@@ -382,11 +373,9 @@ handle_info(Info, StateName, State) ->
     lager:warning("in State ~p unexpected Info: ~p", [StateName, Info]),
     {next_state, StateName, State, ?IDLE_TIMEOUT}.
 
-terminate(_Reason, StateName, State = #state{ac = AC, radio_mac = RadioMAC,
-					     mac = MAC, mac_mode = MacMode,
-					     tunnel_mode = TunnelMode}) ->
+terminate(_Reason, StateName, State = #state{ac = AC, mac = MAC}) ->
     if StateName == connected ->
-	    gen_fsm:send_event(AC, {detach_station, 1, 1, RadioMAC, MAC, MacMode, TunnelMode}),
+	    wtp_del_station(State),
 	    aaa_disassociation(State);
        true ->
 	    ok
@@ -448,17 +437,17 @@ ieee80211_request(AC, FrameType, DA, SA, BSS, FromDS, ToDS, Frame)
     case capwap_station_reg:lookup(AC, BSS, STA) of
         not_found ->
             lager:debug("not found"),
-            {ok, ignore};
+            {error, not_found};
 
         {ok, Station} ->
             lager:debug("found as ~p", [Station]),
-            gen_fsm:sync_send_event(Station, {FrameType, DA, SA, BSS, FromDS, ToDS, Frame})
+            gen_fsm:send_event(Station, {FrameType, DA, SA, BSS, FromDS, ToDS, Frame})
     end;
 
 ieee80211_request(_AC, _FrameType, _DA, SA, BSS, _FromDS, _ToDS, _Frame)
   when SA == BSS ->
     %% OpenCAPWAP is stupid, it mirrors our own Frame back to us....
-    {ok, ignore};
+    ok;
 
 ieee80211_request(AC, FrameType, DA, SA, BSS, FromDS, ToDS, Frame)
   when FrameType == 'Authentication';
@@ -476,14 +465,14 @@ ieee80211_request(AC, FrameType, DA, SA, BSS, FromDS, ToDS, Frame)
 	    end,
     case Found of
 	{ok, Station} ->
-	    gen_fsm:sync_send_event(Station, {FrameType, DA, SA, BSS, FromDS, ToDS, Frame});
+	    gen_fsm:send_event(Station, {FrameType, DA, SA, BSS, FromDS, ToDS, Frame});
 	Other ->
 	    Other
     end;
 
 ieee80211_request(_AC, FrameType, _DA, _SA, _BSS, _FromDS, _ToDS, _Frame)
   when FrameType == 'Probe Request' ->
-    {ok, ignore};
+    ok;
 
 ieee80211_request(_AC, FrameType, DA, SA, BSS, FromDS, ToDS, Frame) ->
     lager:warning("unhandled IEEE 802.11 Frame: ~p", [{FrameType, DA, SA, BSS, FromDS, ToDS, Frame}]),
@@ -492,18 +481,11 @@ ieee80211_request(_AC, FrameType, DA, SA, BSS, FromDS, ToDS, Frame) ->
 handle_take_over({take_over, AC, DataPath, WTPDataChannelAddress, WtpId, SessionId, RadioMAC, MacMode, TunnelMode}, _From,
 		 State0 = #state{ac = OldAC, ac_monitor = OldACMonitor,
 				 data_path = _OldDataPath,
-				 radio_mac = OldRadioMAC, mac = ClientMAC,
-				 mac_mode = OldMacMode, tunnel_mode = OldTunnelMode}) ->
-    %% NOTE: we could build a real WIFI switch when we could build OF rules that sends
-    %%       the traffic to all WTP's this client is still valid on!
-    %%
-    %%       with the current MacMode, the new flow entry will simply overwrite the old one,
-    %%       so no further action is required here, but other Mac/TunnelModes might
-
+				 radio_mac = OldRadioMAC, mac = ClientMAC}) ->
     lager:debug("Takeover station ~p as ~w", [{OldAC, OldRadioMAC, ClientMAC}, self()]),
     lager:debug("Register station ~p as ~w", [{AC, RadioMAC, ClientMAC}, self()]),
 
-    gen_fsm:send_event(OldAC, {detach_station, 1, 1, OldRadioMAC, ClientMAC, OldMacMode, OldTunnelMode}),
+    wtp_del_station(State0),
     capwap_ac:station_detaching(OldAC),
     capwap_station_reg:unregister(OldAC, OldRadioMAC, ClientMAC),
     erlang:demonitor(OldACMonitor, [flush]),
@@ -607,6 +589,15 @@ add_tunnel_info({Address, _Port}, SessionData) ->
      {'Tunnel-Medium-Type', tunnel_medium(Address)},
      {'Tunnel-Client-Endpoint', ip2str(Address)}
      |SessionData].
+
+wtp_add_station(#state{ac = AC, radio_mac = BSS, mac = MAC, capabilities = Caps}) ->
+    capwap_ac:add_station(AC, BSS, MAC, Caps).
+
+wtp_del_station(#state{ac = AC, radio_mac = BSS, mac = MAC}) ->
+    capwap_ac:del_station(AC, BSS, MAC).
+
+wtp_send_80211(Data,  #state{ac = AC}) when is_binary(Data) ->
+    capwap_ac:send_80211(AC, Data).
 
 accounting_update(STA, SessionOpts) ->
     lager:debug("accounting_update: ~p, ~p", [STA, attr_get('MAC', SessionOpts)]),

@@ -18,7 +18,7 @@
 -behavior(gen_server).
 
 %% API
--export([start_link/0, del_flow/6]).
+-export([start_link/0]).
 
 %% C-Node wrapper
 -export([bind/1, clear/0, get_stats/0]).
@@ -44,9 +44,6 @@
 %%===================================================================
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
-
-del_flow(Owner, WTPDataChannelAddress, RadioMAC, MAC, MacMode, TunnelMode) ->
-    gen_server:cast(?SERVER, {del_flow, Owner, WTPDataChannelAddress, RadioMAC, MAC, MacMode, TunnelMode}).
 
 %%===================================================================
 %% C-Node API Wrapper
@@ -113,12 +110,6 @@ handle_cast(Request, State = #state{state = disconnected}) ->
     lager:warning("got cast ~p without active data path", [Request]),
     {noreply, State};
 
-handle_cast({del_flow, _Owner, WTPDataChannelAddress, _RadioMAC, MAC, _MacMode, _TunnelMode}, State) ->
-    %% remove STA from WTP
-    Ret = detach_station(MAC),
-    lager:debug("detach_station(~p, ~p): ~p", [WTPDataChannelAddress, MAC, Ret]),
-    {noreply, State};
-
 handle_cast(_Request, State) ->
     {noreply, State}.
 
@@ -154,29 +145,7 @@ handle_info({packet_in, tap, Packet}, State) ->
 
 handle_info({capwap_in, WTPDataChannelAddress, Msg}, State) ->
     lager:warning("CAPWAP from ~p: ~p", [WTPDataChannelAddress, Msg]),
-    case capwap_ac:handle_data(self(), WTPDataChannelAddress, Msg) of
-	{reply, Reply} ->
-	    %% send Reply to WTP
-	    lager:debug("sendto(~p, ~p)", [WTPDataChannelAddress, Reply]),
-	    sendto(WTPDataChannelAddress, Reply),
-	    ok;
-
-	{add_flow, _Owner, _WTPDataChannelAddress, RadioId, RadioMAC, MAC, _MacMode, _TunnelMode, _Forward} ->
-	    %% add STA to WTP
-	    Ret = attach_station(WTPDataChannelAddress, MAC, RadioId, RadioMAC),
-	    lager:debug("attach_station(~p, ~p): ~p", [WTPDataChannelAddress, MAC, Ret]),
-	    ok;
-
-	{del_flow, _Owner, _WTPDataChannelAddress, _RadioId, _RadioMAC, MAC, _MacMode, _TunnelMode} ->
-	    %% remove STA from WTP
-	    Ret = detach_station(MAC),
-	    lager:debug("detach_station(~p, ~p): ~p", [WTPDataChannelAddress, MAC, Ret]),
-	    ok;
-
-	_Other ->
-	    lager:warning("handle_info reply: ~p", [_Other]),
-	    ok
-    end,
+    capwap_ac:handle_data(self(), WTPDataChannelAddress, Msg),
     {noreply, State};
 
 handle_info({wtp_down, WTP}, State) ->
