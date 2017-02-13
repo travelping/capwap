@@ -24,6 +24,8 @@
 
 -include("capwap_packet.hrl").
 -include("capwap_config.hrl").
+-include("ieee80211.hrl").
+-include("eapol.hrl").
 
 -spec get(Category :: atom(),
 	  Key      :: atom(),
@@ -97,13 +99,28 @@ bool_to_int(_) -> 0.
 
 %% derive WLAN defaults from Radio settings
 wtp_init_wlan_radio_defaults(Id, _Radio, WLAN) ->
+    RSN = #wtp_wlan_rsn{
+	     version = 1,
+	     capabilities = 16#000C,
+	     group_cipher_suite = ?IEEE_802_1_CIPHER_SUITE_AES,
+	     cipher_suites = [?IEEE_802_1_CIPHER_SUITE_AES],
+	     akm_suites = [?IEEE_802_1_AKM_PSK]
+	    },
     WLAN#wtp_wlan{wlan_id = Id,
-		  suppress_ssid = bool_to_int(get(ac, suppress_ssid, false))}.
+		  suppress_ssid = bool_to_int(get(ac, suppress_ssid, false)),
+		  privacy = false,
+		  rsn = RSN}.
 
 wtp_init_wlan(_CN, _Radio, {ssid, _}, WLAN) ->
     WLAN;
 wtp_init_wlan(_CN, _Radio, {suppress_ssid, Value}, WLAN) ->
     WLAN#wtp_wlan{suppress_ssid = bool_to_int(Value)};
+wtp_init_wlan(_CN, _Radio, {privacy, Value}, WLAN)
+  when is_boolean(Value) ->
+    WLAN#wtp_wlan{privacy = Value};
+wtp_init_wlan(_CN, _Radio, {secret, Value}, WLAN)
+  when is_binary(Value) ->
+    WLAN#wtp_wlan{secret = Value};
 wtp_init_wlan(CN, Radio, Setting, WLAN) ->
     lager:debug("ignoring ~p on Radio (~w:~w)", [Setting, CN, Radio#wtp_radio.radio_id]),
     WLAN.

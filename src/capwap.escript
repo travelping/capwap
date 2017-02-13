@@ -185,10 +185,12 @@ print_wtp_radio_wlan(#wtp_radio{radio_id = RadioId},
     io:format("  WLAN #~w:~n"
 	      "    SSID: ~s~n"
 	      "    Hidden SSID: ~w~n"
+	      "    Privay: ~w~n"
 	      "    BSS: ~s~n"
 	      "    Running: ~w~n",
 	      [WlanId, Wlan#wtp_wlan.ssid,
 	       fmt_bool(Wlan#wtp_wlan.suppress_ssid),
+	       fmt_bool(Wlan#wtp_wlan.privacy, {enabled, disabled}),
 	       fmt_mac(BSS), WlanState]).
 
 fmt_wtp_radio_oper_mode(#wtp_radio{

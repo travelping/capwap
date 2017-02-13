@@ -30,7 +30,7 @@
          stop_radio/2]).
 
 %% API for Station process
--export([add_station/4, del_station/3, send_80211/2]).
+-export([add_station/5, del_station/3, send_80211/3, rsn_ie/1]).
 
 %% gen_fsm callbacks
 -export([init/1, listen/2, idle/2, join/2, configure/2, data_check/2, run/2,
@@ -46,6 +46,7 @@
 -include("capwap_config.hrl").
 -include("ieee80211.hrl").
 -include("ieee80211_station.hrl").
+-include("eapol.hrl").
 
 -import(ergw_aaa_session, [to_session/1]).
 
@@ -239,14 +240,14 @@ stop_radio(CN, RadioId) ->
 %%% Station APIs
 %%%===================================================================
 
-add_station(AC, BSS, MAC, StaCaps) ->
-    gen_fsm:send_event(AC, {add_station, BSS, MAC, StaCaps}).
+add_station(AC, BSS, MAC, StaCaps, CryptoState) ->
+    gen_fsm:sync_send_event(AC, {add_station, BSS, MAC, StaCaps, CryptoState}).
 
 del_station(AC, BSS, MAC) ->
     gen_fsm:send_event(AC, {del_station, BSS, MAC}).
 
-send_80211(AC, Data) ->
-    gen_fsm:send_event(AC, {send_80211, Data}).
+send_80211(AC, BSS, Data) ->
+    gen_fsm:send_event(AC, {send_80211, BSS, Data}).
 
 %%%===================================================================
 %%% gen_fsm callbacks
@@ -534,45 +535,22 @@ data_check({Msg, Seq, Elements, Header}, State) ->
     lager:warning("in DATA_CHECK got unexpexted: ~p", [{Msg, Seq, Elements, Header}]),
     next_state(data_check, State).
 
-run({new_station, BSS, SA}, _From,
-    State = #state{id = WtpId, session_id = SessionId,
-		   config = #wtp{max_stations = MaxStations},
-		   data_channel_address = WTPDataChannelAddress, data_path = DataPath,
-		   mac_mode = MacMode, tunnel_mode = TunnelMode,
-		   station_count  = StationCount,
-		   session = Session}) ->
+run({new_station, BSS, SA}, _From, State0) ->
     lager:info("in RUN got new_station: ~p", [SA]),
 
     %% TODO: rework session context to handle this again
     %% {ok, MaxStations} = ergw_aaa_session:get(Session, 'CAPWAP-Max-WIFI-Clients'),
 
-    WTPFullPred = StationCount + 1 > MaxStations,
-    %% we have to repeat the search again to avoid a race
-    lager:debug("search for station ~p", [{self(), SA}]),
-    {State0, Reply} =
-        case {capwap_station_reg:lookup(self(), BSS, SA),  WTPFullPred} of
-            {not_found, true} ->
-                lager:debug("Station ~p trying to associate, but wtp is full: ~p >= ~p", [SA, StationCount, MaxStations]),
-                {State, {error, too_many_clients}};
-            {not_found, false} ->
-		NewState = State#state{station_count = StationCount + 1},
-		exometer:update([capwap, ac, station_count], 1),
-		exometer:update([capwap, wtp, WtpId, station_count], StationCount + 1),
-                case capwap_station_reg:lookup(SA) of
-                    not_found ->
-                        lager:debug("starting station: ~p", [SA]),
-                        {NewState,
-                         capwap_station_sup:new_station(self(), DataPath, WTPDataChannelAddress, WtpId, SessionId, BSS, SA, MacMode, TunnelMode)};
-                    {ok, Station0} ->
-                        lager:debug("TAKE-OVER: station ~p found as ~p", [{self(), SA}, Station0]),
-                        {NewState,
-                         ieee80211_station:take_over(Station0, self(), DataPath, WTPDataChannelAddress, WtpId, SessionId, BSS, MacMode, TunnelMode)}
-                end;
-            {Ok = {ok, Station0}, _} ->
-                lager:debug("station ~p found as ~p", [{self(), SA}, Station0]),
-                {State, Ok}
-        end,
-    reply(Reply, run, State0).
+    Wlan = get_wlan_by_bss(BSS, State0),
+    {Reply, State} = internal_new_station(Wlan, SA, State0),
+    reply(Reply, run, State);
+
+run(Event = {add_station, BSS, MAC, StaCaps, CryptoState}, From, State0) ->
+    lager:warning("in RUN got expexted: ~p", [Event]),
+    Wlan = get_wlan_by_bss(BSS, State0),
+    lager:warning("WLAN: ~p", [Wlan]),
+    State = internal_add_station(Wlan, MAC, StaCaps, CryptoState, response_fsm_reply(From), State0),
+    next_state(run, State).
 
 run({keep_alive, _DataPath, WTPDataChannelAddress, Header, PayLoad}, State) ->
     ?log_capwap_keep_alive(peer_log_str(WTPDataChannelAddress, State), PayLoad, Header),
@@ -651,13 +629,6 @@ run(configure, State = #state{id = WtpId, config = #wtp{radios = Radios},
 			    lists:foldl(internal_add_wlan(Radio, _, undefined, _), RState, Wlans)
 		    end, State, Radios),
     next_state(run, State1);
-
-run(Event = {add_station, BSS, MAC, StaCaps}, State0) ->
-    lager:warning("in RUN got expexted: ~p", [Event]),
-    Wlan = get_wlan_by_bss(BSS, State0),
-    lager:warning("WLAN: ~p", [Wlan]),
-    State = internal_add_station(Wlan, MAC, StaCaps, State0),
-    next_state(run, State);
 
 run({del_station, BSS, MAC}, State0) ->
     Wlan = get_wlan_by_bss(BSS, State0),
@@ -1849,6 +1820,31 @@ wlan_cfg_ht_opmode(#wtp_radio{radio_id = RadioId,
 				      ie = <<?WLAN_EID_HT_OPERATION, (byte_size(IE)):8, IE/bytes>>}
      | IEs].
 
+rsn_ie(#wtp_wlan_rsn{version = RSNVersion,
+		     capabilities = RSNCaps,
+		     group_cipher_suite = GroupCipherSuite,
+		     cipher_suites = CipherSuites,
+		     akm_suites = AKMs}) ->
+    CipherSuitesBin = << <<X/binary>> || X <- CipherSuites >>,
+    AKMsBin = << <<X/binary>> || X <- AKMs >>,
+
+    IE = <<RSNVersion:16/little, GroupCipherSuite/binary,
+	   (length(CipherSuites)):16/little, CipherSuitesBin/binary,
+	   (length(AKMs)):16/little, AKMsBin/binary,
+	   RSNCaps:16/little>>,
+    <<?WLAN_EID_RSN, (byte_size(IE)):8, IE/bytes>>.
+
+wlan_cfg_rsn(#wtp_radio{radio_id = RadioId},
+	     #wtp_wlan{wlan_id = WlanId, privacy = true,
+		       rsn = RSN}, IEs) ->
+    [#ieee_802_11_information_element{radio_id = RadioId,
+				      wlan_id = WlanId,
+				      flags = ['beacon','probe_response'],
+				      ie =rsn_ie(RSN)}
+     | IEs];
+wlan_cfg_rsn(_, _, IEs) ->
+    IEs.
+
 wlan_cfg_tp_hold_time(#wtp_radio{radio_id = RadioId},
 		      #wtp_wlan{wlan_id = WlanId},
 		      #wtp{wlan_hold_time = WlanHoldTime}, IEs) ->
@@ -1867,7 +1863,7 @@ internal_add_wlan(RadioId, WlanId, NotifyFun,
 internal_add_wlan(#wtp_radio{radio_id = RadioId} = Radio,
 		  #wtp_wlan{wlan_id = WlanId,
 			    ssid = SSID,
-			    suppress_ssid = SuppressSSID} = Wlan,
+			    suppress_ssid = SuppressSSID} = Wlan0,
 		  NotifyFun,
 		  #state{config = Config} = State) ->
     WBID = 1,
@@ -1878,24 +1874,29 @@ internal_add_wlan(#wtp_radio{radio_id = RadioId} = Radio,
     TunnelMode = select_tunnel_mode(State#state.tunnel_modes, MacMode),
     Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
     State0 = State#state{mac_mode = MacMode, tunnel_mode = TunnelMode},
-    ReqElements0 = [#ieee_802_11_add_wlan{
-                      radio_id      = RadioId,
-                      wlan_id       = WlanId,
-                      capability    = [ess, short_slot_time],
-                      auth_type     = open_system,
-                      mac_mode      = MacMode,
-                      tunnel_mode   = TunnelMode,
-                      suppress_ssid = SuppressSSID,
-                      ssid          = SSID
-                     }
-                  ],
+
+    Wlan = init_wlan_privacy(Wlan0),
+    State1 = update_wlan({RadioId, WlanId}, fun(_W) -> Wlan end, State0),
+
+    AddWlan = #ieee_802_11_add_wlan{
+		 radio_id      = RadioId,
+		 wlan_id       = WlanId,
+		 capability    = [ess, short_slot_time],
+		 auth_type     = open_system,
+		 mac_mode      = MacMode,
+		 tunnel_mode   = TunnelMode,
+		 suppress_ssid = SuppressSSID,
+		 ssid          = SSID
+		},
+    ReqElements0 = [set_wlan_keys(Wlan, AddWlan)],
     ReqElements1 = wlan_cfg_rateset(Radio, Wlan, Mode, RateSet, ReqElements0),
     ReqElements2 = wlan_cfg_wmm(Radio, Wlan, ReqElements1),
     ReqElements3 = wlan_cfg_ht_opmode(Radio, Wlan, ReqElements2),
-    ReqElements4 = wlan_cfg_ht_cap(Radio, Wlan, ReqElements3),
-    ReqElements = wlan_cfg_tp_hold_time(Radio, Wlan, Config, ReqElements4),
-    State1 = send_request(Header, ieee_802_11_wlan_configuration_request, ReqElements, NotifyFun, State0),
-    update_wlan_state({RadioId, WlanId}, fun(W) -> W#wlan{started = true} end, State1);
+    ReqElements4 = wlan_cfg_rsn(Radio, Wlan, ReqElements3),
+    ReqElements5 = wlan_cfg_ht_cap(Radio, Wlan, ReqElements4),
+    ReqElements = wlan_cfg_tp_hold_time(Radio, Wlan, Config, ReqElements5),
+    State2 = send_request(Header, ieee_802_11_wlan_configuration_request, ReqElements, NotifyFun, State1),
+    update_wlan_state({RadioId, WlanId}, fun(W) -> W#wlan{started = true} end, State2);
 
 internal_add_wlan(RadioId, WlanId, NotifyFun, State)
   when RadioId == false orelse WlanId == false ->
@@ -1918,6 +1919,30 @@ remove_wlan(WlanIdent, State = #state{wlans = Wlans}) ->
     LessWlans = lists:keydelete(WlanIdent, #wlan.wlan_identifier, Wlans),
     State#state{wlans = LessWlans}.
 
+init_wlan_privacy(W = #wtp_wlan{privacy = true}) ->
+    W#wtp_wlan{group_tsc = 0, gtk = crypto:strong_rand_bytes(16)};
+init_wlan_privacy(Wlan) ->
+    Wlan.
+
+%% update_wlan_gtk(W = #wtp_wlan{privacy = true, group_tsc = undefined}) ->
+%%     W#wtp_wlan{group_tsc = 0, gtk = crypto:strong_rand_bytes(16)};
+%% update_wlan_gtk(W = #wtp_wlan{privacy = true, group_tsc = TSC}) ->
+%%     W#wtp_wlan{group_tsc = TSC + 1, gtk = crypto:strong_rand_bytes(16)};
+%% update_wlan_gtk(Wlan) ->
+%%     Wlan.
+
+set_wlan_keys(#wtp_wlan{privacy = true,
+			group_tsc = TSC, gtk = GTK},
+	      #ieee_802_11_add_wlan{capability = Capability} = IE) ->
+    IE#ieee_802_11_add_wlan{capability = ['privacy' | Capability],
+			    key_index = 1, key = GTK, group_tsc = <<TSC:64>>};
+set_wlan_keys(#wtp_wlan{privacy = true, gtk = GTK},
+	      #ieee_802_11_update_wlan{capability = Capability} = IE) ->
+    IE#ieee_802_11_update_wlan{capability = ['privacy' | Capability],
+			       key_index = 1, key = GTK};
+set_wlan_keys(_Wlan, IE) ->
+    IE.
+
 get_wlan(WlanIdent, #state{wlans = Wlans}) ->
     lists:keyfind(WlanIdent, #wlan.wlan_identifier, Wlans).
 
@@ -1936,8 +1961,65 @@ update_wlan_state(WlanIdent, Fun, State = #state{wlans = Wlans})
     State#state{wlans =
 		    lists:keystore(WlanIdent, #wlan.wlan_identifier, Wlans, Fun(Wlan))}.
 
-internal_add_station(#wlan{wlan_identifier = {RadioId, WlanId}, bss = BSS},
-		     MAC, StaCaps, State = #state{data_channel_address = WTPDataChannelAddress}) ->
+update_wlan({RadioId, WlanId}, Fun, #state{config = Config = #wtp{radios = Radios}} = State)
+  when is_function(Fun, 1) ->
+    Radio0 = lists:keyfind(RadioId, #wtp_radio.radio_id, Radios),
+    Wlan = lists:keyfind(WlanId, #wtp_wlan.wlan_id, Radio0#wtp_radio.wlans),
+
+    Radio = Radio0#wtp_radio{wlans =
+				 lists:keystore(WlanId, #wtp_wlan.wlan_id, Radio0#wtp_radio.wlans, Fun(Wlan))},
+    State#state{config = Config#wtp{radios =
+				  lists:keystore(RadioId, #wtp_radio.radio_id, Radios, Radio)}}.
+
+internal_new_station(#wlan{}, StationMAC,
+		     State = #state{config = #wtp{max_stations = MaxStations},
+				    station_count  = StationCount})
+  when StationCount + 1 > MaxStations ->
+    lager:debug("Station ~p trying to associate, but wtp is full: ~p >= ~p",
+		[StationMAC, StationCount, MaxStations]),
+    {{error, too_many_clients}, State};
+
+internal_new_station(#wlan{wlan_identifier = {RadioId, WlanId}, bss = BSS}, StationMAC,
+		     State = #state{id = WtpId, session_id = SessionId,
+				    config = #wtp{radios = Radios},
+				    data_channel_address = WTPDataChannelAddress, data_path = DataPath,
+				    mac_mode = MacMode, tunnel_mode = TunnelMode,
+				    station_count  = StationCount}) ->
+
+    Radio = lists:keyfind(RadioId, #wtp_radio.radio_id, Radios),
+    WLAN = lists:keyfind(WlanId, #wtp_wlan.wlan_id, Radio#wtp_radio.wlans),
+
+    %% we have to repeat the search again to avoid a race
+    lager:debug("search for station ~p", [{self(), StationMAC}]),
+    case capwap_station_reg:lookup(self(), BSS, StationMAC) of
+	not_found ->
+	    exometer:update([capwap, ac, station_count], 1),
+	    exometer:update([capwap, wtp, WtpId, station_count], StationCount + 1),
+	    Reply =
+		case capwap_station_reg:lookup(StationMAC) of
+		    not_found ->
+			lager:debug("starting station: ~p", [StationMAC]),
+			capwap_station_sup:new_station(self(), DataPath, WTPDataChannelAddress,
+						       WtpId, SessionId, BSS, StationMAC, WLAN,
+						       MacMode, TunnelMode);
+		    {ok, Station0} ->
+			lager:debug("TAKE-OVER: station ~p found as ~p", [{self(), StationMAC}, Station0]),
+			ieee80211_station:take_over(Station0, self(), DataPath, WTPDataChannelAddress,
+						    WtpId, SessionId, BSS, WLAN, MacMode, TunnelMode)
+		end,
+	    {Reply, State#state{station_count = StationCount + 1}};
+
+	{Ok = {ok, Station0}, _} ->
+	    lager:debug("station ~p found as ~p", [{self(), StationMAC}, Station0]),
+	    {Ok, State}
+    end;
+internal_new_station(_, StationMAC, State) ->
+    lager:debug("Station ~p trying to associate on invalid Wlan", [StationMAC]),
+    {{error, invalid_bss}, State}.
+
+internal_add_station(#wlan{wlan_identifier = {RadioId, WlanId}, bss = BSS}, MAC, StaCaps,
+		     {_, Encryption, _} = CryptoState,
+		     NotifyFun, State = #state{data_channel_address = WTPDataChannelAddress}) ->
     Ret = capwap_dp:attach_station(WTPDataChannelAddress, MAC, RadioId, BSS),
     lager:debug("attach_station(~p, ~p, ~p, ~p): ~p", [WTPDataChannelAddress, MAC, RadioId, BSS, Ret]),
 
@@ -1947,7 +2029,7 @@ internal_add_station(#wlan{wlan_identifier = {RadioId, WlanId}, bss = BSS},
     %% FIXME: generate uniq value...
     AID = (random:uniform(2007) + 1) bor 16#C000,
 
-    ReqElements = [#add_station{
+    ReqElements0 = [#add_station{
 		      radio_id	= RadioId,
 		      mac	= MAC,
 		      vlan_name = <<>>},
@@ -1955,7 +2037,7 @@ internal_add_station(#wlan{wlan_identifier = {RadioId, WlanId}, bss = BSS},
 		      radio_id	= RadioId,
 		      association_id = AID,
 		      mac_address = MAC,
-		      capabilities = [ess, short_slot_time],
+		      capabilities = [ess, short_slot_time] ++ [ 'privacy' || Encryption ],
 		      wlan_id = WlanId,
 		      supported_rate = [6,9,12,18,22,36,48,54]},
 		   #ieee_802_11n_station_information{
@@ -1973,11 +2055,36 @@ internal_add_station(#wlan{wlan_identifier = {RadioId, WlanId}, bss = BSS},
 		      ampdubufsize = 0,
 		      htcsupp = 0,
 		      mcs_set = StaCaps#sta_cap.rx_mask}],
+    ReqElements = station_session_key(RadioId, WlanId, MAC, CryptoState, ReqElements0),
     Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
-    send_request(Header, station_configuration_request, ReqElements, State);
+    send_request(Header, station_configuration_request, ReqElements, NotifyFun, State);
 
-internal_add_station(_, _MAC, _StaCaps, State) ->
-    State.
+internal_add_station(_, _MAC, _StaCaps, _CryptoState, NotifyFun, State) ->
+    response_notify(NotifyFun, -1, [], State).
+
+station_session_key(_RadioId, _WlanId, MAC, {AKMonly, false, _CipherState}, IEs) ->
+    IE = #ieee_802_11_station_session_key{
+	    mac_address = MAC,
+	    flags = ['akm_only' || AKMonly],
+	    pairwise_tsc = <<0:48>>,
+	    pairwise_rsc = <<0:48>>,
+	    key = <<0:128>>},
+    [IE | IEs];
+station_session_key(RadioId, WlanId, MAC, {AKMonly, true, #ccmp{rsn = RSN, tk = TK}}, IEs) ->
+    [#ieee_802_11_station_session_key{
+	mac_address = MAC,
+	flags = ['akm_only' || AKMonly],
+	pairwise_tsc = <<0:48>>,
+	pairwise_rsc = <<0:48>>,
+	key = TK},
+     #ieee_802_11_information_element{
+	radio_id = RadioId,
+	wlan_id = WlanId,
+	flags = [],
+	ie =rsn_ie(RSN)}
+     | IEs];
+station_session_key(_, _, _, _, IEs) ->
+    IEs.
 
 internal_del_station(#wlan{wlan_identifier = {RadioId, _WlanId}}, MAC, State) ->
     Ret = capwap_dp:detach_station(MAC),
@@ -2096,4 +2203,14 @@ response_notify(NotifyFun, Code, Arg, State)
 	    State
     end;
 response_notify(_, _, _, State) ->
+    State.
+
+response_fsm_reply(From) ->
+    response_fsm_reply(From, _, _, _).
+
+response_fsm_reply(From, 0, _, State) ->
+    gen_fsm:reply(From, ok),
+    State;
+response_fsm_reply(From, Code, _, State) ->
+    gen_fsm:reply(From, {error, Code}),
     State.

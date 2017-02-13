@@ -66,8 +66,21 @@
 	  wlans
 	 }).
 
+-record(wtp_wlan_rsn, {
+	  version,
+	  capabilities,
+	  group_cipher_suite,
+	  cipher_suites,
+	  akm_suites
+	 }).
+
 -record(wtp_wlan, {
 	  wlan_id,
 	  ssid,
-	  suppress_ssid
+	  suppress_ssid,
+	  privacy,
+	  secret,
+	  rsn,
+	  group_tsc,
+	  gtk
 	 }).
