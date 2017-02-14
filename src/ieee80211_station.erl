@@ -71,6 +71,8 @@
 	  capabilities,
 
 	  eapol_state,
+	  eapol_retransmit,
+	  eapol_timer,
 	  cipher_state,
 
 	  rekey_running,
@@ -358,9 +360,23 @@ connected({'EAPOL', _DA, _SA, BSS, AuthData}, State0 = #state{radio_mac = BSS}) 
     {next_state, connected, State, ?IDLE_TIMEOUT};
 
 connected({rekey, Type}, State0) ->
-   lager:warning("in CONNECTED got REKEY: ~p", [Type]),
+    lager:warning("in CONNECTED got REKEY: ~p", [Type]),
     State = rekey_start(Type, State0),
     {next_state, connected, State, ?IDLE_TIMEOUT};
+
+connected(Event = {eapol_retransmit, Flags, KeyData},
+	  State0 = #state{eapol_retransmit = TxCnt})
+  when TxCnt < 4 ->
+    lager:warning("in CONNECTED got EAPOL retransmit: ~p", [Event]),
+    State = send_eapol(Flags, KeyData, State0),
+    {next_state, connected, State, ?IDLE_TIMEOUT};
+
+connected(Event = {eapol_retransmit, _Flags, _KeyData},
+	  State = #state{mac_mode = MacMode}) ->
+    lager:warning("in CONNECTED got EAPOL retransmit final TIMEOUT: ~p", [Event]),
+    wtp_del_station(State),
+    aaa_disassociation(State),
+    {reply, ok, initial_state(MacMode), State, ?SHUTDOWN_TIMEOUT};
 
 connected(Event, State) ->
     lager:warning("in CONNECTED got unexpexted: ~p", [Event]),
@@ -811,41 +827,62 @@ initial_state(local_mac) ->
 initial_state(split_mac) ->
     init_auth.
 
-rsna_4way_handshake({init, PMK}, State = #state{mac = StationMAC,
-						radio_mac = BSS}) ->
+stop_eapol_timer(#state{eapol_timer = TRef} = State)
+  when is_reference(TRef) ->
+    gen_fsm:cancel_timer(TRef),
+    State#state{eapol_timer = undefined};
+stop_eapol_timer(State) ->
+    State.
+
+start_eapol_timer(Flags, KeyData, State0) ->
+    Interval = 500,
+    State = stop_eapol_timer(State0),
+    lager:debug("Starting EAPOL Timer ~w ms", [Interval]),
+    TRef = gen_fsm:send_event_after(Interval, {eapol_retransmit, Flags, KeyData}),
+    State#state{eapol_timer = TRef}.
+
+send_eapol(Flags, KeyData,
+	   State = #state{mac = StationMAC, radio_mac = BSS, eapol_retransmit = TxCnt,
+			  cipher_state =
+			      #ccmp{replay_counter = ReplayCounter} = CipherState0
+			 }) ->
+    CipherState = CipherState0#ccmp{replay_counter = ReplayCounter + 1},
+    KeyFrame = eapol:key(Flags, KeyData, CipherState),
+    Frame = eapol:encode_802_11(StationMAC, BSS, KeyFrame),
+    wtp_send_80211(Frame, State),
+    start_eapol_timer(Flags, KeyData, State#state{eapol_retransmit = TxCnt + 1,
+						  cipher_state = CipherState}).
+
+rsna_4way_handshake({init, PMK}, State) ->
     ANonce = crypto:strong_rand_bytes(32),
     CipherState = #ccmp{cipher_suite = 'AES-HMAC-SHA1',
 			replay_counter = 0,
 			pre_master_key = PMK,
 			nonce = ANonce},
-    Key = eapol:key([pairwise, ack], <<>>, CipherState),
-    Frame = eapol:encode_802_11(StationMAC, BSS, Key),
-    wtp_send_80211(Frame, State),
-    State#state{eapol_state = init, cipher_state = CipherState};
+    send_eapol([pairwise, ack], <<>>,
+	       State#state{eapol_state = init,
+			   eapol_retransmit = 0,
+			   cipher_state = CipherState});
 
-rsna_4way_handshake(rekey, State = #state{mac = StationMAC,
-					  radio_mac = BSS,
-					  eapol_state = installed,
-					  cipher_state =
-					      #ccmp{
-						 replay_counter = ReplayCounter} = CipherState0}) ->
+rsna_4way_handshake(rekey, State = #state{eapol_state = installed,
+					  cipher_state = CipherState0}) ->
     ANonce = crypto:strong_rand_bytes(32),
-    CipherState = CipherState0#ccmp{replay_counter = ReplayCounter + 1, nonce = ANonce},
-    Key = eapol:key([pairwise, ack], <<>>, CipherState),
-    Frame = eapol:encode_802_11(StationMAC, BSS, Key),
-    wtp_send_80211(Frame, State),
-    State#state{eapol_state = init, cipher_state = CipherState};
+    CipherState = CipherState0#ccmp{nonce = ANonce},
+    send_eapol([pairwise, ack], <<>>,
+	       State#state{eapol_state = init,
+			   eapol_retransmit = 0,
+			   cipher_state = CipherState});
 
 rsna_4way_handshake({key, Flags, CipherSuite, ReplayCounter, SNonce, KeyData, MICData},
-		    State = #state{radio_mac = BSS, mac = StationMAC,
-				   wlan = #wtp_wlan{rsn = RSN, gtk = GTK},
-				   eapol_state = init,
-				   cipher_state =
-				       #ccmp{
-					  cipher_suite = CipherSuite,
-					  replay_counter = ReplayCounter,
-					  pre_master_key = PMK,
-					  nonce = ANonce} = CipherState0}) ->
+		    State0 = #state{radio_mac = BSS, mac = StationMAC,
+				    wlan = #wtp_wlan{rsn = RSN, gtk = GTK},
+				    eapol_state = init,
+				    cipher_state =
+					#ccmp{
+					   cipher_suite = CipherSuite,
+					   replay_counter = ReplayCounter,
+					   pre_master_key = PMK,
+					   nonce = ANonce} = CipherState0}) ->
     %% CipherSuite and ReplayCounter match...
     lager:debug("KeyData: ~p", [pbkdf2:to_hex(KeyData)]),
     lager:debug("PMK: ~p", [pbkdf2:to_hex(PMK)]),
@@ -853,9 +890,9 @@ rsna_4way_handshake({key, Flags, CipherSuite, ReplayCounter, SNonce, KeyData, MI
     lager:debug("StationMAC: ~p", [pbkdf2:to_hex(StationMAC)]),
     lager:debug("ANonce: ~p", [pbkdf2:to_hex(ANonce)]),
     lager:debug("SNonce: ~p", [pbkdf2:to_hex(SNonce)]),
+    State = stop_eapol_timer(State0),
     {KCK, KEK, TK} = eapol:pmk2ptk(PMK, BSS, StationMAC, ANonce, SNonce, 48),
     CipherState = CipherState0#ccmp{rsn = RSN,
-				    replay_counter = ReplayCounter + 1,
 				    kck = KCK, kek = KEK, tk = TK},
 
     case eapol:validate_mic(CipherState, MICData) of
@@ -879,10 +916,10 @@ rsna_4way_handshake({key, Flags, CipherSuite, ReplayCounter, SNonce, KeyData, MI
 	    lager:debug("TxKeyData: ~p", [pbkdf2:to_hex(TxKeyData)]),
 	    lager:debug("EncTxKeyData: ~p", [pbkdf2:to_hex(EncTxKeyData)]),
 
-	    Key = eapol:key([pairwise, install, ack, mic, secure, enc], EncTxKeyData, CipherState),
-	    Frame = eapol:encode_802_11(StationMAC, BSS, Key),
-	    wtp_send_80211(Frame, State),
-	    State#state{eapol_state = install, cipher_state = CipherState};
+	    send_eapol([pairwise, install, ack, mic, secure, enc], EncTxKeyData,
+		       State#state{eapol_state = install,
+				   eapol_retransmit = 0,
+				   cipher_state = CipherState});
 
 	Other ->
 	    lager:debug("rsna_4way_handshake 2 of 4: ~p", [Other]),
@@ -892,11 +929,12 @@ rsna_4way_handshake({key, Flags, CipherSuite, ReplayCounter, SNonce, KeyData, MI
     end;
 
 rsna_4way_handshake({key, _Flags, _CipherSuite, ReplayCounter, _SNonce, _KeyData, MICData},
-		    State = #state{ac = AC, radio_mac = BSS, mac = StationMAC, capabilities = Caps,
-				   eapol_state = install,
-				   cipher_state =
-				       #ccmp{
-					  replay_counter = ReplayCounter} = CipherState}) ->
+		    State0 = #state{ac = AC, radio_mac = BSS, mac = StationMAC, capabilities = Caps,
+				    eapol_state = install,
+				    cipher_state =
+					#ccmp{
+					   replay_counter = ReplayCounter} = CipherState}) ->
+    State = stop_eapol_timer(State0),
     case eapol:validate_mic(CipherState, MICData) of
 	ok ->
 	    lager:debug("rsna_4way_handshake 4 of 4: ok"),
