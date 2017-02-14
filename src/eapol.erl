@@ -99,6 +99,9 @@ calc_hmac(#ccmp{cipher_suite = CipherSuite, kck = KCK}, EAPOL, Data, MICLen) ->
     C4 = crypto:hmac_update(C3, Data),
     crypto:hmac_final_n(C4, MICLen).
 
+%%
+%% EAPOL Key frames are defined in IEEE 802.11-2012, Sect. 11.6.2
+%%
 key(Flags, KeyData, #ccmp{cipher_suite = CipherSuite,
 			  replay_counter = ReplayCounter,
 			  nonce = Nonce} = CCMP) ->
@@ -107,7 +110,10 @@ key(Flags, KeyData, #ccmp{cipher_suite = CipherSuite,
     KeyLen = key_len(CCMP),
     MICLen = mic_len(CipherSuite),
     EAPOLData = <<?EAPOL_KEY_802_11, KeyInfo:16, KeyLen:16, ReplayCounter:64,
-		 Nonce:32/bytes, 0:128, 0:64, 0:64>>,
+		  Nonce:32/bytes,		%% Key Nounce
+		  0:128,			%% EAPOL Key IV
+		  0:64,				%% Key RSC, see RFC 5416, Sect. 9.1 !!!!
+		  0:64>>,			%% reserved
     KeyDataLen = byte_size(KeyData),
     KeyData1 = <<KeyDataLen:16, KeyData/binary>>,
     DataLen = byte_size(EAPOLData) + MICLen + 2 + KeyDataLen,
