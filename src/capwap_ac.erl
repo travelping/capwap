@@ -2027,7 +2027,7 @@ internal_add_station(#wlan{wlan_identifier = {RadioId, WlanId}, bss = BSS}, MAC,
     Flags = [{frame,'802.3'}],
 
     %% FIXME: generate uniq value...
-    AID = (random:uniform(2007) + 1) bor 16#C000,
+    AID = (rand:uniform(2007) + 1) bor 16#C000,
 
     ReqElements0 = [#add_station{
 		      radio_id	= RadioId,
