@@ -20,6 +20,7 @@
 
 -include("../include/capwap_packet.hrl").
 -include("../include/capwap_config.hrl").
+-include("../include/capwap_ac.hrl").
 
 main(_, []) ->
     help();
@@ -186,17 +187,15 @@ print_wtp_config(#{config := Config}) ->
 	       Config#wtp.admin_pw, Config#wtp.wlan_hold_time]).
 
 print_wtp_radio_wlan(#wtp_radio{radio_id = RadioId},
-		     #wtp_wlan{wlan_id = WlanId} = Wlan,
+		     #wtp_wlan_config{wlan_id = WlanId} = Wlan,
 		     WlansState) ->
 
     {BSS, WlanState} =
 	case lists:keyfind({RadioId, WlanId}, 2, WlansState) of
-	    S when is_tuple(S) ->
-		%% TODO: accessing the wlan state record like this is a
-		%%       hack, will be replaced soonish
-		{element(3, S), element(4, S)};
+	    #wlan{bss = BSS1, state = WlanState1} ->
+		{BSS1, WlanState1};
 	    Other ->
-		Other
+		{<<0,0,0,0,0,0>>, unconfigured}
 	end,
     io:format("  WLAN #~w:~n"
 	      "    SSID: ~s~n"
@@ -204,9 +203,9 @@ print_wtp_radio_wlan(#wtp_radio{radio_id = RadioId},
 	      "    Privay: ~w~n"
 	      "    BSS: ~s~n"
 	      "    Running: ~w~n",
-	      [WlanId, Wlan#wtp_wlan.ssid,
-	       fmt_bool(Wlan#wtp_wlan.suppress_ssid),
-	       fmt_bool(Wlan#wtp_wlan.privacy, {enabled, disabled}),
+	      [WlanId, Wlan#wtp_wlan_config.ssid,
+	       fmt_bool(Wlan#wtp_wlan_config.suppress_ssid),
+	       fmt_bool(Wlan#wtp_wlan_config.privacy, {enabled, disabled}),
 	       fmt_mac(BSS), WlanState]).
 
 fmt_wtp_radio_oper_mode(#wtp_radio{

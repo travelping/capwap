@@ -24,3 +24,17 @@
 	  rx_mask = <<0,0,0,0,0,0,0,0,0,0>> :: binary(),
 	  rx_highest = 0     :: integer()
 	 }).
+
+-record(station_config, {
+	  data_path,
+	  wtp_data_channel_address,
+	  wtp_id,
+	  wtp_session_id,
+	  mac_mode,
+	  tunnel_mode,
+
+	  bss,
+	  wpa_config,
+	  gtk,
+	  gtk_index
+}).

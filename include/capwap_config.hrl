@@ -74,13 +74,14 @@
 	  akm_suites
 	 }).
 
--record(wtp_wlan, {
+-record(wtp_wlan_config, {
 	  wlan_id,
 	  ssid,
 	  suppress_ssid,
 	  privacy,
 	  secret,
 	  rsn,
-	  group_tsc,
-	  gtk
+	  peer_rekey,
+	  group_rekey,
+	  strict_group_rekey
 	 }).

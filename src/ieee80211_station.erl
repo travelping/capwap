@@ -20,8 +20,8 @@
 -behavior(gen_fsm).
 
 %% API
--export([start_link/10, handle_ieee80211_frame/2, handle_ieee802_3_frame/3,
-         take_over/10, detach/1, delete/1]).
+-export([start_link/3, handle_ieee80211_frame/2, handle_ieee802_3_frame/3,
+         take_over/3, detach/1, delete/1]).
 %% Helpers
 -export([format_mac/1]).
 
@@ -40,6 +40,7 @@
 -include("capwap_debug.hrl").
 -include("capwap_packet.hrl").
 -include("capwap_config.hrl").
+-include("capwap_ac.hrl").
 -include("ieee80211.hrl").
 -include("ieee80211_station.hrl").
 -include("eapol.hrl").
@@ -62,13 +63,16 @@
           data_channel_address,
 	  wtp_id,
 	  wtp_session_id,
-          radio_mac,
           mac,
-	  wlan,
           mac_mode,
           tunnel_mode,
           out_action,
 	  capabilities,
+
+          radio_mac,
+	  wpa_config,
+	  gtk,
+	  gtk_index,
 
 	  eapol_state,
 	  eapol_retransmit,
@@ -78,7 +82,6 @@
 	  rekey_running,
 	  rekey_pending,
 
-	  rekey_interval = 60,
 	  rekey_tref
          }).
 
@@ -89,11 +92,8 @@
 %%%===================================================================
 %%% API
 %%%===================================================================
-start_link(AC, DataPath, WTPDataChannelAddress, WtpId, SessionId,
-	   RadioMAC, ClientMAC, WLAN, MacMode, TunnelMode) ->
-    gen_fsm:start_link(?MODULE, [AC, DataPath, WTPDataChannelAddress,
-				 WtpId, SessionId, RadioMAC, ClientMAC,
-				 WLAN, MacMode, TunnelMode], [{debug, ?DEBUG_OPTS}]).
+start_link(AC, ClientMAC, StationCfg) ->
+    gen_fsm:start_link(?MODULE, [AC, ClientMAC, StationCfg], [{debug, ?DEBUG_OPTS}]).
 
 handle_ieee80211_frame(AC, <<FrameControl:2/bytes,
 			      _Duration:16, DA:6/bytes, SA:6/bytes, BSS:6/bytes,
@@ -115,10 +115,8 @@ handle_ieee802_3_frame(AC, RadioMAC, <<_EthDst:6/bytes, EthSrc:6/bytes, _/binary
 handle_ieee802_3_frame(_, _, _Frame) ->
     {error, unhandled}.
 
-take_over(Pid, AC, DataPath, WTPDataChannelAddress, WtpId, SessionId,
-	  RadioMAC, WLAN, MacMode, TunnelMode) ->
-    gen_fsm:sync_send_event(Pid, {take_over, AC, DataPath, WTPDataChannelAddress, WtpId,
-				  SessionId, RadioMAC, WLAN, MacMode, TunnelMode}).
+take_over(Pid, AC, StationCfg) ->
+    gen_fsm:sync_send_event(Pid, {take_over, AC, StationCfg}).
 
 detach(ClientMAC) ->
     case capwap_station_reg:lookup(ClientMAC) of
@@ -134,18 +132,18 @@ delete(Pid) when is_pid(Pid) ->
 %%%===================================================================
 %%% gen_fsm callbacks
 %%%===================================================================
-init([AC, DataPath, WTPDataChannelAddress, WtpId, SessionId,
-      RadioMAC, ClientMAC, WLAN, MacMode, TunnelMode]) ->
-    lager:debug("Register station ~p as ~w", [{AC, RadioMAC, ClientMAC}, self()]),
+init([AC, ClientMAC, StationCfg = #station_config{bss = RadioMAC,
+						  mac_mode = MacMode}]) ->
+    State0 = init_state_from_cfg(StationCfg),
+
+    lager:debug("Register station ~p ~p as ~w", [AC, ClientMAC, self()]),
     capwap_station_reg:register(ClientMAC),
     capwap_station_reg:register(AC, RadioMAC, ClientMAC),
     ACMonitor = erlang:monitor(process, AC),
-    State = #state{ac = AC, ac_monitor = ACMonitor, data_path = DataPath,
-		   data_channel_address = WTPDataChannelAddress, wtp_id = WtpId, wtp_session_id = SessionId,
-                   radio_mac = RadioMAC, mac = ClientMAC, wlan = WLAN,
-		   mac_mode = MacMode, tunnel_mode = TunnelMode,
-		   capabilities = #sta_cap{},
-		   rekey_running = false, rekey_pending = []},
+
+    State = State0#state{ac = AC,
+			 ac_monitor = ACMonitor,
+			 mac = ClientMAC},
     {ok, initial_state(MacMode), State}.
 
 %%
@@ -431,6 +429,34 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
+init_state_from_cfg(StationCfg) ->
+    update_state_from_cfg(StationCfg,
+			  #state{capabilities = #sta_cap{},
+				 rekey_running = false,
+				 rekey_pending = []}).
+
+update_state_from_cfg(#station_config{data_path = DataPath,
+				      wtp_data_channel_address = WTPDataChannelAddress,
+				      wtp_id = WtpId,
+				      wtp_session_id = SessionId,
+				      mac_mode = MacMode,
+				      tunnel_mode = TunnelMode,
+				      bss = BSS,
+				      wpa_config = WpaConfig,
+				      gtk = GTK,
+				      gtk_index = GTKindex
+				     }, State) ->
+    State#state{data_path = DataPath,
+		data_channel_address = WTPDataChannelAddress,
+		wtp_id = WtpId,
+		wtp_session_id = SessionId,
+		mac_mode = MacMode,
+		tunnel_mode = TunnelMode,
+		radio_mac = BSS,
+		wpa_config = WpaConfig,
+		gtk = GTK,
+		gtk_index = GTKindex
+	       }.
 
 with_station(AC, BSS, StationMAC, Fun) ->
     lager:debug("search Station ~p", [{AC, StationMAC}]),
@@ -533,8 +559,10 @@ ieee80211_request(_AC, FrameType, DA, SA, BSS, FromDS, ToDS, Frame) ->
     lager:warning("unhandled IEEE 802.11 Frame: ~p", [{FrameType, DA, SA, BSS, FromDS, ToDS, Frame}]),
     {error, unhandled}.
 
-handle_take_over({take_over, AC, DataPath, WTPDataChannelAddress, WtpId,
-		  SessionId, RadioMAC, WLAN, MacMode, TunnelMode}, _From,
+handle_take_over({take_over, AC, StationCfg = #station_config{
+						 bss = RadioMAC,
+						 mac_mode = MacMode}},
+		 _From,
 		 State0 = #state{ac = OldAC, ac_monitor = OldACMonitor,
 				 data_path = _OldDataPath,
 				 radio_mac = OldRadioMAC, mac = ClientMAC}) ->
@@ -549,11 +577,7 @@ handle_take_over({take_over, AC, DataPath, WTPDataChannelAddress, WtpId,
     capwap_station_reg:register(AC, RadioMAC, ClientMAC),
     ACMonitor = erlang:monitor(process, AC),
 
-    State = State0#state{ac = AC, ac_monitor = ACMonitor,
-			 data_path = DataPath, data_channel_address = WTPDataChannelAddress,
-			 wtp_id = WtpId, wtp_session_id = SessionId,
-			 radio_mac = RadioMAC, wlan = WLAN, mac_mode = MacMode,
-			 tunnel_mode = TunnelMode},
+    State = update_state_from_cfg(StationCfg, State0#state{ac = AC, ac_monitor = ACMonitor}),
     {reply, {ok, self()}, initial_state(MacMode), State, ?IDLE_TIMEOUT}.
 
 %% partially en/decode Authentication Frames
@@ -647,9 +671,7 @@ add_tunnel_info({Address, _Port}, SessionData) ->
      |SessionData].
 
 wtp_add_station(#state{ac = AC, radio_mac = BSS, mac = MAC, capabilities = Caps,
-		       wlan = #wtp_wlan{ssid = SSID,
-					privacy = Privacy,
-					secret = Secret},
+		       wpa_config = #wpa_config{ssid = SSID, privacy = Privacy, secret = Secret},
 		       cipher_state = CipherState} = State) ->
     if Privacy ->
 	    capwap_ac:add_station(AC, BSS, MAC, Caps, {true, false, CipherState}),
@@ -875,7 +897,8 @@ rsna_4way_handshake(rekey, State = #state{eapol_state = installed,
 
 rsna_4way_handshake({key, Flags, CipherSuite, ReplayCounter, SNonce, KeyData, MICData},
 		    State0 = #state{radio_mac = BSS, mac = StationMAC,
-				    wlan = #wtp_wlan{rsn = RSN, gtk = GTK},
+				    wpa_config = #wpa_config{rsn = RSN},
+				    gtk = GTK,
 				    eapol_state = init,
 				    cipher_state =
 					#ccmp{
@@ -952,7 +975,8 @@ rsna_4way_handshake(Frame, State) ->
     lager:warning("got unexpexted EAPOL data: ~p", [Frame]),
     State.
 
-rekey_timer_start(ptk, #state{rekey_interval = Interval, rekey_tref = undefined} = State)
+rekey_timer_start(ptk, #state{wpa_config = #wpa_config{peer_rekey = Interval},
+			      rekey_tref = undefined} = State)
   when is_integer(Interval) andalso Interval > 0 ->
     TRef = gen_fsm:send_event_after(Interval * 1000, {rekey, ptk}),
     State#state{rekey_tref = TRef};

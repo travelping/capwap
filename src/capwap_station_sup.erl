@@ -18,7 +18,7 @@
 -behaviour(supervisor).
 
 %% API
--export([start_link/0, new_station/10]).
+-export([start_link/0, new_station/3]).
 
 %% Supervisor callbstationks
 -export([init/1]).
@@ -32,13 +32,9 @@
 start_link() ->
     supervisor:start_link({local, ?SERVER}, ?MODULE, []).
 
-new_station(AC, DataPath, WTPDataChannelAddress, WtpId, SessionId,
-	    RadioMAC, ClientMAC, WLAN, MacMode, TunnelMode) ->
-    lager:debug("Starting new station: ~p",
-		[{AC, DataPath, WTPDataChannelAddress, WtpId, SessionId,
-		  RadioMAC, ClientMAC, WLAN, MacMode, TunnelMode}]),
-    R = supervisor:start_child(?SERVER, [AC, DataPath, WTPDataChannelAddress, WtpId, SessionId,
-					 RadioMAC, ClientMAC, WLAN, MacMode, TunnelMode]),
+new_station(AC, StationMAC, StationCfg) ->
+    lager:debug("Starting new station: ~p, ~p, ~p", [AC, StationMAC, lager:pr(StationCfg, capwap_ac)]),
+    R = supervisor:start_child(?SERVER, [AC, StationMAC, StationCfg]),
     lager:debug("Starting new station result: ~p", [R]),
     R.
 
@@ -47,6 +43,6 @@ new_station(AC, DataPath, WTPDataChannelAddress, WtpId, SessionId,
 %%%===================================================================
 
 init([]) ->
-    {ok, {{simple_one_for_one, 1000, 1000}, 
-          [{ieee80211_station, {ieee80211_station, start_link, []}, 
+    {ok, {{simple_one_for_one, 1000, 1000},
+          [{ieee80211_station, {ieee80211_station, start_link, []},
             temporary, 1000, worker, [ieee80211_station]}]}}.

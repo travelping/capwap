@@ -17,7 +17,7 @@
 
 -compile({parse_transform, cut}).
 -compile({parse_transform, exprecs}).
--export_records([wtp, wtp_radio, wtp_wlan]).
+-export_records([wtp, wtp_radio, wtp_wlan_config]).
 
 -export([validate/0, get/2, get/3, wtp_config/1,
 	 wtp_set_radio_infos/3, update_wlan_config/4]).
@@ -106,21 +106,31 @@ wtp_init_wlan_radio_defaults(Id, _Radio, WLAN) ->
 	     cipher_suites = [?IEEE_802_1_CIPHER_SUITE_AES],
 	     akm_suites = [?IEEE_802_1_AKM_PSK]
 	    },
-    WLAN#wtp_wlan{wlan_id = Id,
-		  suppress_ssid = bool_to_int(get(ac, suppress_ssid, false)),
-		  privacy = false,
-		  rsn = RSN}.
+    WLAN#wtp_wlan_config{wlan_id = Id,
+			 suppress_ssid = bool_to_int(get(ac, suppress_ssid, false)),
+			 privacy = false,
+			 rsn = RSN,
+			 peer_rekey = 3600,
+			 group_rekey = 3600,
+			 strict_group_rekey = false
+		 }.
 
 wtp_init_wlan(_CN, _Radio, {ssid, _}, WLAN) ->
     WLAN;
 wtp_init_wlan(_CN, _Radio, {suppress_ssid, Value}, WLAN) ->
-    WLAN#wtp_wlan{suppress_ssid = bool_to_int(Value)};
+    WLAN#wtp_wlan_config{suppress_ssid = bool_to_int(Value)};
 wtp_init_wlan(_CN, _Radio, {privacy, Value}, WLAN)
   when is_boolean(Value) ->
-    WLAN#wtp_wlan{privacy = Value};
+    WLAN#wtp_wlan_config{privacy = Value};
 wtp_init_wlan(_CN, _Radio, {secret, Value}, WLAN)
   when is_binary(Value) ->
-    WLAN#wtp_wlan{secret = Value};
+    WLAN#wtp_wlan_config{secret = Value};
+wtp_init_wlan(_CN, _Radio, {peer_rekey, Value}, WLAN)
+  when is_integer(Value) ->
+    WLAN#wtp_wlan_config{peer_rekey = Value};
+wtp_init_wlan(_CN, _Radio, {group_rekey, Value}, WLAN)
+  when is_integer(Value) ->
+    WLAN#wtp_wlan_config{group_rekey = Value};
 wtp_init_wlan(CN, Radio, Setting, WLAN) ->
     lager:debug("ignoring ~p on Radio (~w:~w)", [Setting, CN, Radio#wtp_radio.radio_id]),
     WLAN.
@@ -140,7 +150,7 @@ wtp_init_wlan_mf(CN, Radio, Settings, Count) ->
 						   DynSSIDSuffixLen)]);
 	       _ -> DefaultSSID
 	   end,
-    WLAN0 = wtp_init_wlan_radio_defaults(Count, Radio, #wtp_wlan{ssid = SSID}),
+    WLAN0 = wtp_init_wlan_radio_defaults(Count, Radio, #wtp_wlan_config{ssid = SSID}),
     WLAN = lists:foldl(wtp_init_wlan(CN, Radio, _, _),
 		       WLAN0, Settings),
     {WLAN, Count + 1}.
@@ -198,8 +208,8 @@ wtp_set_radio_infos(CN, RadioInfos, Config) ->
 
 update_wlan_config(RadioId, WlanId, Settings, #wtp{radios = Radios} = Config) ->
     Radio = lists:keyfind(RadioId, #wtp_radio.radio_id, Radios),
-    WLAN = lists:keyfind(WlanId, #wtp_wlan.wlan_id, Radio#wtp_radio.wlans),
-    Radio1 = Radio#wtp_radio{wlans = lists:keystore(WlanId, #wtp_wlan.wlan_id,
+    WLAN = lists:keyfind(WlanId, #wtp_wlan_config.wlan_id, Radio#wtp_radio.wlans),
+    Radio1 = Radio#wtp_radio{wlans = lists:keystore(WlanId, #wtp_wlan_config.wlan_id,
 						    Radio#wtp_radio.wlans,
 						    '#set-'(Settings, WLAN))},
     Config#wtp{radios = lists:keystore(RadioId, #wtp_radio.radio_id,
