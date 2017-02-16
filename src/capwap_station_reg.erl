@@ -20,7 +20,7 @@
 %% API
 -export([start_link/0]).
 -export([register/3, unregister/3, lookup/3, register/1, unregister/1, lookup/1]).
--export([list_stations/0]).
+-export([list_stations/0, list_stations/2]).
 
 %% regine_server callbacks
 -export([init/1, handle_register/4, handle_unregister/3, handle_pid_remove/3, handle_death/3, terminate/2]).
@@ -65,6 +65,9 @@ lookup(AC, BSS, Station) ->
 
 list_stations() ->
     ets:select(?SERVER, ets:fun2ms(fun({{AC, _BSS, MAC}, _}) when is_binary(MAC) -> {AC, MAC} end)).
+
+list_stations(AC, BSS) ->
+    ets:select(?SERVER, ets:fun2ms(fun({{AC0, BSS0, _MAC}, StaPid}) when AC == AC0, BSS == BSS0 -> StaPid end)).
 
 %%%===================================================================
 %%% regine_server functions

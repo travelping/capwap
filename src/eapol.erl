@@ -38,6 +38,8 @@ key_len(#ccmp{}) -> 16.
 mic_len(#ccmp{}) -> 16;
 mic_len('AES-HMAC-SHA1') -> 16.
 
+keyinfo(group, Info) ->
+    Info;
 keyinfo(pairwise, Info) ->
     Info bor 16#0008;
 keyinfo(install, Info) ->
@@ -53,30 +55,29 @@ keyinfo(enc, Info) ->
 keyinfo(_, Info) ->
     Info.
 
-dec_keyinfo(16#0008) ->
-    pairwise;
-dec_keyinfo(16#0040) ->
-    install;
-dec_keyinfo(16#0080) ->
-    ack;
-dec_keyinfo(16#0100) ->
-    mic;
-dec_keyinfo(16#0200) ->
-    secure;
-dec_keyinfo(16#1000) ->
-    enc;
-dec_keyinfo(Cnt) ->
-    Cnt.
+dec_keyinfo(16#0008, 0, Flags) ->
+    [group | Flags];
+dec_keyinfo(16#0008, 1, Flags) ->
+    [pairwise | Flags];
+dec_keyinfo(16#0040, 1, Flags) ->
+    [install | Flags];
+dec_keyinfo(16#0080, 1, Flags) ->
+    [ack | Flags];
+dec_keyinfo(16#0100, 1, Flags) ->
+    [mic | Flags];
+dec_keyinfo(16#0200, 1, Flags) ->
+    [secure | Flags];
+dec_keyinfo(16#1000, 1, Flags) ->
+    [enc | Flags];
+dec_keyinfo(Cnt, 1, Flags) ->
+    [Cnt | Flags];
+dec_keyinfo(_Cnt, 0, Flags) ->
+    Flags.
 
 keyinfo(0, _, Flags) ->
     Flags;
 keyinfo(V, Cnt, Flags0) ->
-    Flags =
-	if V band 1 == 1 ->
-		[dec_keyinfo(Cnt) | Flags0];
-	   true ->
-		Flags0
-	end,
+    Flags = dec_keyinfo(Cnt, V band 1, Flags0),
     keyinfo(V bsr 1, Cnt bsl 1, Flags).
 
 keyinfo(Info) ->

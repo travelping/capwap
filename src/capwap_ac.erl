@@ -21,7 +21,7 @@
 
 %% API
 -export([start_link/1, accept/3, get_data_channel_address/1, take_over/1, new_station/3,
-         station_detaching/1]).
+         station_detaching/1, gtk_rekey_done/1]).
 
 %% Extern API
 -export([get_state/1,
@@ -197,6 +197,9 @@ new_station(WTP, BSS, SA) ->
 
 station_detaching(AC) ->
     gen_fsm:send_all_state_event(AC, station_detaching).
+
+gtk_rekey_done({AC, WlanIdent}) ->
+    gen_fsm:send_event(AC, {gtk_rekey_done, WlanIdent}).
 
 %%%===================================================================
 %%% extern APIs
@@ -578,6 +581,7 @@ run({ieee_802_11_wlan_configuration_response, _Seq, Elements, _Header}, State0) 
 
 	    Code ->
 		lager:warning("IEEE 802.11 WLAN Configuration failed with ~w", [Code]),
+		%% TODO: handle Update failures
 		State0
     end,
     next_state(run, State);
@@ -643,6 +647,18 @@ run({firmware_download, DownloadLink, Sha}, State) ->
     Header1 = #capwap_header{radio_id = 0, wb_id = 1, flags = Flags},
     State1 = send_request(Header1, configuration_update_request, ReqElements, State),
     next_state(run, State1);
+
+run(Event = {group_rekey, WlanIdent}, State0) ->
+    lager:warning("in RUN got GTK rekey: ~p", [Event]),
+    Wlan = get_wlan(WlanIdent, State0),
+    State = start_gtk_rekey(WlanIdent, Wlan, State0),
+    next_state(run, State);
+
+run(Event = {gtk_rekey_done, WlanIdent}, State0) ->
+    lager:warning("in RUN got GTK rekey DONE: ~p", [Event]),
+    Wlan = get_wlan(WlanIdent, State0),
+    State = finish_gtk_rekey(WlanIdent, Wlan, State0),
+    next_state(run, State);
 
 run(Event, State) ->
     lager:warning("in RUN got unexpexted: ~p", [Event]),
@@ -802,6 +818,8 @@ handle_info({ssl, Socket, Packet}, StateName, State = #state{socket = {_, Socket
 
 handle_info({timeout, _, retransmit}, StateName, State) ->
     resend_request(StateName, State);
+handle_info({'EXIT', _Pid, normal}, StateName, State) ->
+    next_state(StateName, State);
 handle_info(Info, StateName, State) ->
     lager:warning("in State ~p unexpected Info: ~p", [StateName, Info]),
     next_state(StateName, State).
@@ -1905,7 +1923,8 @@ internal_add_wlan_result(WlanIdent, NotifyFun, Code, Arg, State0)
   when Code == 0 ->
     State = update_wlan_state(WlanIdent,
 			      fun(W0) ->
-				      W0#wlan{state = running}
+				      W = W0#wlan{state = running},
+				      start_group_rekey_timer(W)
 			      end, State0),
     response_notify(NotifyFun, Code, Arg, State);
 
@@ -1926,6 +1945,12 @@ internal_del_wlan(WlanIdent = {RadioId, WlanId}, NotifyFun, State) ->
     remove_wlan(WlanIdent, State0).
 
 remove_wlan(WlanIdent, State = #state{wlans = Wlans}) ->
+    case get_wlan(WlanIdent, State) of
+	Wlan = #wlan{} ->
+	    stop_group_rekey_timer(Wlan);
+	_ ->
+	    ok
+    end,
     LessWlans = lists:keydelete(WlanIdent, #wlan.wlan_identifier, Wlans),
     State#state{wlans = LessWlans}.
 
@@ -1963,23 +1988,23 @@ init_wlan_privacy(W = #wlan{privacy = true}) ->
 init_wlan_privacy(Wlan) ->
     Wlan.
 
-%% update_wlan_gtk(W = #wlan{privacy = true, gtk_index = KeyIndex})
-%%   when not is_integer(KeyIndex) ->
-%%     init_wlan_privacy(W);
-%% update_wlan_gtk(W = #wlan{privacy = true, gtk_index = KeyIndex}) ->
-%%      W#wlan{gtk_index = (KeyIndex + 1) rem 2, gtk = crypto:strong_rand_bytes(16)};
-%% update_wlan_gtk(Wlan) ->
-%%      Wlan.
+update_wlan_gtk(W = #wlan{privacy = true, gtk_index = KeyIndex})
+  when not is_integer(KeyIndex) ->
+    init_wlan_privacy(W);
+update_wlan_gtk(W = #wlan{privacy = true, gtk_index = KeyIndex}) ->
+     W#wlan{gtk_index = (KeyIndex + 1) rem 2, gtk = crypto:strong_rand_bytes(16)};
+update_wlan_gtk(Wlan) ->
+    Wlan.
 
 set_wlan_keys(#wlan{privacy = true,
-		   group_tsc = TSC, gtk = GTK},
+		   group_tsc = TSC, gtk_index = KeyIndex, gtk = GTK},
 	      #ieee_802_11_add_wlan{capability = Capability} = IE) ->
     IE#ieee_802_11_add_wlan{capability = ['privacy' | Capability],
-			    key_index = 1, key = GTK, group_tsc = <<TSC:64>>};
-set_wlan_keys(#wlan{privacy = true, gtk = GTK},
+			    key_index = KeyIndex + 1, key = GTK, group_tsc = <<TSC:64>>};
+set_wlan_keys(#wlan{privacy = true, gtk_index = KeyIndex, gtk = GTK},
 	      #ieee_802_11_update_wlan{capability = Capability} = IE) ->
     IE#ieee_802_11_update_wlan{capability = ['privacy' | Capability],
-			       key_index = 1, key = GTK};
+			       key_index = KeyIndex + 1, key = GTK};
 set_wlan_keys(_Wlan, IE) ->
     IE.
 
@@ -2000,16 +2025,6 @@ update_wlan_state(WlanIdent, Fun, State = #state{wlans = Wlans})
 	end,
     State#state{wlans =
 		    lists:keystore(WlanIdent, #wlan.wlan_identifier, Wlans, Fun(Wlan))}.
-
-%% update_wlan({RadioId, WlanId}, Fun, #state{config = Config = #wtp{radios = Radios}} = State)
-%%   when is_function(Fun, 1) ->
-%%     Radio0 = lists:keyfind(RadioId, #wtp_radio.radio_id, Radios),
-%%     Wlan = lists:keyfind(WlanId, #wtp_wlan.wlan_id, Radio0#wtp_radio.wlans),
-
-%%     Radio = Radio0#wtp_radio{wlans =
-%% 				 lists:keystore(WlanId, #wtp_wlan.wlan_id, Radio0#wtp_radio.wlans, Fun(Wlan))},
-%%     State#state{config = Config#wtp{radios =
-%% 				  lists:keystore(RadioId, #wtp_radio.radio_id, Radios, Radio)}}.
 
 internal_new_station(#wlan{}, StationMAC,
 		     State = #state{config = #wtp{max_stations = MaxStations},
@@ -2130,7 +2145,7 @@ station_session_key(_, _, _, _, IEs) ->
 
 internal_del_station(#wlan{wlan_identifier = {RadioId, _WlanId}}, MAC, State) ->
     Ret = capwap_dp:detach_station(MAC),
-    lager:debug("detach_station(~p, ~p): ~p", [MAC, Ret]),
+    lager:debug("detach_station(~p): ~p", [MAC, Ret]),
 
     WBID = 1,
     Flags = [{frame,'802.3'}],
@@ -2205,6 +2220,113 @@ start_change_state_pending_timer(#state{change_state_pending_timeout = Timeout}
 cancel_change_state_pending_timer(#state{protocol_timer = TRef} = State) ->
     gen_fsm:cancel_timer(TRef),
     State#state{protocol_timer = undefined}.
+
+start_group_rekey_timer(#wlan{wlan_identifier = WlanIdent,
+			      wpa_config = #wpa_config{group_rekey = Timeout}} = Wlan)
+  when is_integer(Timeout) andalso Timeout > 0 ->
+    TRef = gen_fsm:send_event_after(Timeout * 1000, {group_rekey, WlanIdent}),
+    Wlan#wlan{group_rekey_timer = TRef};
+start_group_rekey_timer(Wlan) ->
+    Wlan.
+
+stop_group_rekey_timer(#wlan{group_rekey_timer = TRef} = Wlan)
+  when is_reference(TRef) ->
+    gen_fsm:cancel_timer(TRef),
+    Wlan#wlan{group_rekey_timer = undefined};
+stop_group_rekey_timer(Wlan) ->
+    Wlan.
+
+start_gtk_rekey(WlanIdent = {RadioId, WlanId},
+		Wlan0 = #wlan{bss = BSS, group_rekey_state = idle},
+		State0) ->
+    Wlan1 = stop_group_rekey_timer(Wlan0),
+    Wlan2 = update_wlan_gtk(Wlan1),
+
+    Stations = capwap_station_reg:list_stations(self(), BSS),
+    lager:debug("GTK ReKey Stations: ~p", [Stations]),
+
+    WBID = 1,
+    Flags = [{frame,'802.3'}],
+    Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
+
+    UpdateWlan0 = #ieee_802_11_update_wlan{
+		    radio_id   = RadioId,
+		    wlan_id    = WlanId,
+		    capability = [ess, short_slot_time]
+		},
+
+    if length(Stations) == 0 ->
+	    Wlan = Wlan2#wlan{group_rekey_state = finalizing},
+
+	    UpdateWlan = UpdateWlan0#ieee_802_11_update_wlan{key_status = completed_rekeying},
+	    NotifyFun = finish_gtk_rekey_result(WlanIdent, _, _, _);
+
+       true ->
+	    Wlan = Wlan2#wlan{group_rekey_state = init},
+
+	    UpdateWlan = UpdateWlan0#ieee_802_11_update_wlan{key_status = begin_rekeying},
+	    NotifyFun = start_gtk_rekey_result(WlanIdent, Stations, _, _, _)
+    end,
+
+    State1 = update_wlan_state(WlanIdent, fun(_W) -> Wlan end, State0),
+    ReqElements = [set_wlan_keys(Wlan, UpdateWlan)],
+    send_request(Header, ieee_802_11_wlan_configuration_request, ReqElements, NotifyFun, State1);
+
+start_gtk_rekey({RadioId, WlanId}, Wlan, State) ->
+    lager:warning("failed to start GTK rekey for ~w:~w (~p)", [RadioId, WlanId, lager:pr(Wlan, ?MODULE)]),
+    State.
+
+%% Note: failures will be handled the FSM event function
+start_gtk_rekey_result(WlanIdent, Stations, Code, _Arg, State)
+  when Code == 0 ->
+    update_wlan_state(WlanIdent,
+		      fun(W = #wlan{gtk = GTK, gtk_index = GTKindex}) ->
+			      {ok, _Pid} = capwap_ac_gtk_rekey:start_link({self(), WlanIdent},
+									  {GTKindex, GTK}, Stations),
+			      W#wlan{group_rekey_state = running}
+		      end, State);
+
+start_gtk_rekey_result(WlanIdent, _Stations, _Code, _Arg, State) ->
+    update_wlan_state(WlanIdent, fun(W) -> W#wlan{group_rekey_state = failed} end, State).
+
+
+
+
+finish_gtk_rekey(WlanIdent = {RadioId, WlanId},
+		 Wlan0 = #wlan{group_rekey_state = running},
+		 State0) ->
+    WBID = 1,
+    Flags = [{frame,'802.3'}],
+    Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
+
+    UpdateWlan0 = #ieee_802_11_update_wlan{
+		    radio_id   = RadioId,
+		    wlan_id    = WlanId,
+		    capability = [ess, short_slot_time]
+		},
+
+    Wlan = Wlan0#wlan{group_rekey_state = finalizing},
+
+    UpdateWlan = UpdateWlan0#ieee_802_11_update_wlan{key_status = completed_rekeying},
+    NotifyFun = finish_gtk_rekey_result(WlanIdent, _, _, _),
+
+    State1 = update_wlan_state(WlanIdent, fun(_W) -> Wlan end, State0),
+    ReqElements = [set_wlan_keys(Wlan, UpdateWlan)],
+    send_request(Header, ieee_802_11_wlan_configuration_request, ReqElements, NotifyFun, State1);
+
+finish_gtk_rekey({RadioId, WlanId}, Wlan, State) ->
+    lager:warning("failed to start GTK rekey for ~w:~w (~p)", [RadioId, WlanId, lager:pr(Wlan, ?MODULE)]),
+    State.
+
+%% Note: failures will be handled the FSM event function
+finish_gtk_rekey_result(WlanIdent, Code, _Arg, State) ->
+    ReKeyState = if Code == 0 -> idle;
+		    true      -> failed
+		 end,
+    update_wlan_state(WlanIdent, fun(W0) ->
+					 W = W0#wlan{group_rekey_state = ReKeyState},
+					 start_group_rekey_timer(W)
+				 end, State).
 
 wtp_stats_to_accouting({RcvdPkts, SendPkts, RcvdBytes, SendBytes,
 			RcvdFragments, SendFragments,

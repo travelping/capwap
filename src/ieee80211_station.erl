@@ -21,7 +21,7 @@
 
 %% API
 -export([start_link/3, handle_ieee80211_frame/2, handle_ieee802_3_frame/3,
-         take_over/3, detach/1, delete/1]).
+         take_over/3, detach/1, delete/1, start_gtk_rekey/3]).
 %% Helpers
 -export([format_mac/1]).
 
@@ -81,6 +81,7 @@
 
 	  rekey_running,
 	  rekey_pending,
+	  rekey_control,
 
 	  rekey_tref
          }).
@@ -128,6 +129,9 @@ detach(ClientMAC) ->
 
 delete(Pid) when is_pid(Pid) ->
     gen_fsm:sync_send_event(Pid, delete).
+
+start_gtk_rekey(Station, Controller, GTK) ->
+    gen_fsm:send_event(Station, {start_gtk_rekey, Controller, GTK}).
 
 %%%===================================================================
 %%% gen_fsm callbacks
@@ -353,8 +357,12 @@ connected(Event = {'Deauthentication', _DA, _SA, BSS, 0, 0, _Frame},
     aaa_disassociation(State),
     {next_state, initial_state(MacMode), State, ?SHUTDOWN_TIMEOUT};
 
-connected({'EAPOL', _DA, _SA, BSS, AuthData}, State0 = #state{radio_mac = BSS}) ->
+connected({'EAPOL', _DA, _SA, BSS, AuthData}, State0 = #state{radio_mac = BSS, rekey_running = ptk}) ->
     State = rsna_4way_handshake(eapol:decode(AuthData), State0),
+    {next_state, connected, State, ?IDLE_TIMEOUT};
+
+connected({'EAPOL', _DA, _SA, BSS, AuthData}, State0 = #state{radio_mac = BSS, rekey_running = gtk}) ->
+    State = rsna_2way_handshake(eapol:decode(AuthData), State0),
     {next_state, connected, State, ?IDLE_TIMEOUT};
 
 connected({rekey, Type}, State0) ->
@@ -374,7 +382,21 @@ connected(Event = {eapol_retransmit, _Flags, _KeyData},
     lager:warning("in CONNECTED got EAPOL retransmit final TIMEOUT: ~p", [Event]),
     wtp_del_station(State),
     aaa_disassociation(State),
-    {reply, ok, initial_state(MacMode), State, ?SHUTDOWN_TIMEOUT};
+    {next_state, initial_state(MacMode), State, ?SHUTDOWN_TIMEOUT};
+
+connected({start_gtk_rekey, RekeyCtl, {GTKindexNew, _}},
+	  #state{gtk_index = GTKindex} = State)
+  when GTKindexNew == GTKindex ->
+    capwap_ac_gtk_rekey:gtk_rekey_done(RekeyCtl, self()),
+    {next_state, connected, State, ?IDLE_TIMEOUT};
+
+connected(Event = {start_gtk_rekey, RekeyCtl, {GTKindex, GTKNew}},
+		   #state{gtk_index = GTKindexOld} = State0)
+  when GTKindexOld /= GTKindex ->
+    lager:debug("in CONNECTED got GTK rekey: ~p", [Event]),
+    State = rekey_start(gtk, State0#state{gtk_index = GTKindex, gtk = GTKNew,
+					  rekey_control = RekeyCtl}),
+    {next_state, connected, State, ?IDLE_TIMEOUT};
 
 connected(Event, State) ->
     lager:warning("in CONNECTED got unexpexted: ~p", [Event]),
@@ -677,7 +699,7 @@ wtp_add_station(#state{ac = AC, radio_mac = BSS, mac = MAC, capabilities = Caps,
 	    capwap_ac:add_station(AC, BSS, MAC, Caps, {true, false, CipherState}),
 	    {ok, PMK} = eapol:phrase2psk(Secret, SSID),
 	    lager:debug("PMK: ~s", [pbkdf2:to_hex(PMK)]),
-	    rsna_4way_handshake({init, PMK}, State#state{rekey_running = initial});
+	    rsna_4way_handshake({init, PMK}, State#state{rekey_running = ptk});
        true ->
 	    capwap_ac:add_station(AC, BSS, MAC, Caps, {false, false, undefined}),
 	    State
@@ -898,6 +920,7 @@ rsna_4way_handshake(rekey, State = #state{eapol_state = installed,
 rsna_4way_handshake({key, Flags, CipherSuite, ReplayCounter, SNonce, KeyData, MICData},
 		    State0 = #state{radio_mac = BSS, mac = StationMAC,
 				    wpa_config = #wpa_config{rsn = RSN},
+				    gtk_index = GTKindex,
 				    gtk = GTK,
 				    eapol_state = init,
 				    cipher_state =
@@ -922,19 +945,11 @@ rsna_4way_handshake({key, Flags, CipherSuite, ReplayCounter, SNonce, KeyData, MI
 	ok ->
 	    lager:debug("rsna_4way_handshake 2 of 4: ok"),
 	    RSNIE = capwap_ac:rsn_ie(RSN),
-	    KeyId = 1,
 	    Tx = 0,
 	    GTKIE = <<16#dd, (byte_size(GTK) + 6):8,
 		      16#00, 16#0f, 16#ac, 1,		%% GTK KDF
-			0:5, Tx:1, KeyId:2, 0, GTK/binary>>,
-	    TxKeyData = case <<RSNIE/binary, GTKIE/binary>> of
-			    KD when byte_size(KD) < 15 ->
-				pad_to(16, <<KD/binary, 16#dd>>);
-			    KD when byte_size(KD) rem 8 /= 0 ->
-				pad_to(8, <<KD/binary, 16#dd>>);
-			    KD ->
-				KD
-			end,
+			0:5, Tx:1, (GTKindex + 1):2, 0, GTK/binary>>,
+	    TxKeyData = pad_key_data(<<RSNIE/binary, GTKIE/binary>>),
 	    EncTxKeyData = eapol:aes_key_wrap(KEK, TxKeyData),
 	    lager:debug("TxKeyData: ~p", [pbkdf2:to_hex(TxKeyData)]),
 	    lager:debug("EncTxKeyData: ~p", [pbkdf2:to_hex(EncTxKeyData)]),
@@ -972,12 +987,65 @@ rsna_4way_handshake({key, _Flags, _CipherSuite, ReplayCounter, _SNonce, _KeyData
     end;
 
 rsna_4way_handshake(Frame, State) ->
-    lager:warning("got unexpexted EAPOL data: ~p", [Frame]),
+    lager:warning("got unexpexted EAPOL data in 4way Handshake: ~p", [Frame]),
     State.
+
+rsna_2way_handshake(rekey, State = #state{eapol_state = installed,
+					  cipher_state = #ccmp{kek = KEK},
+					  gtk_index = GTKindex,
+					  gtk = GTK}) ->
+    %% EAPOL-Key(1,1,1,0,G,0,Key RSC,0, MIC,GTK[N],IGTK[M])
+
+    Tx = 0,
+    GTKIE = <<16#dd, (byte_size(GTK) + 6):8,
+	      16#00, 16#0f, 16#ac, 1,		%% GTK KDF
+	      0:5, Tx:1, (GTKindex + 1):2, 0, GTK/binary>>,
+    TxKeyData = pad_key_data(GTKIE),
+    EncTxKeyData = eapol:aes_key_wrap(KEK, TxKeyData),
+    lager:debug("TxKeyData: ~p", [pbkdf2:to_hex(TxKeyData)]),
+    lager:debug("EncTxKeyData: ~p", [pbkdf2:to_hex(EncTxKeyData)]),
+
+    send_eapol([group, ack, mic, secure, enc], EncTxKeyData,
+	       State#state{eapol_state = install,
+			   eapol_retransmit = 0});
+
+rsna_2way_handshake({key, _Flags, _CipherSuite, ReplayCounter, _SNonce, _KeyData, MICData},
+		    State0 = #state{eapol_state = install,
+				    rekey_control = RekeyCtl,
+				    cipher_state =
+					#ccmp{
+					   replay_counter = ReplayCounter} = CipherState}) ->
+    %% EAPOL-Key(1,1,0,0,G,0,0,0,MIC,0)
+    State = stop_eapol_timer(State0),
+    capwap_ac_gtk_rekey:gtk_rekey_done(RekeyCtl, self()),
+
+    case eapol:validate_mic(CipherState, MICData) of
+	ok ->
+	    lager:debug("rsna_2way_handshake 2 of 2: ok"),
+	    rekey_done(gtk, State#state{eapol_state = installed});
+
+	Other ->
+	    lager:debug("rsna_2way_handshake 2 of 2: ~p", [Other]),
+	    wtp_del_station(State),
+	    aaa_disassociation(State),
+	    State#state{eapol_state = undefined, cipher_state = undefined}
+    end;
+
+rsna_2way_handshake(Frame, State) ->
+    lager:warning("got unexpexted EAPOL data in 2way Handshake: ~p", [Frame]),
+    State.
+
+pad_key_data(KD) when byte_size(KD) < 15 ->
+    pad_to(16, <<KD/binary, 16#dd>>);
+pad_key_data(KD) when byte_size(KD) rem 8 /= 0 ->
+    pad_to(8, <<KD/binary, 16#dd>>);
+pad_key_data(KD) ->
+    KD.
 
 rekey_timer_start(ptk, #state{wpa_config = #wpa_config{peer_rekey = Interval},
 			      rekey_tref = undefined} = State)
   when is_integer(Interval) andalso Interval > 0 ->
+    lager:debug("Starting rekey for PTK in ~w", [Interval]),
     TRef = gen_fsm:send_event_after(Interval * 1000, {rekey, ptk}),
     State#state{rekey_tref = TRef};
 rekey_timer_start(_Type, State) ->
@@ -1004,8 +1072,8 @@ rekey_done(_Type, State0) ->
 
 rekey_init(ptk, State) ->
     rsna_4way_handshake(rekey, State#state{rekey_running = ptk});
-rekey_init(gmk, State) ->
-    State#state{rekey_running = gmk};
+rekey_init(gtk, State) ->
+    rsna_2way_handshake(rekey, State#state{rekey_running = gtk});
 rekey_init(Type, State) ->
     rekey_done(Type, State).
 
