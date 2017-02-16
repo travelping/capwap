@@ -3,6 +3,13 @@ capwap
 
 Erlang CAPWAP AC implementation.
 
+Version 1.8.0 - 16 Feb 2017
+---------------------------
+
+* handle multiple radios and wlan's per WTP
+* fix a race between add/del station when a stations roams between WTP's
+* WPA2-PSK support
+
 Version 1.7.1 - 31 Jan 2017
 ---------------------------
 
