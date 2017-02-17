@@ -91,4 +91,7 @@
 
 -define(IEEE_802_1_OUI, <<16#00, 16#0F, 16#AC>>).
 -define(IEEE_802_1_CIPHER_SUITE_AES, <<?IEEE_802_1_OUI/binary, 4>>).
+
+%% 802.11 Key Management
+-define(IEEE_802_1_AKM_WPA, <<?IEEE_802_1_OUI/binary, 1>>).
 -define(IEEE_802_1_AKM_PSK, <<?IEEE_802_1_OUI/binary, 2>>).

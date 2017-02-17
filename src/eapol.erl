@@ -15,14 +15,14 @@
 
 -module(eapol).
 
--export([encode_802_11/3, key/3, decode/1, validate_mic/2]).
+-export([encode_802_11/3, packet/1, key/3, request/3, decode/1, validate_mic/2]).
 -export([phrase2psk/2, prf/4, pmk2ptk/6, aes_key_wrap/2]).
 
 -include("eapol.hrl").
 
 -define(is_mac(MAC),(is_binary(MAC) andalso byte_size(MAC) == 6)).
 
--define('802_1X_VERSION', 1).
+-define('802_1X_VERSION', 2).
 
 -define(EAPOL_PACKET_TYPE_PACKET, 0).
 -define(EAPOL_PACKET_TYPE_START, 1).
@@ -32,6 +32,13 @@
 
 -define(EAPOL_KEY_RC4, 1).
 -define(EAPOL_KEY_802_11, 2).
+
+-define(EAPOL_CODE_REQUEST, 1).
+-define(EAPOL_CODE_RESPONSE, 2).
+
+eap_type(identity) -> 1;
+eap_type(1) -> identity;
+eap_type(X) when is_integer(X) -> X.
 
 key_len(#ccmp{}) -> 16.
 
@@ -100,6 +107,15 @@ calc_hmac(#ccmp{cipher_suite = CipherSuite, kck = KCK}, EAPOL, Data, MICLen) ->
     C4 = crypto:hmac_update(C3, Data),
     crypto:hmac_final_n(C4, MICLen).
 
+packet(Data) ->
+    DataLen = size(Data),
+    <<?'802_1X_VERSION', ?EAPOL_PACKET_TYPE_PACKET, DataLen:16, Data/binary>>.
+
+request(Id, Type, Data) ->
+    EAPOLData = <<(eap_type(Type)):8, Data/binary>>,
+    DataLen = size(EAPOLData) + 4,
+    <<?EAPOL_CODE_REQUEST, Id:8, DataLen:16, EAPOLData/binary>>.
+
 %%
 %% EAPOL Key frames are defined in IEEE 802.11-2012, Sect. 11.6.2
 %%
@@ -139,7 +155,23 @@ validate_mic(Crypto, {Head, MIC, Tail}) ->
 	    {error, invalid}
     end.
 
-decode(Data = <<?'802_1X_VERSION', ?EAPOL_PACKET_TYPE_KEY, DataLen:16, EAPOLData:DataLen/binary>>) ->
+decode(Packet = <<Version:8, ?EAPOL_PACKET_TYPE_PACKET, DataLen:16, EAPOLData:DataLen/binary>>)
+  when Version == 1; Version == 2 ->
+    try EAPOLData of
+	<<?EAPOL_CODE_RESPONSE, Id:8, DataLen:16, 1:8, Identity/bytes>>
+	  when size(Identity) == DataLen - 5 ->
+	    {response, Id, EAPOLData, {identity, Identity}};
+	<<?EAPOL_CODE_RESPONSE, Id:8, DataLen:16, Data/bytes>>
+	  when size(Data) == DataLen - 4 ->
+	    {response, Id, EAPOLData, Data};
+	_ ->
+	    {unknown, Packet}
+    catch
+	_:_ -> {invalid, Packet}
+    end;
+
+decode(Data = <<Version:8, ?EAPOL_PACKET_TYPE_KEY, DataLen:16, EAPOLData:DataLen/binary>>)
+  when Version == 1; Version == 2 ->
     try
 	<<?EAPOL_KEY_802_11, KeyInfo:16, _/binary>> = EAPOLData,
 	CipherSuite = cipher_suite(KeyInfo band 16#07),

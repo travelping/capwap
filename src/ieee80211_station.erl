@@ -365,19 +365,24 @@ connected({'EAPOL', _DA, _SA, BSS, AuthData}, State0 = #state{radio_mac = BSS, r
     State = rsna_2way_handshake(eapol:decode(AuthData), State0),
     {next_state, connected, State, ?IDLE_TIMEOUT};
 
+connected({'EAPOL', _DA, _SA, BSS, EAPData}, State0 = #state{radio_mac = BSS,
+							     eapol_state = {request, _}}) ->
+    State = eap_handshake(eapol:decode(EAPData), State0),
+    {next_state, connected, State, ?IDLE_TIMEOUT};
+
 connected({rekey, Type}, State0) ->
     lager:warning("in CONNECTED got REKEY: ~p", [Type]),
     State = rekey_start(Type, State0),
     {next_state, connected, State, ?IDLE_TIMEOUT};
 
-connected(Event = {eapol_retransmit, Flags, KeyData},
+connected(Event = {eapol_retransmit, {key, Flags, KeyData}},
 	  State0 = #state{eapol_retransmit = TxCnt})
   when TxCnt < 4 ->
     lager:warning("in CONNECTED got EAPOL retransmit: ~p", [Event]),
-    State = send_eapol(Flags, KeyData, State0),
+    State = send_eapol_key(Flags, KeyData, State0),
     {next_state, connected, State, ?IDLE_TIMEOUT};
 
-connected(Event = {eapol_retransmit, _Flags, _KeyData},
+connected(Event = {eapol_retransmit, _Msg},
 	  State = #state{mac_mode = MacMode}) ->
     lager:warning("in CONNECTED got EAPOL retransmit final TIMEOUT: ~p", [Event]),
     wtp_del_station(State),
@@ -668,6 +673,21 @@ update_sta_cap_from_mgmt_frame_ie(IE = {?WLAN_EID_VENDOR_SPECIFIC,
 				    <<16#00, 16#50, 16#F2, 2, 0, 1, _/binary>>}, Cap) ->
     lager:debug("Mgmt IE WMM: ~p", [IE]),
     Cap#sta_cap{wmm = true};
+
+update_sta_cap_from_mgmt_frame_ie(IE = {?WLAN_EID_RSN, RSN}, Cap) ->
+    lager:debug("Mgmt IE RSN: ~p", [IE]),
+    <<RSNVersion:16/little, GroupCipherSuite:4/bytes,
+      1:16/little, CipherSuite:4/bytes,
+      1:16/little, AKM:4/bytes,
+      RSNCaps:16/little>> = RSN,
+    Cap#sta_cap{
+      rsn_version = RSNVersion,
+      group_cipher_suite = GroupCipherSuite,
+      cipher_suite = CipherSuite,
+      akm_suite = AKM,
+      rsn_capabilities = RSNCaps
+     };
+
 update_sta_cap_from_mgmt_frame_ie(IE = {_Id, _Value}, Cap) ->
     lager:debug("Mgmt IE: ~p", [IE]),
     Cap.
@@ -693,13 +713,11 @@ add_tunnel_info({Address, _Port}, SessionData) ->
      |SessionData].
 
 wtp_add_station(#state{ac = AC, radio_mac = BSS, mac = MAC, capabilities = Caps,
-		       wpa_config = #wpa_config{ssid = SSID, privacy = Privacy, secret = Secret},
+		       wpa_config = #wpa_config{privacy = Privacy},
 		       cipher_state = CipherState} = State) ->
     if Privacy ->
 	    capwap_ac:add_station(AC, BSS, MAC, Caps, {true, false, CipherState}),
-	    {ok, PMK} = eapol:phrase2psk(Secret, SSID),
-	    lager:debug("PMK: ~s", [pbkdf2:to_hex(PMK)]),
-	    rsna_4way_handshake({init, PMK}, State#state{rekey_running = ptk});
+	    init_eapol(State);
        true ->
 	    capwap_ac:add_station(AC, BSS, MAC, Caps, {false, false, undefined}),
 	    State
@@ -878,24 +896,119 @@ stop_eapol_timer(#state{eapol_timer = TRef} = State)
 stop_eapol_timer(State) ->
     State.
 
-start_eapol_timer(Flags, KeyData, State0) ->
+start_eapol_timer(Msg, State0) ->
     Interval = 500,
     State = stop_eapol_timer(State0),
     lager:debug("Starting EAPOL Timer ~w ms", [Interval]),
-    TRef = gen_fsm:send_event_after(Interval, {eapol_retransmit, Flags, KeyData}),
+    TRef = gen_fsm:send_event_after(Interval, {eapol_retransmit, Msg}),
     State#state{eapol_timer = TRef}.
 
-send_eapol(Flags, KeyData,
-	   State = #state{mac = StationMAC, radio_mac = BSS, eapol_retransmit = TxCnt,
-			  cipher_state =
-			      #ccmp{replay_counter = ReplayCounter} = CipherState0
-			 }) ->
+send_eapol(EAPData, State = #state{mac = StationMAC, radio_mac = BSS}) ->
+    Frame = eapol:encode_802_11(StationMAC, BSS, EAPData),
+    wtp_send_80211(Frame, State).
+
+%%
+%% don't start the retransmission timer for EAP Packets,
+%% see RFC 3748, Sect. 4.3:
+%%
+%%   When run over a reliable lower layer (e.g., EAP over ISAKMP/TCP, as
+%%   within [PIC]), the authenticator retransmission timer SHOULD be set
+%%   to an infinite value, so that retransmissions do not occur at the EAP
+%%   layer.  The peer may still maintain a timeout value so as to avoid
+%%   waiting indefinitely for a Request.
+%%
+send_eapol_packet(EAPData, State) ->
+    send_eapol(eapol:packet(EAPData), State),
+    State.
+
+send_eapol_key(Flags, KeyData,
+	       State = #state{eapol_retransmit = TxCnt,
+			      cipher_state =
+				  #ccmp{replay_counter = ReplayCounter} = CipherState0
+			     }) ->
     CipherState = CipherState0#ccmp{replay_counter = ReplayCounter + 1},
     KeyFrame = eapol:key(Flags, KeyData, CipherState),
-    Frame = eapol:encode_802_11(StationMAC, BSS, KeyFrame),
-    wtp_send_80211(Frame, State),
-    start_eapol_timer(Flags, KeyData, State#state{eapol_retransmit = TxCnt + 1,
-						  cipher_state = CipherState}).
+    send_eapol(KeyFrame, State),
+    start_eapol_timer({key, Flags, KeyData},
+		      State#state{eapol_retransmit = TxCnt + 1,
+				  cipher_state = CipherState}).
+
+init_eapol(#state{capabilities = #sta_cap{akm_suite = AKM},
+		  wpa_config = #wpa_config{ssid = SSID, secret = Secret}} = State)
+  when AKM == ?IEEE_802_1_AKM_PSK ->
+    {ok, PMK} = eapol:phrase2psk(Secret, SSID),
+    lager:debug("PMK: ~s", [pbkdf2:to_hex(PMK)]),
+    rsna_4way_handshake({init, PMK}, State#state{rekey_running = ptk});
+
+init_eapol(#state{capabilities = #sta_cap{akm_suite = AKM},
+		  wpa_config = #wpa_config{ssid = SSID}} = State)
+  when AKM == ?IEEE_802_1_AKM_WPA ->
+    ReqData = <<0, "networkid=", SSID/binary, ",nasid=SCG4,portid=1">>,
+    Id = 1,
+    EAPData = eapol:request(Id, identity, ReqData),
+    send_eapol_packet(EAPData, State#state{eapol_state = {request, Id}}).
+
+eap_handshake(Data = {response, Id, EAPData, Response},
+	      #state{eapol_state = {request, Id}} = State) ->
+    lager:debug("EAP Handshake: ~p", [Data]),
+    Next =
+	case Response of
+	    {identity, Identity} ->
+		%% Start ctld Authentication....
+		Opts = [{'Username', Identity},
+			{'Authentication-Method', 'EAP'},
+			{'EAP-Data', EAPData}],
+		{authenticate, Opts};
+
+	    _ ->
+		Opts = [{'EAP-Data', EAPData}],
+		{authenticate, Opts}
+
+	    %% _ ->
+	    %% 	{disassociation, []}
+	end,
+    eap_handshake_next(Next, State);
+
+eap_handshake(Data, State) ->
+    lager:warning("unexpected EAP Handshake: ~p", [Data]),
+    wtp_del_station(State),
+    aaa_disassociation(State),
+    State#state{eapol_state = undefined}.
+
+eap_handshake_next({authenticate, Opts}, #state{aaa_session = Session} = State) ->
+    case ergw_aaa_session:authenticate(Session, to_session(Opts)) of
+	success ->
+	    lager:info("AuthResult: success"),
+	    State;
+
+	challenge ->
+	    lager:info("AuthResult: challenge"),
+	    {ok, EAPData} = ergw_aaa_session:get(Session, 'EAP-Data'),
+	    <<_Code:8, Id:8, _/binary>> = EAPData,
+	    lager:info("EAP Challenge: ~p", [EAPData]),
+
+	    send_eapol_packet(EAPData, State#state{eapol_state = {request, Id}});
+
+	Other ->
+	    lager:info("AuthResult: ~p", [Other]),
+
+	    case ergw_aaa_session:get(Session, 'EAP-Data') of
+		{ok, EAPData} ->
+		    <<_Code:8, Id:8, _/binary>> = EAPData,
+		    send_eapol_packet(EAPData, State);
+		_ ->
+		    ok
+	    end,
+	    wtp_del_station(State),
+	    aaa_disassociation(State),
+	    State#state{eapol_state = undefined}
+    end;
+
+eap_handshake_next({disassociation, _}, State) ->
+    wtp_del_station(State),
+    aaa_disassociation(State),
+    State#state{eapol_state = undefined}.
+
 
 rsna_4way_handshake({init, PMK}, State) ->
     ANonce = crypto:strong_rand_bytes(32),
@@ -903,19 +1016,19 @@ rsna_4way_handshake({init, PMK}, State) ->
 			replay_counter = 0,
 			pre_master_key = PMK,
 			nonce = ANonce},
-    send_eapol([pairwise, ack], <<>>,
-	       State#state{eapol_state = init,
-			   eapol_retransmit = 0,
-			   cipher_state = CipherState});
+    send_eapol_key([pairwise, ack], <<>>,
+		   State#state{eapol_state = init,
+			       eapol_retransmit = 0,
+			       cipher_state = CipherState});
 
 rsna_4way_handshake(rekey, State = #state{eapol_state = installed,
 					  cipher_state = CipherState0}) ->
     ANonce = crypto:strong_rand_bytes(32),
     CipherState = CipherState0#ccmp{nonce = ANonce},
-    send_eapol([pairwise, ack], <<>>,
-	       State#state{eapol_state = init,
-			   eapol_retransmit = 0,
-			   cipher_state = CipherState});
+    send_eapol_key([pairwise, ack], <<>>,
+		   State#state{eapol_state = init,
+			       eapol_retransmit = 0,
+			       cipher_state = CipherState});
 
 rsna_4way_handshake({key, Flags, CipherSuite, ReplayCounter, SNonce, KeyData, MICData},
 		    State0 = #state{radio_mac = BSS, mac = StationMAC,
@@ -954,10 +1067,10 @@ rsna_4way_handshake({key, Flags, CipherSuite, ReplayCounter, SNonce, KeyData, MI
 	    lager:debug("TxKeyData: ~p", [pbkdf2:to_hex(TxKeyData)]),
 	    lager:debug("EncTxKeyData: ~p", [pbkdf2:to_hex(EncTxKeyData)]),
 
-	    send_eapol([pairwise, install, ack, mic, secure, enc], EncTxKeyData,
-		       State#state{eapol_state = install,
-				   eapol_retransmit = 0,
-				   cipher_state = CipherState});
+	    send_eapol_key([pairwise, install, ack, mic, secure, enc], EncTxKeyData,
+			   State#state{eapol_state = install,
+				       eapol_retransmit = 0,
+				       cipher_state = CipherState});
 
 	Other ->
 	    lager:debug("rsna_4way_handshake 2 of 4: ~p", [Other]),
@@ -1005,9 +1118,9 @@ rsna_2way_handshake(rekey, State = #state{eapol_state = installed,
     lager:debug("TxKeyData: ~p", [pbkdf2:to_hex(TxKeyData)]),
     lager:debug("EncTxKeyData: ~p", [pbkdf2:to_hex(EncTxKeyData)]),
 
-    send_eapol([group, ack, mic, secure, enc], EncTxKeyData,
-	       State#state{eapol_state = install,
-			   eapol_retransmit = 0});
+    send_eapol_key([group, ack, mic, secure, enc], EncTxKeyData,
+		   State#state{eapol_state = install,
+			       eapol_retransmit = 0});
 
 rsna_2way_handshake({key, _Flags, _CipherSuite, ReplayCounter, _SNonce, _KeyData, MICData},
 		    State0 = #state{eapol_state = install,

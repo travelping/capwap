@@ -104,7 +104,7 @@ wtp_init_wlan_radio_defaults(Id, _Radio, WLAN) ->
 	     capabilities = 16#000C,
 	     group_cipher_suite = ?IEEE_802_1_CIPHER_SUITE_AES,
 	     cipher_suites = [?IEEE_802_1_CIPHER_SUITE_AES],
-	     akm_suites = [?IEEE_802_1_AKM_PSK]
+	     akm_suites = []
 	    },
     WLAN#wtp_wlan_config{wlan_id = Id,
 			 suppress_ssid = bool_to_int(get(ac, suppress_ssid, false)),
@@ -115,10 +115,26 @@ wtp_init_wlan_radio_defaults(Id, _Radio, WLAN) ->
 			 strict_group_rekey = false
 		 }.
 
+wtp_init_wlan_keymgmt(WLAN = #wtp_wlan_config{
+				rsn = #wtp_wlan_rsn{akm_suites = AKM}
+				= RSN}, Value) ->
+    if Value ==	psk ->
+	    WLAN#wtp_wlan_config{rsn = RSN#wtp_wlan_rsn{akm_suites = [?IEEE_802_1_AKM_PSK | AKM]}};
+       Value == wpa ->
+	    WLAN#wtp_wlan_config{rsn = RSN#wtp_wlan_rsn{akm_suites = [?IEEE_802_1_AKM_WPA | AKM]}};
+       is_list(Value) ->
+	    lists:foldl(fun(V, W) -> wtp_init_wlan_keymgmt(W, V) end, WLAN, Value);
+       true ->
+	    lager:error("WLAN Key Management: ~w is invalid", [Value]),
+	    WLAN
+    end.
+
 wtp_init_wlan(_CN, _Radio, {ssid, _}, WLAN) ->
     WLAN;
 wtp_init_wlan(_CN, _Radio, {suppress_ssid, Value}, WLAN) ->
     WLAN#wtp_wlan_config{suppress_ssid = bool_to_int(Value)};
+wtp_init_wlan(_CN, _Radio, {keymgmt, Value}, WLAN) ->
+    wtp_init_wlan_keymgmt(WLAN, Value);
 wtp_init_wlan(_CN, _Radio, {privacy, Value}, WLAN)
   when is_boolean(Value) ->
     WLAN#wtp_wlan_config{privacy = Value};

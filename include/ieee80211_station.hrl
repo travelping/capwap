@@ -22,7 +22,13 @@
 	  ampdu_density = 0  :: integer(),
 	  ampdu_factor = 0   :: integer(),
 	  rx_mask = <<0,0,0,0,0,0,0,0,0,0>> :: binary(),
-	  rx_highest = 0     :: integer()
+	  rx_highest = 0     :: integer(),
+
+	  rsn_version        :: undefined | 1 | 2,
+	  group_cipher_suite :: undefined | binary(),
+	  cipher_suite       :: undefined | binary(),
+	  akm_suite          :: undefined | binary(),
+	  rsn_capabilities   :: undefined | integer()
 	 }).
 
 -record(station_config, {
