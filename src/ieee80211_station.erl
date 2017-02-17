@@ -979,7 +979,12 @@ eap_handshake_next({authenticate, Opts}, #state{aaa_session = Session} = State) 
     case ergw_aaa_session:authenticate(Session, to_session(Opts)) of
 	success ->
 	    lager:info("AuthResult: success"),
-	    State;
+	    SessionOpts = ergw_aaa_session:get(Session),
+	    MSK = << (ergw_aaa_session:attr_get('MS-MPPE-Recv-Key', SessionOpts, <<>>))/binary,
+		     (ergw_aaa_session:attr_get('MS-MPPE-Send-Key', SessionOpts, <<>>))/binary>>,
+	    %% IEEE 802.11-2012, Sect. 11.6.1.3
+	    <<PMK:32/bytes, _/binary>> = MSK,
+	    rsna_4way_handshake({init, PMK}, State);
 
 	challenge ->
 	    lager:info("AuthResult: challenge"),
@@ -994,7 +999,6 @@ eap_handshake_next({authenticate, Opts}, #state{aaa_session = Session} = State) 
 
 	    case ergw_aaa_session:get(Session, 'EAP-Data') of
 		{ok, EAPData} ->
-		    <<_Code:8, Id:8, _/binary>> = EAPData,
 		    send_eapol_packet(EAPData, State);
 		_ ->
 		    ok
@@ -1019,6 +1023,7 @@ rsna_4way_handshake({init, PMK}, State) ->
     send_eapol_key([pairwise, ack], <<>>,
 		   State#state{eapol_state = init,
 			       eapol_retransmit = 0,
+			       rekey_running = ptk,
 			       cipher_state = CipherState});
 
 rsna_4way_handshake(rekey, State = #state{eapol_state = installed,
