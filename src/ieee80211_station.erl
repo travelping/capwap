@@ -1055,6 +1055,26 @@ rsna_4way_handshake({key, Flags, CipherSuite, ReplayCounter, SNonce, KeyData, MI
     lager:debug("ANonce: ~p", [pbkdf2:to_hex(ANonce)]),
     lager:debug("SNonce: ~p", [pbkdf2:to_hex(SNonce)]),
     State = stop_eapol_timer(State0),
+
+    %%
+    %% 802.11-2012, Sect. 11.6.6.3: 4-Way Handshake Message 2
+    %%
+    %%    Processing for PTK generation is as follows:
+    %%
+    %%    ...
+    %%
+    %%    On reception of Message 2, the Authenticator checks that the key
+    %%    replay counter corresponds to the outstanding Message 1. If not,
+    %%    it silently discards the message. Otherwise, the Authenticator:
+    %%
+    %%       a) Derives PTK.
+    %%       b) Verifies the Message 2 MIC.
+    %%       c)
+    %%            1) If the calculated MIC does not match the MIC that the
+    %%               Supplicant included in the EAPOL-Key frame, the
+    %%               Authenticator silently discards Message 2.
+    %%
+
     {KCK, KEK, TK} = eapol:pmk2ptk(PMK, BSS, StationMAC, ANonce, SNonce, 48),
     CipherState = CipherState0#ccmp{rsn = RSN,
 				    kck = KCK, kek = KEK, tk = TK},
@@ -1079,9 +1099,8 @@ rsna_4way_handshake({key, Flags, CipherSuite, ReplayCounter, SNonce, KeyData, MI
 
 	Other ->
 	    lager:debug("rsna_4way_handshake 2 of 4: ~p", [Other]),
-	    wtp_del_station(State),
-	    aaa_disassociation(State),
-	    State#state{eapol_state = undefined, cipher_state = undefined}
+	    %% silently discard, see above
+	    State
     end;
 
 rsna_4way_handshake({key, _Flags, _CipherSuite, ReplayCounter, _SNonce, _KeyData, MICData},
@@ -1091,6 +1110,23 @@ rsna_4way_handshake({key, _Flags, _CipherSuite, ReplayCounter, _SNonce, _KeyData
 					#ccmp{
 					   replay_counter = ReplayCounter} = CipherState}) ->
     State = stop_eapol_timer(State0),
+
+    %%
+    %% 802.11-2012, Sect. 11.6.6.5: 4-Way Handshake Message 4
+    %%
+    %%    Processing for PTK generation is as follows:
+    %%
+    %%    ...
+    %%
+    %%    On reception of Message 4, the Authenticator verifies that the Key
+    %%    Replay Counter field value is one that it used on this 4-Way Handshake;
+    %%    if it is not, it silently discards the message. Otherwise:
+    %%
+    %%       a) The Authenticator checks the MIC. If the calculated MIC does not
+    %%          match the MIC that the Supplicant included in the EAPOL-Key frame,
+    %%          the Authenticator silently discards Message 4.
+    %%
+
     case eapol:validate_mic(CipherState, MICData) of
 	ok ->
 	    lager:debug("rsna_4way_handshake 4 of 4: ok"),
@@ -1099,13 +1135,13 @@ rsna_4way_handshake({key, _Flags, _CipherSuite, ReplayCounter, _SNonce, _KeyData
 
 	Other ->
 	    lager:debug("rsna_4way_handshake 4 of 4: ~p", [Other]),
-	    wtp_del_station(State),
-	    aaa_disassociation(State),
-	    State#state{eapol_state = undefined, cipher_state = undefined}
+	    %% silently discard, see above
+	    State
     end;
 
 rsna_4way_handshake(Frame, State) ->
     lager:warning("got unexpexted EAPOL data in 4way Handshake: ~p", [Frame]),
+    %% silently discard, both Message 2 and Message are handles this way
     State.
 
 rsna_2way_handshake(rekey, State = #state{eapol_state = installed,
