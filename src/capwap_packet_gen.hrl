@@ -1109,6 +1109,11 @@ decode_vendor_element({18681,17}, <<M_mac_address:6/bytes,
                                       htcsupp = M_htcsupp,
                                       mcs_set = M_mcs_set};
 
+decode_vendor_element({18681,18}, <<M_radio_id:8/integer,
+                                    M_cipher_suites/binary>>) ->
+    #tp_ieee_802_11_encryption_capabilities{radio_id = M_radio_id,
+                                            cipher_suites = [X || <<X:32>> <= M_cipher_suites]};
+
 decode_vendor_element(Tag, Value) ->
         {Tag, Value}.
 
@@ -1996,6 +2001,12 @@ encode_element(#ieee_802_11n_station_information{
                                         M_ampdubufsize:16,
                                         M_htcsupp:8,
                                         M_mcs_set:10/bytes>>);
+
+encode_element(#tp_ieee_802_11_encryption_capabilities{
+                    radio_id = M_radio_id,
+                    cipher_suites = M_cipher_suites}) ->
+    encode_vendor_element({18681,18}, <<M_radio_id:8,
+                                        (<< <<X:32>> || X <- M_cipher_suites>>)/binary>>);
 
 encode_element({Tag = {Vendor, Type}, Value}) when is_integer(Vendor), is_integer(Type), is_binary(Value) ->
     encode_vendor_element(Tag, Value);

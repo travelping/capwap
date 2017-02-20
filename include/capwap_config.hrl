@@ -52,6 +52,8 @@
 	  antenna_selection,
 	  report_interval,
 
+	  supported_cipher_suites,
+
 	  %% IEEE 802.11n settings
 	  a_msdu,
 	  a_mpdu,

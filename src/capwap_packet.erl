@@ -16,7 +16,7 @@
 -module(capwap_packet).
 
 -export([decode/2, decode/3, encode/2, encode/4, msg_description/1]).
--export([decode_rate/1, encode_rate/2]).
+-export([decode_rate/1, encode_rate/2, decode_cipher_suite/1, encode_cipher_suite/1]).
 -compile(export_all).
 
 -include("capwap_packet.hrl").
@@ -208,6 +208,19 @@ decode_vendor_subelements(<<Vendor:32/integer, Type:16/integer, Len:16/integer,
 
 decode_rate(Rate) -> (Rate band 16#7F) * 5.
 
+decode_cipher_suite(16#000FAC01) -> 'WEP40';
+decode_cipher_suite(16#000FAC02) -> 'TKIP';
+decode_cipher_suite(16#000FAC04) -> 'CCMP';
+decode_cipher_suite(16#000FAC05) -> 'WEP104';
+decode_cipher_suite(16#000FAC06) -> 'AES-CMAC';
+decode_cipher_suite(16#000FAC08) -> 'GCMP';
+decode_cipher_suite(16#000FAC09) -> 'GCMP-256';
+decode_cipher_suite(16#000FAC0A) -> 'CCMP-256';
+decode_cipher_suite(16#000FAC0B) -> 'BIP-GMAC-128';
+decode_cipher_suite(16#000FAC0C) -> 'BIP-GMAC-256';
+decode_cipher_suite(16#000FAC0D) -> 'BIP-CMAC-256';
+decode_cipher_suite(X) -> X.
+
 %%%-------------------------------------------------------------------
 %%% encoder
 %%%-------------------------------------------------------------------
@@ -235,6 +248,19 @@ basic_rate(_, _) ->
 
 encode_rate(Mode, Rate) ->
     (Rate div 5) bor basic_rate(Mode, Rate).
+
+encode_cipher_suite('WEP40')        -> 16#000FAC01;
+encode_cipher_suite('TKIP')         -> 16#000FAC02;
+encode_cipher_suite('CCMP')         -> 16#000FAC04;
+encode_cipher_suite('WEP104')       -> 16#000FAC05;
+encode_cipher_suite('AES-CMAC')     -> 16#000FAC06;
+encode_cipher_suite('GCMP')         -> 16#000FAC08;
+encode_cipher_suite('GCMP-256')     -> 16#000FAC09;
+encode_cipher_suite('CCMP-256')     -> 16#000FAC0A;
+encode_cipher_suite('BIP-GMAC-128') -> 16#000FAC0B;
+encode_cipher_suite('BIP-GMAC-256') -> 16#000FAC0C;
+encode_cipher_suite('BIP-CMAC-256') -> 16#000FAC0D;
+encode_cipher_suite(X) when is_integer(X) -> X.
 
 encode_flag(Key, List) ->
     encode_bool(proplists:get_bool(Key, List)).

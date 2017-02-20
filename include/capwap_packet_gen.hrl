@@ -591,3 +591,7 @@
         mcs_set = <<0,0,0,0,0,0,0,0,0,0>>
 }).
 
+-record(tp_ieee_802_11_encryption_capabilities, {
+        radio_id = 0,
+        cipher_suites = []
+}).

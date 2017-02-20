@@ -1229,6 +1229,11 @@ update_radio_80211n_cfg(#ieee_802_11n_wlan_radio_configuration{
       rx_antenna        = RxAntenna
      }.
 
+update_radio_cipher_suites(CipherSuites, Radio) ->
+    lager:info("CipherSuites: ~p", [[capwap_packet:decode_cipher_suite(Suite) || Suite <- CipherSuites]]),
+    Radio#wtp_radio{
+      supported_cipher_suites = [capwap_packet:decode_cipher_suite(Suite) || Suite <- CipherSuites]}.
+
 update_radio_cfg(Fun, RadioId, #wtp{radios = Radios} = Config) ->
     case lists:keyfind(RadioId, #wtp_radio.radio_id, Radios) of
 	#wtp_radio{} = Radio ->
@@ -1244,6 +1249,11 @@ update_radio_info(#ieee_802_11_supported_rates{
 update_radio_info(#ieee_802_11n_wlan_radio_configuration{
 			   radio_id = RadioId} = Cfg, Config) ->
     update_radio_cfg(update_radio_80211n_cfg(Cfg, _), RadioId, Config);
+update_radio_info(#tp_ieee_802_11_encryption_capabilities{
+		     radio_id = RadioId,
+		     cipher_suites = CipherSuites}, Config) ->
+    update_radio_cfg(update_radio_cipher_suites(CipherSuites, _), RadioId, Config);
+
 update_radio_info(_, Config) ->
     Config.
 

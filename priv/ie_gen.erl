@@ -51,6 +51,7 @@ wlan_attr(Id, Name) ->
        {"Suppress SSID", 8, integer},
        {"SSID", 0, binary}]}.
 
+
 ies() ->
     [{1, "AC Descriptor",
       [{"Stations", 16, integer},
@@ -459,7 +460,10 @@ vendor_ies() ->
        {"HiSuppDataRate", 16, integer},
        {"AMPDUBufSize", 16, integer},
        {"HtcSupp", 8, integer},
-       {"MCS Set", 10, bytes}]}
+       {"MCS Set", 10, bytes}]},
+     {{18681, 18}, "TP IEEE 802.11 Encryption Capabilities",
+      [{"Radio ID", 8, integer},
+       {"Cipher Suites", '_', {array, 32}}]}
     ].
 
 msgs() ->
