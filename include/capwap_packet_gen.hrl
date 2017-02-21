@@ -595,3 +595,12 @@
         radio_id = 0,
         cipher_suites = []
 }).
+
+-record(tp_ieee_802_11_update_key, {
+        radio_id = 0,
+        wlan_id = 0,
+        key_index = 0,
+        key_status = per_station,
+        cipher_suite = 0,
+        key = <<>>
+}).

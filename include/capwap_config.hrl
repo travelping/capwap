@@ -72,6 +72,7 @@
 	  version,
 	  capabilities,
 	  group_cipher_suite,
+	  group_mgmt_cipher_suite,
 	  cipher_suites,
 	  akm_suites
 	 }).
@@ -81,6 +82,7 @@
 	  ssid,
 	  suppress_ssid,
 	  privacy,
+	  management_frame_protection,
 	  secret,
 	  rsn,
 	  peer_rekey,

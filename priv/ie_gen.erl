@@ -463,7 +463,14 @@ vendor_ies() ->
        {"MCS Set", 10, bytes}]},
      {{18681, 18}, "TP IEEE 802.11 Encryption Capabilities",
       [{"Radio ID", 8, integer},
-       {"Cipher Suites", '_', {array, 32}}]}
+       {"Cipher Suites", '_', {array, 32}}]},
+     {{18681, 19}, "TP IEEE 802.11 Update Key",
+      [{"Radio ID", 8, integer},
+       {"WLAN ID", 8, integer},
+       {"Key Index", 8, integer},
+       {"Key Status", 8, {enum, [per_station, reserved, begin_rekeying, completed_rekeying]}},
+       {"Cipher Suite", 32, integer},
+       {"Key", 0, binary}]}
     ].
 
 msgs() ->

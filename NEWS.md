@@ -3,6 +3,11 @@ capwap
 
 Erlang CAPWAP AC implementation.
 
+Version 1.8.1 - xx Feb 2017
+---------------------------
+
+* implement Management Frame Protection
+
 Version 1.8.0 - 16 Feb 2017
 ---------------------------
 

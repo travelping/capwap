@@ -155,6 +155,10 @@ validate_mic(Crypto, {Head, MIC, Tail}) ->
 	    {error, invalid}
     end.
 
+decode(<<Version:8, ?EAPOL_PACKET_TYPE_START, DataLen:16, Data:DataLen/binary>>)
+  when Version == 1; Version == 2 ->
+    {start, Data};
+
 decode(Packet = <<Version:8, ?EAPOL_PACKET_TYPE_PACKET, DataLen:16, EAPOLData:DataLen/binary>>)
   when Version == 1; Version == 2 ->
     try EAPOLData of

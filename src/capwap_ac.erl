@@ -30,7 +30,7 @@
          stop_radio/2]).
 
 %% API for Station process
--export([add_station/5, del_station/3, send_80211/3, rsn_ie/1]).
+-export([add_station/5, del_station/3, send_80211/3, rsn_ie/2]).
 
 %% gen_fsm callbacks
 -export([init/1, listen/2, idle/2, join/2, configure/2, data_check/2, run/2,
@@ -61,6 +61,8 @@
 -define(ChangeStatePendingTimeout, 25 * 1000).
 -define(RetransmitInterval, 3 * 1000).
 -define(MaxRetransmit, 5).
+
+%% -define(MgmtSuites, ['AES-CMAC', 'BIP-GMAC-128', 'BIP-GMAC-256', 'BIP-CMAC-256']).
 
 -record(state, {
 	  id,
@@ -1846,26 +1848,33 @@ wlan_cfg_ht_opmode(#wtp_radio{radio_id = RadioId,
 rsn_ie(#wtp_wlan_rsn{version = RSNVersion,
 		     capabilities = RSNCaps,
 		     group_cipher_suite = GroupCipherSuite,
+		     group_mgmt_cipher_suite = GroupMgmtCipherSuite,
 		     cipher_suites = CipherSuites,
-		     akm_suites = AKMs}) ->
+		     akm_suites = AKMs}, PMF) ->
     CipherSuitesBin = << <<X/binary>> || X <- CipherSuites >>,
     AKMsBin = << <<X/binary>> || X <- AKMs >>,
 
-    IE = <<RSNVersion:16/little, GroupCipherSuite/binary,
-	   (length(CipherSuites)):16/little, CipherSuitesBin/binary,
-	   (length(AKMs)):16/little, AKMsBin/binary,
-	   RSNCaps:16/little>>,
+    IE0 = <<RSNVersion:16/little, GroupCipherSuite/binary,
+	    (length(CipherSuites)):16/little, CipherSuitesBin/binary,
+	    (length(AKMs)):16/little, AKMsBin/binary,
+	    RSNCaps:16/little>>,
+    IE = if PMF == true andalso is_atom(GroupMgmtCipherSuite) ->
+		 <<IE0/binary, 0, 0, (capwap_packet:encode_cipher_suite(GroupMgmtCipherSuite)):32>>;
+	    true ->
+		 IE0
+	 end,
     <<?WLAN_EID_RSN, (byte_size(IE)):8, IE/bytes>>.
 
 wlan_cfg_rsn(#wtp_radio{radio_id = RadioId},
 	     #wlan{wlan_identifier = {_, WlanId},
 		   wpa_config = #wpa_config{
 				   privacy = true,
+				   management_frame_protection = MFP,
 				   rsn = RSN}}, IEs) ->
     [#ieee_802_11_information_element{radio_id = RadioId,
 				      wlan_id = WlanId,
 				      flags = ['beacon','probe_response'],
-				      ie =rsn_ie(RSN)}
+				      ie = rsn_ie(RSN, MFP == required)}
      | IEs];
 wlan_cfg_rsn(_, _, IEs) ->
     IEs.
@@ -1900,7 +1909,7 @@ internal_add_wlan(#wtp_radio{radio_id = RadioId} = Radio,
     Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
     State0 = State#state{mac_mode = MacMode, tunnel_mode = TunnelMode},
 
-    WlanState = init_wlan_state(RadioId, WlanId, WlanConfig),
+    WlanState = init_wlan_state(Radio, WlanId, WlanConfig),
     State1 = update_wlan_state({RadioId, WlanId}, fun(_W) -> WlanState end, State0),
 
     AddWlan = #ieee_802_11_add_wlan{
@@ -1919,7 +1928,8 @@ internal_add_wlan(#wtp_radio{radio_id = RadioId} = Radio,
     ReqElements3 = wlan_cfg_ht_opmode(Radio, WlanState, ReqElements2),
     ReqElements4 = wlan_cfg_rsn(Radio, WlanState, ReqElements3),
     ReqElements5 = wlan_cfg_ht_cap(Radio, WlanState, ReqElements4),
-    ReqElements = wlan_cfg_tp_hold_time(Radio, WlanState, Config, ReqElements5),
+    ReqElements6 = wlan_cfg_tp_hold_time(Radio, WlanState, Config, ReqElements5),
+    ReqElements = add_wlan_keys(WlanState, ReqElements6),
     ResponseNotifyFun = internal_add_wlan_result({RadioId, WlanId}, NotifyFun, _, _, _),
     send_request(Header, ieee_802_11_wlan_configuration_request, ReqElements, ResponseNotifyFun, State1);
 
@@ -1964,33 +1974,61 @@ remove_wlan(WlanIdent, State = #state{wlans = Wlans}) ->
     LessWlans = lists:keydelete(WlanIdent, #wlan.wlan_identifier, Wlans),
     State#state{wlans = LessWlans}.
 
-init_wlan_state(RadioId, WlanId,
+radio_rsn_cipher_capabilities(_Radio, #wtp_wlan_config{
+					 rsn = RSN,
+					 management_frame_protection = false},
+			      Wlan = #wlan{wpa_config = WpaConfig}) ->
+    Wlan#wlan{wpa_config = WpaConfig#wpa_config{rsn = RSN}};
+radio_rsn_cipher_capabilities(#wtp_radio{supported_cipher_suites = Suites},
+			      #wtp_wlan_config{
+				 rsn = #wtp_wlan_rsn{group_mgmt_cipher_suite = MgmtSuite,
+						     capabilities = Caps0} = RSN0,
+				 management_frame_protection = Value},
+			      Wlan = #wlan{wpa_config = WpaConfig0}) ->
+    lager:debug("Suites: ~p", [Suites]),
+    Caps1 = Caps0 band bnot 16#00C0,
+    case lists:member(MgmtSuite, Suites) of
+	true ->
+	    WpaConfig = WpaConfig0#wpa_config{management_frame_protection = Value,
+					     group_mgmt_cipher_suite = MgmtSuite},
+	    Caps = case Value of
+		       optional -> Caps1 bor 16#0080;
+		       required -> Caps1 bor 16#00C0;
+		       _        -> Caps1
+		   end,
+	    RSN = RSN0#wtp_wlan_rsn{capabilities = Caps},
+	    Wlan#wlan{wpa_config = WpaConfig#wpa_config{rsn = RSN}};
+
+	false ->
+	    Wlan#wlan{wpa_config = WpaConfig0#wpa_config{rsn = RSN0}}
+    end.
+
+init_wlan_state(#wtp_radio{radio_id = RadioId} = Radio, WlanId,
 		#wtp_wlan_config{
 		   ssid = SSID,
 		   suppress_ssid = SuppressSSID,
 		   privacy = Privacy,
 		   secret = Secret,
-		   rsn = RSN,
 		   peer_rekey = PeerRekey,
 		   group_rekey = GroupRekey,
-		   strict_group_rekey = StrictGroupRekey}) ->
-    W = #wlan{wlan_identifier = {RadioId, WlanId},
-	      ssid = SSID,
-	      suppress_ssid = SuppressSSID,
-	      privacy = Privacy,
-	      wpa_config = #wpa_config{
-			      ssid = SSID,
-			      privacy = Privacy,
-			      secret = Secret,
-			      rsn = RSN,
-			      peer_rekey = PeerRekey,
-			      group_rekey = GroupRekey,
-			      strict_group_rekey = StrictGroupRekey
-			     },
+		   strict_group_rekey = StrictGroupRekey} = WlanConfig) ->
+    W0 = #wlan{wlan_identifier = {RadioId, WlanId},
+	       ssid = SSID,
+	       suppress_ssid = SuppressSSID,
+	       privacy = Privacy,
+	       wpa_config = #wpa_config{
+			       ssid = SSID,
+			       privacy = Privacy,
+			       secret = Secret,
+			       peer_rekey = PeerRekey,
+			       group_rekey = GroupRekey,
+			       strict_group_rekey = StrictGroupRekey
+			      },
 
-	      state = initializing,
-	      group_rekey_state = idle
-	     },
+	       state = initializing,
+	       group_rekey_state = idle
+	      },
+    W = radio_rsn_cipher_capabilities(Radio, WlanConfig, W0),
     init_wlan_privacy(W).
 
 init_wlan_privacy(W = #wlan{privacy = true}) ->
@@ -2017,6 +2055,16 @@ set_wlan_keys(#wlan{privacy = true, gtk_index = KeyIndex, gtk = GTK},
 			       key_index = KeyIndex + 1, key = GTK};
 set_wlan_keys(_Wlan, IE) ->
     IE.
+
+add_wlan_keys(#wlan{wlan_identifier = {RadioId, WlanId},
+		    privacy = true, gtk_index = KeyIndex, gtk = GTK}, IEs) ->
+    [#tp_ieee_802_11_update_key{radio_id = RadioId, wlan_id = WlanId,
+				key_index = KeyIndex + 4,
+				key_status = completed_rekeying,
+				cipher_suite = capwap_packet:encode_cipher_suite('AES-CMAC'),
+				key = GTK} | IEs];
+add_wlan_keys(_, IEs) ->
+    IEs.
 
 get_wlan(WlanIdent, #state{wlans = Wlans}) ->
     lists:keyfind(WlanIdent, #wlan.wlan_identifier, Wlans).
@@ -2137,7 +2185,9 @@ station_session_key(_RadioId, _WlanId, MAC, {AKMonly, false, _CipherState}, IEs)
 	    pairwise_rsc = <<0:48>>,
 	    key = <<0:128>>},
     [IE | IEs];
-station_session_key(RadioId, WlanId, MAC, {AKMonly, true, #ccmp{rsn = RSN, tk = TK}}, IEs) ->
+station_session_key(RadioId, WlanId, MAC, {AKMonly, true, #ccmp{rsn = RSN,
+								group_mgmt_cipher_suite = MgmtCS,
+								tk = TK}}, IEs) ->
     [#ieee_802_11_station_session_key{
 	mac_address = MAC,
 	flags = ['akm_only' || AKMonly],
@@ -2148,7 +2198,7 @@ station_session_key(RadioId, WlanId, MAC, {AKMonly, true, #ccmp{rsn = RSN, tk = 
 	radio_id = RadioId,
 	wlan_id = WlanId,
 	flags = [],
-	ie =rsn_ie(RSN)}
+	ie = rsn_ie(RSN, MgmtCS /= undefined)}
      | IEs];
 station_session_key(_, _, _, _, IEs) ->
     IEs.
@@ -2269,17 +2319,19 @@ start_gtk_rekey(WlanIdent = {RadioId, WlanId},
 	    Wlan = Wlan2#wlan{group_rekey_state = finalizing},
 
 	    UpdateWlan = UpdateWlan0#ieee_802_11_update_wlan{key_status = completed_rekeying},
+	    ReqElements = [set_wlan_keys(Wlan, UpdateWlan)],
 	    NotifyFun = finish_gtk_rekey_result(WlanIdent, _, _, _);
 
        true ->
 	    Wlan = Wlan2#wlan{group_rekey_state = init},
 
 	    UpdateWlan = UpdateWlan0#ieee_802_11_update_wlan{key_status = begin_rekeying},
+	    ReqElements0 = [set_wlan_keys(Wlan, UpdateWlan)],
+	    ReqElements = add_wlan_keys(Wlan, ReqElements0),
 	    NotifyFun = start_gtk_rekey_result(WlanIdent, Stations, _, _, _)
     end,
 
     State1 = update_wlan_state(WlanIdent, fun(_W) -> Wlan end, State0),
-    ReqElements = [set_wlan_keys(Wlan, UpdateWlan)],
     send_request(Header, ieee_802_11_wlan_configuration_request, ReqElements, NotifyFun, State1);
 
 start_gtk_rekey({RadioId, WlanId}, Wlan, State) ->

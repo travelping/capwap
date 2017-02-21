@@ -22,6 +22,7 @@
 
 -record(ccmp, {rsn,
 	       cipher_suite,
+	       group_mgmt_cipher_suite,
 	       replay_counter,
 	       pre_master_key,
 	       nonce,

@@ -103,6 +103,15 @@ message_type({13277, 1}) -> ieee_802_11_wlan_configuration_request;
 message_type({13277, 2}) -> ieee_802_11_wlan_configuration_response;
 message_type({Vendor, Type}) when is_integer(Vendor), is_integer(Type) -> {Vendor, Type}.
 
+enum_key_status(per_station) -> 0;
+enum_key_status(static_wep) -> 1;
+enum_key_status(begin_rekeying) -> 2;
+enum_key_status(completed_rekeying) -> 3;
+enum_key_status(0) -> per_station;
+enum_key_status(1) -> static_wep;
+enum_key_status(2) -> begin_rekeying;
+enum_key_status(3) -> completed_rekeying.
+
 enum_power_save_mode(static) -> 0;
 enum_power_save_mode(dynamic) -> 1;
 enum_power_save_mode(reserved) -> 2;
@@ -137,15 +146,6 @@ enum_qos(0) -> best_effort;
 enum_qos(1) -> video;
 enum_qos(2) -> voice;
 enum_qos(3) -> backgroung.
-
-enum_key_status(per_station) -> 0;
-enum_key_status(static_wep) -> 1;
-enum_key_status(begin_rekeying) -> 2;
-enum_key_status(completed_rekeying) -> 3;
-enum_key_status(0) -> per_station;
-enum_key_status(1) -> static_wep;
-enum_key_status(2) -> begin_rekeying;
-enum_key_status(3) -> completed_rekeying.
 
 enum_status(reserved) -> 0;
 enum_status(in_progress) -> 1;
@@ -1114,6 +1114,19 @@ decode_vendor_element({18681,18}, <<M_radio_id:8/integer,
     #tp_ieee_802_11_encryption_capabilities{radio_id = M_radio_id,
                                             cipher_suites = [X || <<X:32>> <= M_cipher_suites]};
 
+decode_vendor_element({18681,19}, <<M_radio_id:8/integer,
+                                    M_wlan_id:8/integer,
+                                    M_key_index:8/integer,
+                                    M_key_status:8/integer,
+                                    M_cipher_suite:32/integer,
+                                    M_key/binary>>) ->
+    #tp_ieee_802_11_update_key{radio_id = M_radio_id,
+                               wlan_id = M_wlan_id,
+                               key_index = M_key_index,
+                               key_status = enum_key_status(M_key_status),
+                               cipher_suite = M_cipher_suite,
+                               key = M_key};
+
 decode_vendor_element(Tag, Value) ->
         {Tag, Value}.
 
@@ -2007,6 +2020,20 @@ encode_element(#tp_ieee_802_11_encryption_capabilities{
                     cipher_suites = M_cipher_suites}) ->
     encode_vendor_element({18681,18}, <<M_radio_id:8,
                                         (<< <<X:32>> || X <- M_cipher_suites>>)/binary>>);
+
+encode_element(#tp_ieee_802_11_update_key{
+                    radio_id = M_radio_id,
+                    wlan_id = M_wlan_id,
+                    key_index = M_key_index,
+                    key_status = M_key_status,
+                    cipher_suite = M_cipher_suite,
+                    key = M_key}) ->
+    encode_vendor_element({18681,19}, <<M_radio_id:8,
+                                        M_wlan_id:8,
+                                        M_key_index:8,
+                                        (enum_key_status(M_key_status)):8/integer,
+                                        M_cipher_suite:32,
+                                        M_key/binary>>);
 
 encode_element({Tag = {Vendor, Type}, Value}) when is_integer(Vendor), is_integer(Type), is_binary(Value) ->
     encode_vendor_element(Tag, Value);

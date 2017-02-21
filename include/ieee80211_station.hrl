@@ -24,11 +24,14 @@
 	  rx_mask = <<0,0,0,0,0,0,0,0,0,0>> :: binary(),
 	  rx_highest = 0     :: integer(),
 
+	  last_rsne          :: undefined | binary(),
 	  rsn_version        :: undefined | 1 | 2,
 	  group_cipher_suite :: undefined | binary(),
 	  cipher_suite       :: undefined | binary(),
 	  akm_suite          :: undefined | binary(),
-	  rsn_capabilities   :: undefined | integer()
+	  rsn_capabilities   :: undefined | integer(),
+	  pmk_ids            :: undefined | [binary()],
+	  group_mgmt_cipher_suite :: undefined | binary()
 	 }).
 
 -record(station_config, {

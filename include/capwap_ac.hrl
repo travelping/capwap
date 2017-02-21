@@ -20,7 +20,10 @@
 	  secret,
 	  peer_rekey,
 	  group_rekey,
-	  strict_group_rekey
+	  strict_group_rekey,
+
+	  management_frame_protection,
+	  group_mgmt_cipher_suite
 	 }).
 
 -record(wlan, {

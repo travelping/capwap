@@ -90,6 +90,9 @@
 
 -define(DEBUG_OPTS,[{install, {fun lager_sys_debug:lager_gen_fsm_trace/3, ?MODULE}}]).
 
+-define(GTK_KDE,  1).
+-define(IGTK_KDE, 9).
+
 %%%===================================================================
 %%% API
 %%%===================================================================
@@ -639,6 +642,11 @@ update_sta_from_mgmt_frame_ies(IEs, #state{capabilities = Cap0} = State) ->
     ListIE = [ {Id, Data} || <<Id:8, Len:8, Data:Len/bytes>> <= IEs ],
     Cap = lists:foldl(fun update_sta_cap_from_mgmt_frame_ie/2, Cap0, ListIE),
     lager:debug("New Station Caps: ~p", [lager:pr(Cap, ?MODULE)]),
+    lager:info("STA: ~p, Ciphers: Group ~p, PairWise: ~p, AKM: ~p, Caps: ~w, Mgmt: ~p",
+	       [flower_tools:format_mac(State#state.mac),
+		Cap#sta_cap.group_cipher_suite, Cap#sta_cap.cipher_suite,
+		Cap#sta_cap.akm_suite, Cap#sta_cap.rsn_capabilities,
+		Cap#sta_cap.group_mgmt_cipher_suite]),
     State#state{capabilities = Cap}.
 
 smps2atom(0) -> static;
@@ -674,23 +682,32 @@ update_sta_cap_from_mgmt_frame_ie(IE = {?WLAN_EID_VENDOR_SPECIFIC,
     lager:debug("Mgmt IE WMM: ~p", [IE]),
     Cap#sta_cap{wmm = true};
 
-update_sta_cap_from_mgmt_frame_ie(IE = {?WLAN_EID_RSN, RSN}, Cap) ->
+update_sta_cap_from_mgmt_frame_ie(IE = {?WLAN_EID_RSN, <<RSNVersion:16/little, RSNData/binary>> = RSNE}, Cap) ->
     lager:debug("Mgmt IE RSN: ~p", [IE]),
-    <<RSNVersion:16/little, GroupCipherSuite:4/bytes,
-      1:16/little, CipherSuite:4/bytes,
-      1:16/little, AKM:4/bytes,
-      RSNCaps:16/little>> = RSN,
-    Cap#sta_cap{
-      rsn_version = RSNVersion,
-      group_cipher_suite = GroupCipherSuite,
-      cipher_suite = CipherSuite,
-      akm_suite = AKM,
-      rsn_capabilities = RSNCaps
-     };
+    decode_rsne(group_cipher_suite, RSNData, Cap#sta_cap{last_rsne = RSNE, rsn_version = RSNVersion});
 
 update_sta_cap_from_mgmt_frame_ie(IE = {_Id, _Value}, Cap) ->
     lager:debug("Mgmt IE: ~p", [IE]),
     Cap.
+
+decode_rsne(_, <<>>, Cap) ->
+    Cap;
+decode_rsne(group_cipher_suite, <<GroupCipherSuite:4/bytes, Next/binary>>, Cap) ->
+    decode_rsne(pairwise_cipher_suite, Next, Cap#sta_cap{group_cipher_suite = GroupCipherSuite});
+decode_rsne(pairwise_cipher_suite, <<1:16/little, PairWiseCipherSuite:4/bytes, Next/binary>>, Cap) ->
+    decode_rsne(auth_key_management, Next, Cap#sta_cap{cipher_suite = PairWiseCipherSuite});
+decode_rsne(auth_key_management, <<1:16/little, AKM:4/bytes, Next/binary>>, Cap) ->
+    decode_rsne(rsn_capabilities, Next, Cap#sta_cap{akm_suite = AKM});
+decode_rsne(rsn_capabilities, <<RSNCaps:16/little, Next/binary>>, Cap) ->
+    decode_rsne(pmkid, Next, Cap#sta_cap{rsn_capabilities = RSNCaps});
+decode_rsne(pmkid, <<0:16/little, Next/binary>>, Cap) ->
+    decode_rsne(group_management_cipher, Next, Cap);
+decode_rsne(pmkid, <<Count:16/little, Data/binary>>, Cap) ->
+    Length = Count * 16,
+    <<PMKIds:Length/bytes, Next/binary>> = Data,
+    decode_rsne(group_management_cipher, Next, Cap#sta_cap{pmk_ids = [ Id || <<Id:16/bytes>> <= PMKIds ]});
+decode_rsne(group_management_cipher, <<GroupMgmtCipherSuite:32>>, Cap) ->
+    Cap#sta_cap{group_mgmt_cipher_suite = capwap_packet:decode_cipher_suite(GroupMgmtCipherSuite)}.
 
 strip_ht_control(0, Frame) ->
     Frame;
@@ -948,6 +965,11 @@ init_eapol(#state{capabilities = #sta_cap{akm_suite = AKM},
     EAPData = eapol:request(Id, identity, ReqData),
     send_eapol_packet(EAPData, State#state{eapol_state = {request, Id}}).
 
+eap_handshake({start, _Data},
+	      #state{eapol_state = {request, _}} = State) ->
+    %% restart the handshake
+    init_eapol(State);
+
 eap_handshake(Data = {response, Id, EAPData, Response},
 	      #state{eapol_state = {request, Id}} = State) ->
     lager:debug("EAP Handshake: ~p", [Data]),
@@ -1013,10 +1035,22 @@ eap_handshake_next({disassociation, _}, State) ->
     aaa_disassociation(State),
     State#state{eapol_state = undefined}.
 
+encode_gtk_ie(Tx, Index, GTK) ->
+    <<16#dd, (byte_size(GTK) + 6):8,
+      16#00, 16#0F, 16#AC, ?GTK_KDE:8,
+      0:5, Tx:1, (Index + 1):2, 0, GTK/binary>>.
 
-rsna_4way_handshake({init, PMK}, State) ->
+encode_igtk_ie(Index, IGTK) ->
+    <<16#dd, (byte_size(IGTK) + 12):8,
+      16#00, 16#0F, 16#AC, ?IGTK_KDE:8,
+      (Index + 4):16/little-integer, 0:48, IGTK/binary>>.
+
+rsna_4way_handshake({init, PMK}, #state{capabilities =
+					    #sta_cap{group_mgmt_cipher_suite = GroupMgmtCipherSuite}}
+		   = State) ->
     ANonce = crypto:strong_rand_bytes(32),
     CipherState = #ccmp{cipher_suite = 'AES-HMAC-SHA1',
+			group_mgmt_cipher_suite = GroupMgmtCipherSuite,
 			replay_counter = 0,
 			pre_master_key = PMK,
 			nonce = ANonce},
@@ -1037,13 +1071,15 @@ rsna_4way_handshake(rekey, State = #state{eapol_state = installed,
 
 rsna_4way_handshake({key, Flags, CipherSuite, ReplayCounter, SNonce, KeyData, MICData},
 		    State0 = #state{radio_mac = BSS, mac = StationMAC,
-				    wpa_config = #wpa_config{rsn = RSN},
+				    capabilities = #sta_cap{last_rsne = LastRSNE},
+				    wpa_config = #wpa_config{management_frame_protection = MFP, rsn = RSN},
 				    gtk_index = GTKindex,
 				    gtk = GTK,
 				    eapol_state = init,
 				    cipher_state =
 					#ccmp{
 					   cipher_suite = CipherSuite,
+					   group_mgmt_cipher_suite = GroupMgmtCipherSuite,
 					   replay_counter = ReplayCounter,
 					   pre_master_key = PMK,
 					   nonce = ANonce} = CipherState0}) ->
@@ -1054,6 +1090,7 @@ rsna_4way_handshake({key, Flags, CipherSuite, ReplayCounter, SNonce, KeyData, MI
     lager:debug("StationMAC: ~p", [pbkdf2:to_hex(StationMAC)]),
     lager:debug("ANonce: ~p", [pbkdf2:to_hex(ANonce)]),
     lager:debug("SNonce: ~p", [pbkdf2:to_hex(SNonce)]),
+    lager:debug("CipherState: ~p", [lager:pr(CipherState0, ?MODULE)]),
     State = stop_eapol_timer(State0),
 
     %%
@@ -1079,15 +1116,19 @@ rsna_4way_handshake({key, Flags, CipherSuite, ReplayCounter, SNonce, KeyData, MI
     CipherState = CipherState0#ccmp{rsn = RSN,
 				    kck = KCK, kek = KEK, tk = TK},
 
-    case eapol:validate_mic(CipherState, MICData) of
-	ok ->
+    case {eapol:validate_mic(CipherState, MICData), KeyData} of
+	{ok, <<?WLAN_EID_RSN, RSNLen:8, LastRSNE:RSNLen/bytes, _/binary>>} ->
 	    lager:debug("rsna_4way_handshake 2 of 4: ok"),
-	    RSNIE = capwap_ac:rsn_ie(RSN),
+	    RSNIE = capwap_ac:rsn_ie(RSN, MFP == required),
 	    Tx = 0,
-	    GTKIE = <<16#dd, (byte_size(GTK) + 6):8,
-		      16#00, 16#0f, 16#ac, 1,		%% GTK KDF
-			0:5, Tx:1, (GTKindex + 1):2, 0, GTK/binary>>,
-	    TxKeyData = pad_key_data(<<RSNIE/binary, GTKIE/binary>>),
+	    GTKIE = encode_gtk_ie(Tx, GTKindex, GTK),
+	    IGTKIE = case GroupMgmtCipherSuite of
+			 'AES-CMAC' ->
+			     encode_igtk_ie(GTKindex, GTK);
+			 _ ->
+			     <<>>
+		     end,
+	    TxKeyData = pad_key_data(<<RSNIE/binary, GTKIE/binary, IGTKIE/binary>>),
 	    EncTxKeyData = eapol:aes_key_wrap(KEK, TxKeyData),
 	    lager:debug("TxKeyData: ~p", [pbkdf2:to_hex(TxKeyData)]),
 	    lager:debug("EncTxKeyData: ~p", [pbkdf2:to_hex(EncTxKeyData)]),
@@ -1096,6 +1137,14 @@ rsna_4way_handshake({key, Flags, CipherSuite, ReplayCounter, SNonce, KeyData, MI
 			   State#state{eapol_state = install,
 				       eapol_retransmit = 0,
 				       cipher_state = CipherState});
+
+	{ok, _} ->
+	    %% MIC is ok, but RSNE does not match
+	    lager:debug("rsna_4way_handshake 2 of 4: MIC ok, RSNE don't match (~p != ~p)",
+		       [pbkdf2:to_hex(KeyData), pbkdf2:to_hex(LastRSNE)]),
+	    wtp_del_station(State),
+	    aaa_disassociation(State),
+	    State#state{eapol_state = undefined, cipher_state = undefined};
 
 	Other ->
 	    lager:debug("rsna_4way_handshake 2 of 4: ~p", [Other]),
@@ -1145,16 +1194,22 @@ rsna_4way_handshake(Frame, State) ->
     State.
 
 rsna_2way_handshake(rekey, State = #state{eapol_state = installed,
-					  cipher_state = #ccmp{kek = KEK},
+					  cipher_state = #ccmp{
+							    group_mgmt_cipher_suite = GroupMgmtCipherSuite,
+							    kek = KEK},
 					  gtk_index = GTKindex,
 					  gtk = GTK}) ->
     %% EAPOL-Key(1,1,1,0,G,0,Key RSC,0, MIC,GTK[N],IGTK[M])
 
     Tx = 0,
-    GTKIE = <<16#dd, (byte_size(GTK) + 6):8,
-	      16#00, 16#0f, 16#ac, 1,		%% GTK KDF
-	      0:5, Tx:1, (GTKindex + 1):2, 0, GTK/binary>>,
-    TxKeyData = pad_key_data(GTKIE),
+    GTKIE = encode_gtk_ie(Tx, GTKindex, GTK),
+    IGTKIE = case GroupMgmtCipherSuite of
+		 'AES-CMAC' ->
+		     encode_igtk_ie(GTKindex, GTK);
+		 _ ->
+		     <<>>
+	     end,
+    TxKeyData = pad_key_data(<<GTKIE/binary, IGTKIE/binary>>),
     EncTxKeyData = eapol:aes_key_wrap(KEK, TxKeyData),
     lager:debug("TxKeyData: ~p", [pbkdf2:to_hex(TxKeyData)]),
     lager:debug("EncTxKeyData: ~p", [pbkdf2:to_hex(EncTxKeyData)]),
