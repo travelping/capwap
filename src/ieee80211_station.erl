@@ -72,7 +72,6 @@
           radio_mac,
 	  wpa_config,
 	  gtk,
-	  gtk_index,
 
 	  eapol_state,
 	  eapol_retransmit,
@@ -392,18 +391,15 @@ connected(Event = {eapol_retransmit, _Msg},
     aaa_disassociation(State),
     {next_state, initial_state(MacMode), State, ?SHUTDOWN_TIMEOUT};
 
-connected({start_gtk_rekey, RekeyCtl, {GTKindexNew, _}},
-	  #state{gtk_index = GTKindex} = State)
-  when GTKindexNew == GTKindex ->
+connected({start_gtk_rekey, RekeyCtl, GTKnew}, #state{gtk = GTK} = State)
+  when GTKnew#ieee80211_key.index == GTK#ieee80211_key.index ->
     capwap_ac_gtk_rekey:gtk_rekey_done(RekeyCtl, self()),
     {next_state, connected, State, ?IDLE_TIMEOUT};
 
-connected(Event = {start_gtk_rekey, RekeyCtl, {GTKindex, GTKNew}},
-		   #state{gtk_index = GTKindexOld} = State0)
-  when GTKindexOld /= GTKindex ->
+connected(Event = {start_gtk_rekey, RekeyCtl, GTKnew}, #state{gtk = GTK} = State0)
+  when GTKnew#ieee80211_key.index /= GTK#ieee80211_key.index ->
     lager:debug("in CONNECTED got GTK rekey: ~p", [Event]),
-    State = rekey_start(gtk, State0#state{gtk_index = GTKindex, gtk = GTKNew,
-					  rekey_control = RekeyCtl}),
+    State = rekey_start(gtk, State0#state{gtk = GTKnew, rekey_control = RekeyCtl}),
     {next_state, connected, State, ?IDLE_TIMEOUT};
 
 connected(Event, State) ->
@@ -473,8 +469,7 @@ update_state_from_cfg(#station_config{data_path = DataPath,
 				      tunnel_mode = TunnelMode,
 				      bss = BSS,
 				      wpa_config = WpaConfig,
-				      gtk = GTK,
-				      gtk_index = GTKindex
+				      gtk = GTK
 				     }, State) ->
     State#state{data_path = DataPath,
 		data_channel_address = WTPDataChannelAddress,
@@ -484,8 +479,7 @@ update_state_from_cfg(#station_config{data_path = DataPath,
 		tunnel_mode = TunnelMode,
 		radio_mac = BSS,
 		wpa_config = WpaConfig,
-		gtk = GTK,
-		gtk_index = GTKindex
+		gtk = GTK
 	       }.
 
 with_station(AC, BSS, StationMAC, Fun) ->
@@ -1035,15 +1029,15 @@ eap_handshake_next({disassociation, _}, State) ->
     aaa_disassociation(State),
     State#state{eapol_state = undefined}.
 
-encode_gtk_ie(Tx, Index, GTK) ->
-    <<16#dd, (byte_size(GTK) + 6):8,
+encode_gtk_ie(Tx, #ieee80211_key{index = Index, key = Key}) ->
+    <<16#dd, (byte_size(Key) + 6):8,
       16#00, 16#0F, 16#AC, ?GTK_KDE:8,
-      0:5, Tx:1, (Index + 1):2, 0, GTK/binary>>.
+      0:5, Tx:1, (Index + 1):2, 0, Key/binary>>.
 
-encode_igtk_ie(Index, IGTK) ->
-    <<16#dd, (byte_size(IGTK) + 12):8,
+encode_igtk_ie(#ieee80211_key{index = Index, key = Key}) ->
+    <<16#dd, (byte_size(Key) + 12):8,
       16#00, 16#0F, 16#AC, ?IGTK_KDE:8,
-      (Index + 4):16/little-integer, 0:48, IGTK/binary>>.
+      (Index + 4):16/little-integer, 0:48, Key/binary>>.
 
 rsna_4way_handshake({init, PMK}, #state{capabilities =
 					    #sta_cap{group_mgmt_cipher_suite = GroupMgmtCipherSuite}}
@@ -1073,7 +1067,6 @@ rsna_4way_handshake({key, Flags, CipherSuite, ReplayCounter, SNonce, KeyData, MI
 		    State0 = #state{radio_mac = BSS, mac = StationMAC,
 				    capabilities = #sta_cap{last_rsne = LastRSNE},
 				    wpa_config = #wpa_config{management_frame_protection = MFP, rsn = RSN},
-				    gtk_index = GTKindex,
 				    gtk = GTK,
 				    eapol_state = init,
 				    cipher_state =
@@ -1121,10 +1114,10 @@ rsna_4way_handshake({key, Flags, CipherSuite, ReplayCounter, SNonce, KeyData, MI
 	    lager:debug("rsna_4way_handshake 2 of 4: ok"),
 	    RSNIE = capwap_ac:rsn_ie(RSN, MFP == required),
 	    Tx = 0,
-	    GTKIE = encode_gtk_ie(Tx, GTKindex, GTK),
+	    GTKIE = encode_gtk_ie(Tx, GTK),
 	    IGTKIE = case GroupMgmtCipherSuite of
 			 'AES-CMAC' ->
-			     encode_igtk_ie(GTKindex, GTK);
+			     encode_igtk_ie(GTK);
 			 _ ->
 			     <<>>
 		     end,
@@ -1197,15 +1190,14 @@ rsna_2way_handshake(rekey, State = #state{eapol_state = installed,
 					  cipher_state = #ccmp{
 							    group_mgmt_cipher_suite = GroupMgmtCipherSuite,
 							    kek = KEK},
-					  gtk_index = GTKindex,
 					  gtk = GTK}) ->
     %% EAPOL-Key(1,1,1,0,G,0,Key RSC,0, MIC,GTK[N],IGTK[M])
 
     Tx = 0,
-    GTKIE = encode_gtk_ie(Tx, GTKindex, GTK),
+    GTKIE = encode_gtk_ie(Tx, GTK),
     IGTKIE = case GroupMgmtCipherSuite of
 		 'AES-CMAC' ->
-		     encode_igtk_ie(GTKindex, GTK);
+		     encode_igtk_ie(GTK);
 		 _ ->
 		     <<>>
 	     end,

@@ -2031,38 +2031,50 @@ init_wlan_state(#wtp_radio{radio_id = RadioId} = Radio, WlanId,
     W = radio_rsn_cipher_capabilities(Radio, WlanConfig, W0),
     init_wlan_privacy(W).
 
-init_wlan_privacy(W = #wlan{privacy = true}) ->
-    W#wlan{group_tsc = 0, gtk_index = 0, gtk = crypto:strong_rand_bytes(16)};
+init_key(Cipher) ->
+    #ieee80211_key{cipher = Cipher,
+		   index = 0,
+		   key = crypto:strong_rand_bytes(eapol:key_len(Cipher))}.
+
+update_key(#ieee80211_key{cipher = Cipher, index = Index}) ->
+    #ieee80211_key{index = Index bxor 1,
+		   key = crypto:strong_rand_bytes(eapol:key_len(Cipher))};
+update_key(undefined) ->
+    undefined.
+
+init_wlan_gtk(Wlan) ->
+    Wlan#wlan{group_tsc = 0, gtk = init_key('CCMP')}.
+
+init_wlan_privacy(Wlan = #wlan{privacy = true}) ->
+    init_wlan_gtk(Wlan);
 init_wlan_privacy(Wlan) ->
     Wlan.
 
-update_wlan_gtk(W = #wlan{privacy = true, gtk_index = KeyIndex})
-  when not is_integer(KeyIndex) ->
-    init_wlan_privacy(W);
-update_wlan_gtk(W = #wlan{privacy = true, gtk_index = KeyIndex}) ->
-     W#wlan{gtk_index = (KeyIndex + 1) rem 2, gtk = crypto:strong_rand_bytes(16)};
-update_wlan_gtk(Wlan) ->
+update_wlan_group_keys(Wlan = #wlan{privacy = true, gtk = GTK}) ->
+    Wlan#wlan{gtk = update_key(GTK)};
+update_wlan_group_keys(Wlan) ->
     Wlan.
 
-set_wlan_keys(#wlan{privacy = true,
-		   group_tsc = TSC, gtk_index = KeyIndex, gtk = GTK},
+set_wlan_keys(#wlan{privacy = true, group_tsc = TSC,
+		    gtk = #ieee80211_key{index = Index, key = Key}},
 	      #ieee_802_11_add_wlan{capability = Capability} = IE) ->
     IE#ieee_802_11_add_wlan{capability = ['privacy' | Capability],
-			    key_index = KeyIndex + 1, key = GTK, group_tsc = <<TSC:64>>};
-set_wlan_keys(#wlan{privacy = true, gtk_index = KeyIndex, gtk = GTK},
+			    key_index = Index + 1, key = Key, group_tsc = <<TSC:64>>};
+set_wlan_keys(#wlan{privacy = true,
+		    gtk = #ieee80211_key{index = Index, key = Key}},
 	      #ieee_802_11_update_wlan{capability = Capability} = IE) ->
     IE#ieee_802_11_update_wlan{capability = ['privacy' | Capability],
-			       key_index = KeyIndex + 1, key = GTK};
+			       key_index = Index + 1, key = Key};
 set_wlan_keys(_Wlan, IE) ->
     IE.
 
-add_wlan_keys(#wlan{wlan_identifier = {RadioId, WlanId},
-		    privacy = true, gtk_index = KeyIndex, gtk = GTK}, IEs) ->
+add_wlan_keys(#wlan{wlan_identifier = {RadioId, WlanId}, privacy = true,
+		     gtk = #ieee80211_key{index = Index, key = Key}}, IEs) ->
     [#tp_ieee_802_11_update_key{radio_id = RadioId, wlan_id = WlanId,
-				key_index = KeyIndex + 4,
+				key_index = Index + 4,
 				key_status = completed_rekeying,
 				cipher_suite = capwap_packet:encode_cipher_suite('AES-CMAC'),
-				key = GTK} | IEs];
+				key = Key} | IEs];
 add_wlan_keys(_, IEs) ->
     IEs.
 
@@ -2092,8 +2104,7 @@ internal_new_station(#wlan{}, StationMAC,
 		[StationMAC, StationCount, MaxStations]),
     {{error, too_many_clients}, State};
 
-internal_new_station(#wlan{bss = BSS, wpa_config = WpaConfig,
-			   gtk = GTK, gtk_index = GTKindex},
+internal_new_station(#wlan{bss = BSS, wpa_config = WpaConfig, gtk = GTK},
 		     StationMAC,
 		     State = #state{id = WtpId, session_id = SessionId,
 				    data_channel_address = WTPDataChannelAddress, data_path = DataPath,
@@ -2111,7 +2122,7 @@ internal_new_station(#wlan{bss = BSS, wpa_config = WpaConfig,
 			    wtp_id = WtpId, wtp_session_id = SessionId,
 			    mac_mode = MacMode, tunnel_mode = TunnelMode,
 			    bss = BSS, wpa_config = WpaConfig,
-			    gtk = GTK, gtk_index = GTKindex
+			    gtk = GTK
 			   },
 	    Reply =
 		case capwap_station_reg:lookup(StationMAC) of
@@ -2300,7 +2311,7 @@ start_gtk_rekey(WlanIdent = {RadioId, WlanId},
 		Wlan0 = #wlan{bss = BSS, group_rekey_state = idle},
 		State0) ->
     Wlan1 = stop_group_rekey_timer(Wlan0),
-    Wlan2 = update_wlan_gtk(Wlan1),
+    Wlan2 = update_wlan_group_keys(Wlan1),
 
     Stations = capwap_station_reg:list_stations(self(), BSS),
     lager:debug("GTK ReKey Stations: ~p", [Stations]),
@@ -2342,9 +2353,9 @@ start_gtk_rekey({RadioId, WlanId}, Wlan, State) ->
 start_gtk_rekey_result(WlanIdent, Stations, Code, _Arg, State)
   when Code == 0 ->
     update_wlan_state(WlanIdent,
-		      fun(W = #wlan{gtk = GTK, gtk_index = GTKindex}) ->
+		      fun(W = #wlan{gtk = GTK}) ->
 			      {ok, _Pid} = capwap_ac_gtk_rekey:start_link({self(), WlanIdent},
-									  {GTKindex, GTK}, Stations),
+									  GTK, Stations),
 			      W#wlan{group_rekey_state = running}
 		      end, State);
 

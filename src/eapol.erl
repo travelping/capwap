@@ -16,7 +16,7 @@
 -module(eapol).
 
 -export([encode_802_11/3, packet/1, key/3, request/3, decode/1, validate_mic/2]).
--export([phrase2psk/2, prf/4, pmk2ptk/6, aes_key_wrap/2]).
+-export([phrase2psk/2, prf/4, pmk2ptk/6, aes_key_wrap/2, key_len/1]).
 
 -include("eapol.hrl").
 
@@ -40,7 +40,8 @@ eap_type(identity) -> 1;
 eap_type(1) -> identity;
 eap_type(X) when is_integer(X) -> X.
 
-key_len(#ccmp{}) -> 16.
+key_len(#ccmp{})    -> 16;
+key_len('CCMP')     -> 16.
 
 mic_len(#ccmp{}) -> 16;
 mic_len('AES-HMAC-SHA1') -> 16.

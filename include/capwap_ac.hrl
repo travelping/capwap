@@ -38,9 +38,10 @@
 	  state,
 
 	  group_tsc,
-	  gtk_index,
 	  gtk,
 
 	  group_rekey_state,
 	  group_rekey_timer
          }).
+
+-record(ieee80211_key, {cipher, index, key}).
