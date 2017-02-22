@@ -73,9 +73,11 @@
 	  version,
 	  capabilities,
 	  group_cipher_suite,
-	  group_mgmt_cipher_suite,
 	  cipher_suites,
-	  akm_suites
+	  akm_suites,
+
+	  management_frame_protection,
+	  group_mgmt_cipher_suite
 	 }).
 
 -record(wtp_wlan_config, {

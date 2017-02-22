@@ -1869,8 +1869,8 @@ wlan_cfg_rsn(#wtp_radio{radio_id = RadioId},
 	     #wlan{wlan_identifier = {_, WlanId},
 		   wpa_config = #wpa_config{
 				   privacy = true,
-				   management_frame_protection = MFP,
-				   rsn = RSN}}, IEs) ->
+				   rsn = #wtp_wlan_rsn{
+					    management_frame_protection = MFP} = RSN}}, IEs) ->
     [#ieee_802_11_information_element{radio_id = RadioId,
 				      wlan_id = WlanId,
 				      flags = ['beacon','probe_response'],
@@ -1976,31 +1976,28 @@ remove_wlan(WlanIdent, State = #state{wlans = Wlans}) ->
 
 radio_rsn_cipher_capabilities(_Radio, #wtp_wlan_config{
 					 rsn = RSN,
-					 management_frame_protection = false},
-			      Wlan = #wlan{wpa_config = WpaConfig}) ->
-    Wlan#wlan{wpa_config = WpaConfig#wpa_config{rsn = RSN}};
+					 management_frame_protection = false}) ->
+    RSN;
 radio_rsn_cipher_capabilities(#wtp_radio{supported_cipher_suites = Suites},
 			      #wtp_wlan_config{
-				 rsn = #wtp_wlan_rsn{group_mgmt_cipher_suite = MgmtSuite,
-						     capabilities = Caps0} = RSN0,
-				 management_frame_protection = Value},
-			      Wlan = #wlan{wpa_config = WpaConfig0}) ->
+				 rsn = #wtp_wlan_rsn{
+					  management_frame_protection = Value,
+					  group_mgmt_cipher_suite = MgmtSuite,
+					  capabilities = Caps0} = RSN0,
+				 management_frame_protection = Value}) ->
     lager:debug("Suites: ~p", [Suites]),
     Caps1 = Caps0 band bnot 16#00C0,
     case lists:member(MgmtSuite, Suites) of
 	true ->
-	    WpaConfig = WpaConfig0#wpa_config{management_frame_protection = Value,
-					     group_mgmt_cipher_suite = MgmtSuite},
 	    Caps = case Value of
 		       optional -> Caps1 bor 16#0080;
 		       required -> Caps1 bor 16#00C0;
 		       _        -> Caps1
 		   end,
-	    RSN = RSN0#wtp_wlan_rsn{capabilities = Caps},
-	    Wlan#wlan{wpa_config = WpaConfig#wpa_config{rsn = RSN}};
+	    RSN0#wtp_wlan_rsn{capabilities = Caps};
 
 	false ->
-	    Wlan#wlan{wpa_config = WpaConfig0#wpa_config{rsn = RSN0}}
+	    RSN0
     end.
 
 init_wlan_state(#wtp_radio{radio_id = RadioId} = Radio, WlanId,
@@ -2012,23 +2009,22 @@ init_wlan_state(#wtp_radio{radio_id = RadioId} = Radio, WlanId,
 		   peer_rekey = PeerRekey,
 		   group_rekey = GroupRekey,
 		   strict_group_rekey = StrictGroupRekey} = WlanConfig) ->
-    W0 = #wlan{wlan_identifier = {RadioId, WlanId},
-	       ssid = SSID,
-	       suppress_ssid = SuppressSSID,
-	       privacy = Privacy,
-	       wpa_config = #wpa_config{
-			       ssid = SSID,
-			       privacy = Privacy,
-			       secret = Secret,
-			       peer_rekey = PeerRekey,
-			       group_rekey = GroupRekey,
-			       strict_group_rekey = StrictGroupRekey
-			      },
-
-	       state = initializing,
-	       group_rekey_state = idle
-	      },
-    W = radio_rsn_cipher_capabilities(Radio, WlanConfig, W0),
+    W = #wlan{wlan_identifier = {RadioId, WlanId},
+	      ssid = SSID,
+	      suppress_ssid = SuppressSSID,
+	      privacy = Privacy,
+	      wpa_config = #wpa_config{
+			      ssid = SSID,
+			      privacy = Privacy,
+			      rsn = radio_rsn_cipher_capabilities(Radio, WlanConfig),
+			      secret = Secret,
+			      peer_rekey = PeerRekey,
+			      group_rekey = GroupRekey,
+			      strict_group_rekey = StrictGroupRekey
+			     },
+	      state = initializing,
+	      group_rekey_state = idle
+	     },
     init_wlan_privacy(W).
 
 init_key(Cipher) ->
@@ -2045,8 +2041,10 @@ update_key(undefined) ->
 init_wlan_gtk(Wlan) ->
     Wlan#wlan{group_tsc = 0, gtk = init_key('CCMP')}.
 
-init_wlan_igtk(Wlan = #wlan{wpa_config = #wpa_config{management_frame_protection = MFP,
-						     group_mgmt_cipher_suite = Cipher}})
+init_wlan_igtk(Wlan = #wlan{wpa_config = #wpa_config{
+					    rsn = #wtp_wlan_rsn{
+						     management_frame_protection = MFP,
+						     group_mgmt_cipher_suite = Cipher}}})
   when MFP /= false, Cipher /= undefined ->
     Wlan#wlan{igtk = init_key(Cipher)};
 init_wlan_igtk(Wlan) ->

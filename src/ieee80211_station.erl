@@ -1074,7 +1074,9 @@ rsna_4way_handshake(rekey, State = #state{eapol_state = installed,
 rsna_4way_handshake({key, Flags, CipherSuite, ReplayCounter, SNonce, KeyData, MICData},
 		    State0 = #state{radio_mac = BSS, mac = StationMAC,
 				    capabilities = #sta_cap{last_rsne = LastRSNE},
-				    wpa_config = #wpa_config{management_frame_protection = MFP, rsn = RSN},
+				    wpa_config = #wpa_config{
+						    rsn = #wtp_wlan_rsn{
+							     management_frame_protection = MFP} = RSN},
 				    gtk = GTK,
 				    igtk = IGTK,
 				    eapol_state = init,
