@@ -2151,7 +2151,7 @@ internal_new_station(#wlan{bss = BSS, wpa_config = WpaConfig, gtk = GTK, igtk = 
 		end,
 	    {Reply, State#state{station_count = StationCount + 1}};
 
-	{Ok = {ok, Station0}, _} ->
+	Ok = {ok, Station0} ->
 	    lager:debug("station ~p found as ~p", [{self(), StationMAC}, Station0]),
 	    {Ok, State}
     end;
