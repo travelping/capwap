@@ -3,7 +3,12 @@ capwap
 
 Erlang CAPWAP AC implementation.
 
-Version 1.8.1 - xx Feb 2017
+Version 1.8.2 - 22 Feb 2017
+---------------------------
+
+* add backward compatibility for pre-1.2.1 smartcapwap WTPs
+
+Version 1.8.1 - 20 Feb 2017
 ---------------------------
 
 * implement Management Frame Protection
