@@ -2089,6 +2089,14 @@ add_wlan_keys(_, IEs) ->
 get_wlan(WlanIdent, #state{wlans = Wlans}) ->
     lists:keyfind(WlanIdent, #wlan.wlan_identifier, Wlans).
 
+get_wlan_by_bss(BSS, #state{config = #wtp{broken_add_wlan_workarround = true},
+			    wlans = Wlans}) ->
+    case lists:keyfind(BSS, #wlan.bss, Wlans) of
+	false when length(Wlans) == 1 ->
+	    hd(Wlans);
+	Other ->
+	    Other
+    end;
 get_wlan_by_bss(BSS, #state{wlans = Wlans}) ->
     lists:keyfind(BSS, #wlan.bss, Wlans).
 

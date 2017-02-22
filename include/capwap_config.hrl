@@ -24,6 +24,7 @@
 	  ac_join_timeout,
 	  admin_pw,
 	  wlan_hold_time,
+	  broken_add_wlan_workarround,
 	  radios
 	 }).
 
