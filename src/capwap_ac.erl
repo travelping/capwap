@@ -2045,13 +2045,21 @@ update_key(undefined) ->
 init_wlan_gtk(Wlan) ->
     Wlan#wlan{group_tsc = 0, gtk = init_key('CCMP')}.
 
-init_wlan_privacy(Wlan = #wlan{privacy = true}) ->
-    init_wlan_gtk(Wlan);
+init_wlan_igtk(Wlan = #wlan{wpa_config = #wpa_config{management_frame_protection = MFP,
+						     group_mgmt_cipher_suite = Cipher}})
+  when MFP /= false, Cipher /= undefined ->
+    Wlan#wlan{igtk = init_key(Cipher)};
+init_wlan_igtk(Wlan) ->
+    Wlan.
+
+init_wlan_privacy(Wlan0 = #wlan{privacy = true}) ->
+    Wlan1 = init_wlan_gtk(Wlan0),
+    init_wlan_igtk(Wlan1);
 init_wlan_privacy(Wlan) ->
     Wlan.
 
-update_wlan_group_keys(Wlan = #wlan{privacy = true, gtk = GTK}) ->
-    Wlan#wlan{gtk = update_key(GTK)};
+update_wlan_group_keys(Wlan = #wlan{privacy = true, gtk = GTK, igtk = IGTK}) ->
+    Wlan#wlan{gtk = update_key(GTK), igtk = update_key(IGTK)};
 update_wlan_group_keys(Wlan) ->
     Wlan.
 
@@ -2104,7 +2112,7 @@ internal_new_station(#wlan{}, StationMAC,
 		[StationMAC, StationCount, MaxStations]),
     {{error, too_many_clients}, State};
 
-internal_new_station(#wlan{bss = BSS, wpa_config = WpaConfig, gtk = GTK},
+internal_new_station(#wlan{bss = BSS, wpa_config = WpaConfig, gtk = GTK, igtk = IGTK},
 		     StationMAC,
 		     State = #state{id = WtpId, session_id = SessionId,
 				    data_channel_address = WTPDataChannelAddress, data_path = DataPath,
@@ -2122,7 +2130,7 @@ internal_new_station(#wlan{bss = BSS, wpa_config = WpaConfig, gtk = GTK},
 			    wtp_id = WtpId, wtp_session_id = SessionId,
 			    mac_mode = MacMode, tunnel_mode = TunnelMode,
 			    bss = BSS, wpa_config = WpaConfig,
-			    gtk = GTK
+			    gtk = GTK, igtk = IGTK
 			   },
 	    Reply =
 		case capwap_station_reg:lookup(StationMAC) of
@@ -2353,9 +2361,9 @@ start_gtk_rekey({RadioId, WlanId}, Wlan, State) ->
 start_gtk_rekey_result(WlanIdent, Stations, Code, _Arg, State)
   when Code == 0 ->
     update_wlan_state(WlanIdent,
-		      fun(W = #wlan{gtk = GTK}) ->
+		      fun(W = #wlan{gtk = GTK, igtk = IGTK}) ->
 			      {ok, _Pid} = capwap_ac_gtk_rekey:start_link({self(), WlanIdent},
-									  GTK, Stations),
+									  GTK, IGTK, Stations),
 			      W#wlan{group_rekey_state = running}
 		      end, State);
 

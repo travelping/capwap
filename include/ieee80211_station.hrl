@@ -45,4 +45,5 @@
 	  bss,
 	  wpa_config,
 	  gtk,
+	  igtk
 }).

@@ -21,7 +21,7 @@
 
 %% API
 -export([start_link/3, handle_ieee80211_frame/2, handle_ieee802_3_frame/3,
-         take_over/3, detach/1, delete/1, start_gtk_rekey/3]).
+         take_over/3, detach/1, delete/1, start_gtk_rekey/4]).
 %% Helpers
 -export([format_mac/1]).
 
@@ -72,6 +72,7 @@
           radio_mac,
 	  wpa_config,
 	  gtk,
+	  igtk,
 
 	  eapol_state,
 	  eapol_retransmit,
@@ -132,8 +133,8 @@ detach(ClientMAC) ->
 delete(Pid) when is_pid(Pid) ->
     gen_fsm:sync_send_event(Pid, delete).
 
-start_gtk_rekey(Station, Controller, GTK) ->
-    gen_fsm:send_event(Station, {start_gtk_rekey, Controller, GTK}).
+start_gtk_rekey(Station, Controller, GTK, IGTK) ->
+    gen_fsm:send_event(Station, {start_gtk_rekey, Controller, GTK, IGTK}).
 
 %%%===================================================================
 %%% gen_fsm callbacks
@@ -391,15 +392,19 @@ connected(Event = {eapol_retransmit, _Msg},
     aaa_disassociation(State),
     {next_state, initial_state(MacMode), State, ?SHUTDOWN_TIMEOUT};
 
-connected({start_gtk_rekey, RekeyCtl, GTKnew}, #state{gtk = GTK} = State)
-  when GTKnew#ieee80211_key.index == GTK#ieee80211_key.index ->
+connected({start_gtk_rekey, RekeyCtl, GTKnew, IGTKnew},
+	  #state{gtk = GTK, igtk = IGTK} = State)
+  when GTKnew#ieee80211_key.index == GTK#ieee80211_key.index andalso
+       IGTKnew#ieee80211_key.index == IGTK#ieee80211_key.index ->
     capwap_ac_gtk_rekey:gtk_rekey_done(RekeyCtl, self()),
     {next_state, connected, State, ?IDLE_TIMEOUT};
 
-connected(Event = {start_gtk_rekey, RekeyCtl, GTKnew}, #state{gtk = GTK} = State0)
-  when GTKnew#ieee80211_key.index /= GTK#ieee80211_key.index ->
-    lager:debug("in CONNECTED got GTK rekey: ~p", [Event]),
-    State = rekey_start(gtk, State0#state{gtk = GTKnew, rekey_control = RekeyCtl}),
+connected(Event = {start_gtk_rekey, RekeyCtl, GTKnew, IGTKnew},
+	  #state{gtk = GTK, igtk = IGTK} = State0)
+  when GTKnew#ieee80211_key.index /= GTK#ieee80211_key.index orelse
+       IGTKnew#ieee80211_key.index /= IGTK#ieee80211_key.index ->
+    lager:debug("in CONNECTED got Group rekey: ~p", [Event]),
+    State = rekey_start(gtk, State0#state{gtk = GTKnew, igtk = IGTKnew, rekey_control = RekeyCtl}),
     {next_state, connected, State, ?IDLE_TIMEOUT};
 
 connected(Event, State) ->
@@ -469,7 +474,8 @@ update_state_from_cfg(#station_config{data_path = DataPath,
 				      tunnel_mode = TunnelMode,
 				      bss = BSS,
 				      wpa_config = WpaConfig,
-				      gtk = GTK
+				      gtk = GTK,
+				      igtk = IGTK
 				     }, State) ->
     State#state{data_path = DataPath,
 		data_channel_address = WTPDataChannelAddress,
@@ -479,7 +485,8 @@ update_state_from_cfg(#station_config{data_path = DataPath,
 		tunnel_mode = TunnelMode,
 		radio_mac = BSS,
 		wpa_config = WpaConfig,
-		gtk = GTK
+		gtk = GTK,
+		igtk = IGTK
 	       }.
 
 with_station(AC, BSS, StationMAC, Fun) ->
@@ -1068,6 +1075,7 @@ rsna_4way_handshake({key, Flags, CipherSuite, ReplayCounter, SNonce, KeyData, MI
 				    capabilities = #sta_cap{last_rsne = LastRSNE},
 				    wpa_config = #wpa_config{management_frame_protection = MFP, rsn = RSN},
 				    gtk = GTK,
+				    igtk = IGTK,
 				    eapol_state = init,
 				    cipher_state =
 					#ccmp{
@@ -1117,7 +1125,7 @@ rsna_4way_handshake({key, Flags, CipherSuite, ReplayCounter, SNonce, KeyData, MI
 	    GTKIE = encode_gtk_ie(Tx, GTK),
 	    IGTKIE = case GroupMgmtCipherSuite of
 			 'AES-CMAC' ->
-			     encode_igtk_ie(GTK);
+			     encode_igtk_ie(IGTK);
 			 _ ->
 			     <<>>
 		     end,
@@ -1190,14 +1198,14 @@ rsna_2way_handshake(rekey, State = #state{eapol_state = installed,
 					  cipher_state = #ccmp{
 							    group_mgmt_cipher_suite = GroupMgmtCipherSuite,
 							    kek = KEK},
-					  gtk = GTK}) ->
+					  gtk = GTK, igtk = IGTK}) ->
     %% EAPOL-Key(1,1,1,0,G,0,Key RSC,0, MIC,GTK[N],IGTK[M])
 
     Tx = 0,
     GTKIE = encode_gtk_ie(Tx, GTK),
     IGTKIE = case GroupMgmtCipherSuite of
 		 'AES-CMAC' ->
-		     encode_igtk_ie(GTK);
+		     encode_igtk_ie(IGTK);
 		 _ ->
 		     <<>>
 	     end,

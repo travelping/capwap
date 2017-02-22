@@ -39,6 +39,7 @@
 
 	  group_tsc,
 	  gtk,
+	  igtk,
 
 	  group_rekey_state,
 	  group_rekey_timer

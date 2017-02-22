@@ -18,7 +18,7 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/3, gtk_rekey_done/2]).
+-export([start_link/4, gtk_rekey_done/2]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -32,8 +32,8 @@
 %%% API
 %%%===================================================================
 
-start_link(ACRef, GTK, Stations) ->
-    gen_server:start_link({local, ?SERVER}, ?MODULE, [ACRef, GTK, Stations], []).
+start_link(ACRef, GTK, IGTK, Stations) ->
+    gen_server:start_link({local, ?SERVER}, ?MODULE, [ACRef, GTK, IGTK, Stations], []).
 
 gtk_rekey_done(Controller, Station) ->
     gen_server:cast(Controller, {gtk_rekey_done, Station}).
@@ -42,10 +42,10 @@ gtk_rekey_done(Controller, Station) ->
 %%% gen_server callbacks
 %%%===================================================================
 
-init([ACRef, GTK, Stations]) ->
+init([ACRef, GTK, IGTK, Stations]) ->
     lists:foreach(fun(Sta) ->
 			  monitor(process, Sta),
-			  ieee80211_station:start_gtk_rekey(Sta, self(), GTK)
+			  ieee80211_station:start_gtk_rekey(Sta, self(), GTK, IGTK)
 		  end, Stations),
     erlang:send_after(5000, self(), group_rekey_timeout),
     {ok, #state{acref = ACRef, stations = Stations}}.

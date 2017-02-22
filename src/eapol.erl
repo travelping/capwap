@@ -41,7 +41,8 @@ eap_type(1) -> identity;
 eap_type(X) when is_integer(X) -> X.
 
 key_len(#ccmp{})    -> 16;
-key_len('CCMP')     -> 16.
+key_len('CCMP')     -> 16;
+key_len('AES-CMAC') -> 16.
 
 mic_len(#ccmp{}) -> 16;
 mic_len('AES-HMAC-SHA1') -> 16.
