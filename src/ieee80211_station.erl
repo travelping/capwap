@@ -378,6 +378,13 @@ connected({rekey, Type}, State0) ->
     State = rekey_start(Type, State0),
     {next_state, connected, State, ?IDLE_TIMEOUT};
 
+connected(Event = {eapol_retransmit, {packet, EAPData}},
+	  State0 = #state{eapol_retransmit = TxCnt})
+  when TxCnt < 4 ->
+    lager:warning("in CONNECTED got EAPOL retransmit: ~p", [Event]),
+    State = send_eapol_packet(EAPData, State0),
+    {next_state, connected, State, ?IDLE_TIMEOUT};
+
 connected(Event = {eapol_retransmit, {key, Flags, KeyData}},
 	  State0 = #state{eapol_retransmit = TxCnt})
   when TxCnt < 4 ->
@@ -925,19 +932,9 @@ send_eapol(EAPData, State = #state{mac = StationMAC, radio_mac = BSS}) ->
     Frame = eapol:encode_802_11(StationMAC, BSS, EAPData),
     wtp_send_80211(Frame, State).
 
-%%
-%% don't start the retransmission timer for EAP Packets,
-%% see RFC 3748, Sect. 4.3:
-%%
-%%   When run over a reliable lower layer (e.g., EAP over ISAKMP/TCP, as
-%%   within [PIC]), the authenticator retransmission timer SHOULD be set
-%%   to an infinite value, so that retransmissions do not occur at the EAP
-%%   layer.  The peer may still maintain a timeout value so as to avoid
-%%   waiting indefinitely for a Request.
-%%
-send_eapol_packet(EAPData, State) ->
+send_eapol_packet(EAPData, State = #state{eapol_retransmit = TxCnt}) ->
     send_eapol(eapol:packet(EAPData), State),
-    State.
+    start_eapol_timer({packet, EAPData}, State#state{eapol_retransmit = TxCnt + 1}).
 
 send_eapol_key(Flags, KeyData,
 	       State = #state{eapol_retransmit = TxCnt,
@@ -964,16 +961,19 @@ init_eapol(#state{capabilities = #sta_cap{akm_suite = AKM},
     ReqData = <<0, "networkid=", SSID/binary, ",nasid=SCG4,portid=1">>,
     Id = 1,
     EAPData = eapol:request(Id, identity, ReqData),
-    send_eapol_packet(EAPData, State#state{eapol_state = {request, Id}}).
+    send_eapol_packet(EAPData, State#state{eapol_state = {request, Id},
+					   eapol_retransmit = 0}).
 
 eap_handshake({start, _Data},
-	      #state{eapol_state = {request, _}} = State) ->
+	      #state{eapol_state = {request, _}} = State0) ->
     %% restart the handshake
+    State = stop_eapol_timer(State0),
     init_eapol(State);
 
 eap_handshake(Data = {response, Id, EAPData, Response},
-	      #state{eapol_state = {request, Id}} = State) ->
+	      #state{eapol_state = {request, Id}} = State0) ->
     lager:debug("EAP Handshake: ~p", [Data]),
+    State = stop_eapol_timer(State0),
     Next =
 	case Response of
 	    {identity, Identity} ->
@@ -992,8 +992,9 @@ eap_handshake(Data = {response, Id, EAPData, Response},
 	end,
     eap_handshake_next(Next, State);
 
-eap_handshake(Data, State) ->
+eap_handshake(Data, State0) ->
     lager:warning("unexpected EAP Handshake: ~p", [Data]),
+    State = stop_eapol_timer(State0),
     wtp_del_station(State),
     aaa_disassociation(State),
     State#state{eapol_state = undefined}.
