@@ -3,6 +3,11 @@ capwap
 
 Erlang CAPWAP AC implementation.
 
+Version 1.9.0 - xx Feb 2017
+---------------------------
+
+* implement Split MAC mode
+
 Version 1.8.2 - 22 Feb 2017
 ---------------------------
 
