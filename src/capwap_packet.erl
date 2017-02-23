@@ -16,7 +16,9 @@
 -module(capwap_packet).
 
 -export([decode/2, decode/3, encode/2, encode/4, msg_description/1]).
--export([decode_rate/1, encode_rate/2, decode_cipher_suite/1, encode_cipher_suite/1]).
+-export([decode_rate/1, encode_rate/2,
+	 decode_cipher_suite/1, encode_cipher_suite/1,
+	 decode_akm_suite/1, encode_akm_suite/1]).
 -compile(export_all).
 
 -include("capwap_packet.hrl").
@@ -221,6 +223,16 @@ decode_cipher_suite(16#000FAC0C) -> 'BIP-GMAC-256';
 decode_cipher_suite(16#000FAC0D) -> 'BIP-CMAC-256';
 decode_cipher_suite(X) -> X.
 
+decode_akm_suite(16#000FAC01) -> '802.1x';
+decode_akm_suite(16#000FAC02) -> 'PSK';
+decode_akm_suite(16#000FAC03) -> 'FT-802.1x';
+decode_akm_suite(16#000FAC04) -> 'FT-PSK';
+decode_akm_suite(16#000FAC05) -> '802.1x-SHA256';
+decode_akm_suite(16#000FAC06) -> 'PSK-SHA256';
+decode_akm_suite(16#000FAC11) -> '802.1x-Suite-B';
+decode_akm_suite(16#000FAC12) -> '802.1x-Suite-B-192';
+decode_akm_suite(X) -> X.
+
 %%%-------------------------------------------------------------------
 %%% encoder
 %%%-------------------------------------------------------------------
@@ -261,6 +273,16 @@ encode_cipher_suite('BIP-GMAC-128') -> 16#000FAC0B;
 encode_cipher_suite('BIP-GMAC-256') -> 16#000FAC0C;
 encode_cipher_suite('BIP-CMAC-256') -> 16#000FAC0D;
 encode_cipher_suite(X) when is_integer(X) -> X.
+
+encode_akm_suite('802.1x')		-> 16#000FAC01;
+encode_akm_suite('PSK')			-> 16#000FAC02;
+encode_akm_suite('FT-802.1x')		-> 16#000FAC03;
+encode_akm_suite('FT-PSK')		-> 16#000FAC04;
+encode_akm_suite('802.1x-SHA256')	-> 16#000FAC05;
+encode_akm_suite('PSK-SHA256')		-> 16#000FAC06;
+encode_akm_suite('802.1x-Suite-B')	-> 16#000FAC11;
+encode_akm_suite('802.1x-Suite-B-192')	-> 16#000FAC12;
+encode_akm_suite(X) -> X.
 
 encode_flag(Key, List) ->
     encode_bool(proplists:get_bool(Key, List)).

@@ -123,10 +123,10 @@ wtp_init_wlan_radio_defaults(Id, _Radio, WLAN) ->
 wtp_init_wlan_keymgmt(WLAN = #wtp_wlan_config{
 				rsn = #wtp_wlan_rsn{akm_suites = AKM}
 				= RSN}, Value) ->
-    if Value ==	psk ->
-	    WLAN#wtp_wlan_config{rsn = RSN#wtp_wlan_rsn{akm_suites = [?IEEE_802_1_AKM_PSK | AKM]}};
+    if Value == psk ->
+	    WLAN#wtp_wlan_config{rsn = RSN#wtp_wlan_rsn{akm_suites = ['PSK' | AKM]}};
        Value == wpa ->
-	    WLAN#wtp_wlan_config{rsn = RSN#wtp_wlan_rsn{akm_suites = [?IEEE_802_1_AKM_WPA | AKM]}};
+	    WLAN#wtp_wlan_config{rsn = RSN#wtp_wlan_rsn{akm_suites = ['802.1x' | AKM]}};
        is_list(Value) ->
 	    lists:foldl(fun(V, W) -> wtp_init_wlan_keymgmt(W, V) end, WLAN, Value);
        true ->

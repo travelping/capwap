@@ -1857,7 +1857,7 @@ rsn_ie(#wtp_wlan_rsn{version = RSNVersion,
 		     cipher_suites = CipherSuites,
 		     akm_suites = AKMs}, PMF) ->
     CipherSuitesBin = << <<X/binary>> || X <- CipherSuites >>,
-    AKMsBin = << <<X/binary>> || X <- AKMs >>,
+    AKMsBin = << <<(capwap_packet:encode_akm_suite(X)):32>> || X <- AKMs >>,
 
     IE0 = <<RSNVersion:16/little, GroupCipherSuite/binary,
 	    (length(CipherSuites)):16/little, CipherSuitesBin/binary,
