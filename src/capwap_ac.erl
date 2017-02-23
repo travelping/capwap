@@ -1968,31 +1968,32 @@ remove_wlan(WlanIdent, State = #state{wlans = Wlans}) ->
     LessWlans = lists:keydelete(WlanIdent, #wlan.wlan_identifier, Wlans),
     State#state{wlans = LessWlans}.
 
-radio_rsn_cipher_capabilities(_Radio, #wtp_wlan_config{
-					 rsn = RSN,
-					 management_frame_protection = false}) ->
-    RSN;
 radio_rsn_cipher_capabilities(#wtp_radio{supported_cipher_suites = Suites},
 			      #wtp_wlan_config{
 				 rsn = #wtp_wlan_rsn{
-					  management_frame_protection = Value,
 					  group_mgmt_cipher_suite = MgmtSuite,
 					  capabilities = Caps0} = RSN0,
-				 management_frame_protection = Value}) ->
+				 management_frame_protection = MFP})
+  when MFP /= false ->
     lager:debug("Suites: ~p", [Suites]),
     Caps1 = Caps0 band bnot 16#00C0,
     case lists:member(MgmtSuite, Suites) of
 	true ->
-	    Caps = case Value of
+	    Caps = case MFP of
 		       optional -> Caps1 bor 16#0080;
 		       required -> Caps1 bor 16#00C0;
 		       _        -> Caps1
 		   end,
-	    RSN0#wtp_wlan_rsn{capabilities = Caps};
+	    RSN0#wtp_wlan_rsn{management_frame_protection = MFP,
+			      capabilities = Caps};
 
 	false ->
-	    RSN0
-    end.
+	    RSN0#wtp_wlan_rsn{management_frame_protection = false}
+    end;
+radio_rsn_cipher_capabilities(_Radio, #wtp_wlan_config{
+					 rsn = RSN,
+					 management_frame_protection = false}) ->
+    RSN#wtp_wlan_rsn{management_frame_protection = false}.
 
 init_wlan_state(#wtp_radio{radio_id = RadioId} = Radio, WlanId,
 		#wtp_wlan_config{

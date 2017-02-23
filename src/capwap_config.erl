@@ -104,6 +104,7 @@ wtp_init_wlan_radio_defaults(Id, _Radio, WLAN) ->
 	     version = 1,
 	     capabilities = 16#000C,
 	     group_cipher_suite = ?IEEE_802_1_CIPHER_SUITE_AES,
+	     management_frame_protection = false,
 	     group_mgmt_cipher_suite = 'AES-CMAC',
 	     cipher_suites = [?IEEE_802_1_CIPHER_SUITE_AES],
 	     akm_suites = []
