@@ -1792,57 +1792,63 @@ wtp_config_get(LocalCnf, {DefaultName, LocalName, Default}) ->
 wtp_config_get(_, {DefaultName, Default}) ->
     application:get_env(capwap, DefaultName, Default).
 
-wlan_cfg_rateset(#wtp_radio{radio_id = RadioId},
-		 #wlan{wlan_identifier = {_, WlanId},
-		       mode = Mode, rate_set = RateSet}, IEs) ->
+ieee_802_11_ie(Id, Data) ->
+    <<Id:8, (byte_size(Data)):8, Data/bytes>>.
+
+capwap_802_11_ie(#wtp_radio{radio_id = RadioId},
+		 #wlan{wlan_identifier = {_, WlanId}},
+		 {IE, Flags}, IEs) ->
+    [#ieee_802_11_information_element{
+	radio_id = RadioId,
+	wlan_id = WlanId,
+	flags = Flags,
+	ie = IE}
+     | IEs].
+
+init_wlan_information_elements(Radio, WlanState) ->
+    ProbeResponseFlags = ['beacon','probe_response'],
+    IEList = [
+	      {fun wlan_rateset_ie/2, ProbeResponseFlags},
+	      {fun wlan_wmm_ie/2, ProbeResponseFlags},
+	      {fun wlan_ht_opmode_ie/2, ProbeResponseFlags},
+	      {fun wlan_rsn_ie/2, ProbeResponseFlags},
+	      {fun wlan_ht_cap_ie/2, ProbeResponseFlags}],
+    lists:foldl(fun({Fun, Flags}, WS = #wlan{information_elements = IEs}) ->
+			case Fun(Radio, WS) of
+			    IE when is_binary(IE) ->
+				WS#wlan{information_elements = [{IE, Flags} | IEs]};
+			    _ ->
+				WS
+			end
+		end, WlanState, IEList).
+
+wlan_rateset_ie(_Radio, #wlan{mode = Mode, rate_set = RateSet}) ->
     case lists:split(8, RateSet) of
 	{_, []} ->
-	    IEs;
+	    undefined;
 	{_, ExtRates} ->
-	    Bin = << <<(capwap_packet:encode_rate(Mode, X)):8>> || X <- ExtRates>>,
-	    [#ieee_802_11_information_element{radio_id = RadioId,
-					      wlan_id = WlanId,
-					      flags = ['beacon','probe_response'],
-					      ie = <<?WLAN_EID_EXT_SUPP_RATES, (byte_size(Bin)):8, Bin/bytes>>}
-	     | IEs]
+	    ieee_802_11_ie(?WLAN_EID_EXT_SUPP_RATES,
+			   << <<(capwap_packet:encode_rate(Mode, X)):8>> || X <- ExtRates>>)
     end.
 
-wlan_cfg_wmm(#wtp_radio{radio_id = RadioId},
-	     #wlan{wlan_identifier = {_,  WlanId}}, IEs) ->
-    IE = <<16#00, 16#50, 16#f2, 16#02, 16#01, 16#01, 16#00, 16#00,
-	   16#03, 16#a4, 16#00, 16#00, 16#27, 16#a4, 16#00, 16#00,
-	   16#42, 16#43, 16#5e, 16#00, 16#62, 16#32, 16#2f, 16#00>>,
-    [#ieee_802_11_information_element{radio_id = RadioId,
-				      wlan_id = WlanId,
-				      flags = ['beacon','probe_response'],
-				      ie = <<?WLAN_EID_VENDOR_SPECIFIC, (byte_size(IE)):8, IE/bytes>>}
-     | IEs].
+wlan_wmm_ie(_Radio, _WlanState) ->
+    ieee_802_11_ie(?WLAN_EID_VENDOR_SPECIFIC,
+		   <<16#00, 16#50, 16#f2, 16#02, 16#01, 16#01, 16#00, 16#00,
+		     16#03, 16#a4, 16#00, 16#00, 16#27, 16#a4, 16#00, 16#00,
+		     16#42, 16#43, 16#5e, 16#00, 16#62, 16#32, 16#2f, 16#00>>).
 
-wlan_cfg_ht_cap(#wtp_radio{radio_id = RadioId},
-		#wlan{wlan_identifier = {_,  WlanId}}, IEs) ->
-    IE = <<16#0c, 16#00, 16#1b, 16#ff, 16#ff, 16#00, 16#00, 16#00,
-	   16#00, 16#00, 16#00, 16#00, 16#00, 16#00, 16#00, 16#01,
-	   16#00, 16#00, 16#00, 16#00, 16#00, 16#00, 16#00, 16#00,
-	   16#00, 16#00>>,
+wlan_ht_cap_ie(_Radio, _WlanState) ->
+    ieee_802_11_ie(?WLAN_EID_HT_CAP,
+		   <<16#0c, 16#00, 16#1b, 16#ff, 16#ff, 16#00, 16#00, 16#00,
+		     16#00, 16#00, 16#00, 16#00, 16#00, 16#00, 16#00, 16#01,
+		     16#00, 16#00, 16#00, 16#00, 16#00, 16#00, 16#00, 16#00,
+		     16#00, 16#00>>).
 
-    [#ieee_802_11_information_element{radio_id = RadioId,
-				      wlan_id = WlanId,
-				      flags = ['beacon','probe_response'],
-				      ie = <<?WLAN_EID_HT_CAP, (byte_size(IE)):8, IE/bytes>>}
-     | IEs].
-
-wlan_cfg_ht_opmode(#wtp_radio{radio_id = RadioId,
-			      channel = Channel},
-		   #wlan{wlan_identifier = {_, WlanId}}, IEs) ->
-    Channel = Channel,
-    IE = <<Channel:8, 16#00, 16#00, 16#00, 16#00, 16#00, 16#00, 16#00,
-	   16#00, 16#00, 16#00, 16#00, 16#00, 16#00, 16#00, 16#00,
-	   16#00, 16#00, 16#00, 16#00, 16#00, 16#00>>,
-    [#ieee_802_11_information_element{radio_id = RadioId,
-				      wlan_id = WlanId,
-				      flags = ['beacon','probe_response'],
-				      ie = <<?WLAN_EID_HT_OPERATION, (byte_size(IE)):8, IE/bytes>>}
-     | IEs].
+wlan_ht_opmode_ie(#wtp_radio{channel = Channel}, _WlanState) ->
+    ieee_802_11_ie(?WLAN_EID_HT_OPERATION,
+		   <<Channel:8, 16#00, 16#00, 16#00, 16#00, 16#00, 16#00, 16#00,
+		     16#00, 16#00, 16#00, 16#00, 16#00, 16#00, 16#00, 16#00,
+		     16#00, 16#00, 16#00, 16#00, 16#00, 16#00>>).
 
 rsn_ie(#wtp_wlan_rsn{version = RSNVersion,
 		     capabilities = RSNCaps,
@@ -1862,21 +1868,16 @@ rsn_ie(#wtp_wlan_rsn{version = RSNVersion,
 	    true ->
 		 IE0
 	 end,
-    <<?WLAN_EID_RSN, (byte_size(IE)):8, IE/bytes>>.
+    ieee_802_11_ie(?WLAN_EID_RSN, IE).
 
-wlan_cfg_rsn(#wtp_radio{radio_id = RadioId},
-	     #wlan{wlan_identifier = {_, WlanId},
-		   wpa_config = #wpa_config{
-				   privacy = true,
-				   rsn = #wtp_wlan_rsn{
-					    management_frame_protection = MFP} = RSN}}, IEs) ->
-    [#ieee_802_11_information_element{radio_id = RadioId,
-				      wlan_id = WlanId,
-				      flags = ['beacon','probe_response'],
-				      ie = rsn_ie(RSN, MFP == required)}
-     | IEs];
-wlan_cfg_rsn(_, _, IEs) ->
-    IEs.
+wlan_rsn_ie(_Radio, #wlan{wpa_config =
+			      #wpa_config{
+				 privacy = true,
+				 rsn = #wtp_wlan_rsn{
+					  management_frame_protection = MFP} = RSN}}) ->
+    rsn_ie(RSN, MFP == required);
+wlan_rsn_ie(_, _) ->
+    undefined.
 
 wlan_cfg_tp_hold_time(#wtp_radio{radio_id = RadioId},
 		      #wlan{wlan_identifier = {_, WlanId}},
@@ -1917,13 +1918,10 @@ internal_add_wlan(#wtp_radio{radio_id = RadioId} = Radio,
 		 ssid          = SSID
 		},
     ReqElements0 = [set_wlan_keys(WlanState, AddWlan)],
-    ReqElements1 = wlan_cfg_rateset(Radio, WlanState, ReqElements0),
-    ReqElements2 = wlan_cfg_wmm(Radio, WlanState, ReqElements1),
-    ReqElements3 = wlan_cfg_ht_opmode(Radio, WlanState, ReqElements2),
-    ReqElements4 = wlan_cfg_rsn(Radio, WlanState, ReqElements3),
-    ReqElements5 = wlan_cfg_ht_cap(Radio, WlanState, ReqElements4),
-    ReqElements6 = wlan_cfg_tp_hold_time(Radio, WlanState, Config, ReqElements5),
-    ReqElements = add_wlan_keys(WlanState, ReqElements6),
+    ReqElements1 = lists:foldl(capwap_802_11_ie(Radio, WlanState, _, _), ReqElements0,
+			       WlanState#wlan.information_elements),
+    ReqElements2 = wlan_cfg_tp_hold_time(Radio, WlanState, Config, ReqElements1),
+    ReqElements = add_wlan_keys(WlanState, ReqElements2),
     ResponseNotifyFun = internal_add_wlan_result({RadioId, WlanId}, NotifyFun, _, _, _),
     send_request(Header, ieee_802_11_wlan_configuration_request, ReqElements, ResponseNotifyFun, State);
 
@@ -2019,6 +2017,7 @@ init_wlan_state(#wtp_radio{radio_id = RadioId} = Radio, WlanId,
 	       mac_mode = MacMode,
 	       tunnel_mode = TunnelMode,
 	       privacy = Privacy,
+	       information_elements = [],
 	       wpa_config = #wpa_config{
 			       ssid = SSID,
 			       privacy = Privacy,
@@ -2031,7 +2030,8 @@ init_wlan_state(#wtp_radio{radio_id = RadioId} = Radio, WlanId,
 	       state = initializing,
 	       group_rekey_state = idle
 	      },
-    init_wlan_privacy(W0).
+    W1 = init_wlan_privacy(W0),
+    init_wlan_information_elements(Radio, W1).
 
 init_key(Cipher) ->
     #ieee80211_key{cipher = Cipher,

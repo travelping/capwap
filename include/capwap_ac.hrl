@@ -37,6 +37,7 @@
 	  rate_set,
 	  privacy,
 	  wpa_config,
+	  information_elements,
 
 	  state,
 
