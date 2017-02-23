@@ -242,12 +242,12 @@ init_assoc(Event = {FrameType, DA, SA, BSS, 0, 0, _Frame}, State)
     %% Fake Assoc Details
     %% we should at the very least match the Rates.....
 
-    Frame = <<16#01, 16#00, 16#00, 16#00, 16#01, 16#c0, 16#01, 16#08,
-	      16#82, 16#84, 16#0b, 16#16, 16#0c, 16#12, 16#18, 16#24,
-	      16#dd, 16#18, 16#00, 16#50, 16#f2, 16#02, 16#01, 16#01,
-	      16#00, 16#00, 16#03, 16#a4, 16#00, 16#00, 16#27, 16#a4,
-	      16#00, 16#00, 16#42, 16#43, 16#5e, 16#00, 16#62, 16#32,
-	      16#2f, 16#00>>,
+    MgmtFrame = <<16#01, 16#00, 16#00, 16#00, 16#01, 16#c0, 16#01, 16#08,
+		  16#82, 16#84, 16#0b, 16#16, 16#0c, 16#12, 16#18, 16#24,
+		  16#dd, 16#18, 16#00, 16#50, 16#f2, 16#02, 16#01, 16#01,
+		  16#00, 16#00, 16#03, 16#a4, 16#00, 16#00, 16#27, 16#a4,
+		  16#00, 16#00, 16#42, 16#43, 16#5e, 16#00, 16#62, 16#32,
+		  16#2f, 16#00>>,
 
     {Type, SubType} = frame_type('Association Response'),
     FrameControl = <<SubType:4, Type:2, 0:2, 0:6, 0:1, 0:1>>,
@@ -257,7 +257,7 @@ init_assoc(Event = {FrameType, DA, SA, BSS, 0, 0, _Frame}, State)
 	      Duration:16/integer-little,
 	      SA:6/bytes, DA:6/bytes, BSS:6/bytes,
 	      SequenceControl:16,
-	      Frame/binary>>,
+	      MgmtFrame/binary>>,
     wtp_send_80211(Frame, State),
     {next_state, init_start, State, ?IDLE_TIMEOUT};
 
