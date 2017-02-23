@@ -1755,12 +1755,12 @@ get_ie(Key, Elements, Default) ->
 get_ies(Key, Elements) ->
     [E || E <- Elements, element(1, E) == Key].
 
-select_mac_mode(local) ->
+select_mac_mode(#wtp_wlan_config{mac_mode = local}, local) ->
     local_mac;
-select_mac_mode(split) ->
+select_mac_mode(#wtp_wlan_config{mac_mode = split}, split) ->
     split_mac;
-select_mac_mode(both) ->
-    local_mac.
+select_mac_mode(#wtp_wlan_config{mac_mode = Mode}, both) ->
+    Mode.
 
 select_tunnel_mode(Modes, local_mac) ->
     case proplists:get_bool('802.3', Modes) of
@@ -1998,6 +1998,7 @@ init_wlan_state(#wtp_radio{radio_id = RadioId} = Radio, WlanId,
 		#wtp_wlan_config{
 		   ssid = SSID,
 		   suppress_ssid = SuppressSSID,
+		   mac_mode = MacMode,
 		   privacy = Privacy,
 		   secret = Secret,
 		   peer_rekey = PeerRekey,
@@ -2005,7 +2006,7 @@ init_wlan_state(#wtp_radio{radio_id = RadioId} = Radio, WlanId,
 		   strict_group_rekey = StrictGroupRekey} = WlanConfig,
 		#state{mac_types = MacTypes, tunnel_modes = TunnelModes}) ->
 
-    MacMode = select_mac_mode(MacTypes),
+    MacMode = select_mac_mode(WlanConfig, MacTypes),
     TunnelMode = select_tunnel_mode(TunnelModes, MacMode),
 
     Mode = '11g-only',

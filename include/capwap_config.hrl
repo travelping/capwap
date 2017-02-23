@@ -84,6 +84,7 @@
 	  wlan_id,
 	  ssid,
 	  suppress_ssid,
+	  mac_mode,
 	  privacy,
 	  management_frame_protection,
 	  secret,
