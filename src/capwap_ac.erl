@@ -2125,6 +2125,7 @@ internal_new_station(#wlan{}, StationMAC,
     {{error, too_many_clients}, State};
 
 internal_new_station(#wlan{bss = BSS, mac_mode = MacMode, tunnel_mode = TunnelMode,
+			   information_elements = IEs,
 			   wpa_config = WpaConfig, gtk = GTK, igtk = IGTK},
 		     StationMAC,
 		     State = #state{id = WtpId, session_id = SessionId,
@@ -2141,7 +2142,7 @@ internal_new_station(#wlan{bss = BSS, mac_mode = MacMode, tunnel_mode = TunnelMo
 			    data_path = DataPath, wtp_data_channel_address = WTPDataChannelAddress,
 			    wtp_id = WtpId, wtp_session_id = SessionId,
 			    mac_mode = MacMode, tunnel_mode = TunnelMode,
-			    bss = BSS, wpa_config = WpaConfig,
+			    bss = BSS, bss_ies = IEs, wpa_config = WpaConfig,
 			    gtk = GTK, igtk = IGTK
 			   },
 	    Reply =

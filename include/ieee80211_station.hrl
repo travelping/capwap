@@ -44,6 +44,7 @@
 	  tunnel_mode,
 
 	  bss,
+	  bss_ies,
 	  wpa_config,
 	  gtk,
 	  igtk

@@ -71,6 +71,7 @@
 	  capabilities,
 
           radio_mac,
+	  response_ies,
 	  wpa_config,
 	  gtk,
 	  igtk,
@@ -238,18 +239,18 @@ init_assoc(Event = {'Deauthentication', _DA, _SA, BSS, 0, 0, _Frame},
     lager:debug("in INIT_ASSOC got Deauthentication: ~p", [Event]),
     {next_state, initial_state(MacMode), State, ?SHUTDOWN_TIMEOUT};
 
-init_assoc(Event = {FrameType, DA, SA, BSS, 0, 0, _Frame}, State)
+init_assoc(Event = {FrameType, DA, SA, BSS, 0, 0, ReqFrame},
+	   #state{response_ies = ResponseIEs} = State0)
   when (FrameType == 'Association Request' orelse FrameType == 'Reassociation Request') ->
     lager:debug("in INIT_ASSOC got Association Request: ~p", [Event]),
-    %% Fake Assoc Details
-    %% we should at the very least match the Rates.....
 
-    MgmtFrame = <<16#01, 16#00, 16#00, 16#00, 16#01, 16#c0, 16#01, 16#08,
-		  16#82, 16#84, 16#0b, 16#16, 16#0c, 16#12, 16#18, 16#24,
-		  16#dd, 16#18, 16#00, 16#50, 16#f2, 16#02, 16#01, 16#01,
-		  16#00, 16#00, 16#03, 16#a4, 16#00, 16#00, 16#27, 16#a4,
-		  16#00, 16#00, 16#42, 16#43, 16#5e, 16#00, 16#62, 16#32,
-		  16#2f, 16#00>>,
+    State1 = assign_aid(State0),
+    State2 = update_sta_from_mgmt_frame(FrameType, ReqFrame, State1),
+    State3 = aaa_association(State2),
+
+    IEs = build_ies(ResponseIEs),
+    MgmtFrame = <<16#01:16/integer-little, 0:16/integer-little,
+		  (State3#state.aid):16/integer-little, IEs/binary>>,
 
     {Type, SubType} = frame_type('Association Response'),
     FrameControl = <<SubType:4, Type:2, 0:2, 0:6, 0:1, 0:1>>,
@@ -260,8 +261,11 @@ init_assoc(Event = {FrameType, DA, SA, BSS, 0, 0, _Frame}, State)
 	      SA:6/bytes, DA:6/bytes, BSS:6/bytes,
 	      SequenceControl:16,
 	      MgmtFrame/binary>>,
-    wtp_send_80211(Frame, State),
-    {next_state, init_start, State, ?IDLE_TIMEOUT};
+    wtp_send_80211(Frame, State3),
+
+    State = wtp_add_station(State3),
+
+    {next_state, connected, State, ?IDLE_TIMEOUT};
 
 init_assoc(Event, State) ->
     lager:warning("in INIT_ASSOC got unexpexted: ~p", [Event]),
@@ -475,6 +479,17 @@ init_state_from_cfg(StationCfg) ->
 				 rekey_running = false,
 				 rekey_pending = []}).
 
+convert_ies_from_bss(IEs) ->
+    lists:foldl(fun({IE = <<Id:8, _/binary>>, Flags}, Acc) ->
+			case proplists:get_bool(probe_response, Flags) of
+			    true -> [{Id, IE} | Acc];
+			    _    -> Acc
+			end
+		end, [], IEs).
+
+build_ies(IEs) ->
+    << <<IE/binary>> || {_Id, IE} <- lists:keysort(1, IEs) >>.
+
 update_state_from_cfg(#station_config{data_path = DataPath,
 				      wtp_data_channel_address = WTPDataChannelAddress,
 				      wtp_id = WtpId,
@@ -482,6 +497,7 @@ update_state_from_cfg(#station_config{data_path = DataPath,
 				      mac_mode = MacMode,
 				      tunnel_mode = TunnelMode,
 				      bss = BSS,
+				      bss_ies = IEs,
 				      wpa_config = WpaConfig,
 				      gtk = GTK,
 				      igtk = IGTK
@@ -493,6 +509,7 @@ update_state_from_cfg(#station_config{data_path = DataPath,
 		mac_mode = MacMode,
 		tunnel_mode = TunnelMode,
 		radio_mac = BSS,
+		response_ies = convert_ies_from_bss(IEs),
 		wpa_config = WpaConfig,
 		gtk = GTK,
 		igtk = IGTK
