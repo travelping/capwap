@@ -76,8 +76,6 @@
 	  config,
 	  mac_types,
 	  tunnel_modes,
-	  mac_mode,
-	  tunnel_mode,
 
 	  %% Join Information
 	  location,
@@ -1795,7 +1793,8 @@ wtp_config_get(_, {DefaultName, Default}) ->
     application:get_env(capwap, DefaultName, Default).
 
 wlan_cfg_rateset(#wtp_radio{radio_id = RadioId},
-		 #wlan{wlan_identifier = {_, WlanId}}, Mode, RateSet, IEs) ->
+		 #wlan{wlan_identifier = {_, WlanId},
+		       mode = Mode, rate_set = RateSet}, IEs) ->
     case lists:split(8, RateSet) of
 	{_, []} ->
 	    IEs;
@@ -1899,31 +1898,26 @@ internal_add_wlan(#wtp_radio{radio_id = RadioId} = Radio,
 				   ssid = SSID,
 				   suppress_ssid = SuppressSSID} = WlanConfig,
 		  NotifyFun,
-		  #state{config = Config} = State) ->
+		  #state{config = Config} = State0) ->
     WBID = ?CAPWAP_BINDING_802_11,
-    Mode = '11g-only',
-    RateSet = rateset(Mode),
     Flags = [{frame,'802.3'}],
-    MacMode = select_mac_mode(State#state.mac_types),
-    TunnelMode = select_tunnel_mode(State#state.tunnel_modes, MacMode),
     Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
-    State0 = State#state{mac_mode = MacMode, tunnel_mode = TunnelMode},
 
-    WlanState = init_wlan_state(Radio, WlanId, WlanConfig),
-    State1 = update_wlan_state({RadioId, WlanId}, fun(_W) -> WlanState end, State0),
+    WlanState = init_wlan_state(Radio, WlanId, WlanConfig, State0),
+    State = update_wlan_state({RadioId, WlanId}, fun(_W) -> WlanState end, State0),
 
     AddWlan = #ieee_802_11_add_wlan{
 		 radio_id      = RadioId,
 		 wlan_id       = WlanId,
 		 capability    = [ess, short_slot_time],
 		 auth_type     = open_system,
-		 mac_mode      = MacMode,
-		 tunnel_mode   = TunnelMode,
+		 mac_mode      = WlanState#wlan.mac_mode,
+		 tunnel_mode   = WlanState#wlan.tunnel_mode,
 		 suppress_ssid = SuppressSSID,
 		 ssid          = SSID
 		},
     ReqElements0 = [set_wlan_keys(WlanState, AddWlan)],
-    ReqElements1 = wlan_cfg_rateset(Radio, WlanState, Mode, RateSet, ReqElements0),
+    ReqElements1 = wlan_cfg_rateset(Radio, WlanState, ReqElements0),
     ReqElements2 = wlan_cfg_wmm(Radio, WlanState, ReqElements1),
     ReqElements3 = wlan_cfg_ht_opmode(Radio, WlanState, ReqElements2),
     ReqElements4 = wlan_cfg_rsn(Radio, WlanState, ReqElements3),
@@ -1931,7 +1925,7 @@ internal_add_wlan(#wtp_radio{radio_id = RadioId} = Radio,
     ReqElements6 = wlan_cfg_tp_hold_time(Radio, WlanState, Config, ReqElements5),
     ReqElements = add_wlan_keys(WlanState, ReqElements6),
     ResponseNotifyFun = internal_add_wlan_result({RadioId, WlanId}, NotifyFun, _, _, _),
-    send_request(Header, ieee_802_11_wlan_configuration_request, ReqElements, ResponseNotifyFun, State1);
+    send_request(Header, ieee_802_11_wlan_configuration_request, ReqElements, ResponseNotifyFun, State);
 
 internal_add_wlan(RadioId, WlanId, NotifyFun, State)
   when RadioId == false orelse WlanId == false ->
@@ -2008,24 +2002,34 @@ init_wlan_state(#wtp_radio{radio_id = RadioId} = Radio, WlanId,
 		   secret = Secret,
 		   peer_rekey = PeerRekey,
 		   group_rekey = GroupRekey,
-		   strict_group_rekey = StrictGroupRekey} = WlanConfig) ->
-    W = #wlan{wlan_identifier = {RadioId, WlanId},
-	      ssid = SSID,
-	      suppress_ssid = SuppressSSID,
-	      privacy = Privacy,
-	      wpa_config = #wpa_config{
-			      ssid = SSID,
-			      privacy = Privacy,
-			      rsn = radio_rsn_cipher_capabilities(Radio, WlanConfig),
-			      secret = Secret,
-			      peer_rekey = PeerRekey,
-			      group_rekey = GroupRekey,
-			      strict_group_rekey = StrictGroupRekey
-			     },
-	      state = initializing,
-	      group_rekey_state = idle
-	     },
-    init_wlan_privacy(W).
+		   strict_group_rekey = StrictGroupRekey} = WlanConfig,
+		#state{mac_types = MacTypes, tunnel_modes = TunnelModes}) ->
+
+    MacMode = select_mac_mode(MacTypes),
+    TunnelMode = select_tunnel_mode(TunnelModes, MacMode),
+
+    Mode = '11g-only',
+    W0 = #wlan{wlan_identifier = {RadioId, WlanId},
+	       mode = Mode,
+	       rate_set = rateset(Mode),
+	       ssid = SSID,
+	       suppress_ssid = SuppressSSID,
+	       mac_mode = MacMode,
+	       tunnel_mode = TunnelMode,
+	       privacy = Privacy,
+	       wpa_config = #wpa_config{
+			       ssid = SSID,
+			       privacy = Privacy,
+			       rsn = radio_rsn_cipher_capabilities(Radio, WlanConfig),
+			       secret = Secret,
+			       peer_rekey = PeerRekey,
+			       group_rekey = GroupRekey,
+			       strict_group_rekey = StrictGroupRekey
+			      },
+	       state = initializing,
+	       group_rekey_state = idle
+	      },
+    init_wlan_privacy(W0).
 
 init_key(Cipher) ->
     #ieee80211_key{cipher = Cipher,
@@ -2118,11 +2122,11 @@ internal_new_station(#wlan{}, StationMAC,
 		[StationMAC, StationCount, MaxStations]),
     {{error, too_many_clients}, State};
 
-internal_new_station(#wlan{bss = BSS, wpa_config = WpaConfig, gtk = GTK, igtk = IGTK},
+internal_new_station(#wlan{bss = BSS, mac_mode = MacMode, tunnel_mode = TunnelMode,
+			   wpa_config = WpaConfig, gtk = GTK, igtk = IGTK},
 		     StationMAC,
 		     State = #state{id = WtpId, session_id = SessionId,
 				    data_channel_address = WTPDataChannelAddress, data_path = DataPath,
-				    mac_mode = MacMode, tunnel_mode = TunnelMode,
 				    station_count  = StationCount}) ->
 
     %% we have to repeat the search again to avoid a race

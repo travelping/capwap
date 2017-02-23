@@ -31,6 +31,10 @@
 	  bss,
 	  ssid,
 	  suppress_ssid,
+	  mode,
+	  mac_mode,
+	  tunnel_mode,
+	  rate_set,
 	  privacy,
 	  wpa_config,
 
