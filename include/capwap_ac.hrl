@@ -13,6 +13,8 @@
 %% You should have received a copy of the GNU Affero General Public License
 %% along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+-define(CAPWAP_BINDING_802_11, 1).
+
 -record(wpa_config, {
 	  ssid,
 	  privacy,

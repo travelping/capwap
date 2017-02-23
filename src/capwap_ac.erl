@@ -1900,7 +1900,7 @@ internal_add_wlan(#wtp_radio{radio_id = RadioId} = Radio,
 				   suppress_ssid = SuppressSSID} = WlanConfig,
 		  NotifyFun,
 		  #state{config = Config} = State) ->
-    WBID = 1,
+    WBID = ?CAPWAP_BINDING_802_11,
     Mode = '11g-only',
     RateSet = rateset(Mode),
     Flags = [{frame,'802.3'}],
@@ -1954,7 +1954,7 @@ internal_add_wlan_result(WlanIdent, NotifyFun, Code, Arg, State0) ->
     response_notify(NotifyFun, Code, Arg, State).
 
 internal_del_wlan(WlanIdent = {RadioId, WlanId}, NotifyFun, State) ->
-    WBID = 1,
+    WBID = ?CAPWAP_BINDING_802_11,
     Flags = [{frame,'802.3'}],
     Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
     ReqElemDel = [#ieee_802_11_delete_wlan{
@@ -2163,7 +2163,7 @@ internal_add_station(#wlan{wlan_identifier = {RadioId, WlanId}, bss = BSS}, MAC,
     Ret = capwap_dp:attach_station(WTPDataChannelAddress, MAC, RadioId, BSS),
     lager:debug("attach_station(~p, ~p, ~p, ~p): ~p", [WTPDataChannelAddress, MAC, RadioId, BSS, Ret]),
 
-    WBID = 1,
+    WBID = ?CAPWAP_BINDING_802_11,
     Flags = [{frame,'802.3'}],
 
     %% FIXME: generate uniq value...
@@ -2232,7 +2232,7 @@ internal_del_station(#wlan{wlan_identifier = {RadioId, _WlanId}}, MAC, State) ->
     Ret = capwap_dp:detach_station(MAC),
     lager:debug("detach_station(~p): ~p", [MAC, Ret]),
 
-    WBID = 1,
+    WBID = ?CAPWAP_BINDING_802_11,
     Flags = [{frame,'802.3'}],
     ReqElements = [#delete_station{
 		      radio_id	= RadioId,
@@ -2252,7 +2252,7 @@ sendto(Header, Data, #state{data_channel_address = WTPDataChannelAddress}) ->
     capwap_dp:sendto(WTPDataChannelAddress, Packet).
 
 internal_send_80211_station(#wlan{wlan_identifier = {RadioId, _WlanId}}, Data, State) ->
-    WBID = 1,
+    WBID = ?CAPWAP_BINDING_802_11,
     Header = #capwap_header{
 		 radio_id = RadioId,
 		 wb_id = WBID,
@@ -2330,7 +2330,7 @@ start_gtk_rekey(WlanIdent = {RadioId, WlanId},
     Stations = capwap_station_reg:list_stations(self(), BSS),
     lager:debug("GTK ReKey Stations: ~p", [Stations]),
 
-    WBID = 1,
+    WBID = ?CAPWAP_BINDING_802_11,
     Flags = [{frame,'802.3'}],
     Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
 
@@ -2382,7 +2382,7 @@ start_gtk_rekey_result(WlanIdent, _Stations, _Code, _Arg, State) ->
 finish_gtk_rekey(WlanIdent = {RadioId, WlanId},
 		 Wlan0 = #wlan{group_rekey_state = running},
 		 State0) ->
-    WBID = 1,
+    WBID = ?CAPWAP_BINDING_802_11,
     Flags = [{frame,'802.3'}],
     Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
 
