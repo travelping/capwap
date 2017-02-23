@@ -1797,18 +1797,22 @@ ieee_802_11_ie(Id, Data) ->
 
 capwap_802_11_ie(#wtp_radio{radio_id = RadioId},
 		 #wlan{wlan_identifier = {_, WlanId}},
-		 {IE, Flags}, IEs) ->
+		 {IE = <<Id:8, _/binary>>, Flags}, IEs)
+  when Id /= ?WLAN_EID_SUPP_RATES ->
     [#ieee_802_11_information_element{
 	radio_id = RadioId,
 	wlan_id = WlanId,
 	flags = Flags,
 	ie = IE}
-     | IEs].
+     | IEs];
+capwap_802_11_ie(_Radio, _WlanState, _IE, IEs) ->
+    IEs.
 
 init_wlan_information_elements(Radio, WlanState) ->
     ProbeResponseFlags = ['beacon','probe_response'],
     IEList = [
-	      {fun wlan_rateset_ie/2, ProbeResponseFlags},
+	      {fun wlan_supported_rateset_ie/2, ProbeResponseFlags},
+	      {fun wlan_extended_supported_rateset_ie/2, ProbeResponseFlags},
 	      {fun wlan_wmm_ie/2, ProbeResponseFlags},
 	      {fun wlan_ht_opmode_ie/2, ProbeResponseFlags},
 	      {fun wlan_rsn_ie/2, ProbeResponseFlags},
@@ -1822,7 +1826,12 @@ init_wlan_information_elements(Radio, WlanState) ->
 			end
 		end, WlanState, IEList).
 
-wlan_rateset_ie(_Radio, #wlan{mode = Mode, rate_set = RateSet}) ->
+wlan_supported_rateset_ie(_Radio, #wlan{mode = Mode, rate_set = RateSet}) ->
+    {Rates, _} = lists:split(8, RateSet),
+    ieee_802_11_ie(?WLAN_EID_SUPP_RATES,
+		   << <<(capwap_packet:encode_rate(Mode, X)):8>> || X <- Rates>>).
+
+wlan_extended_supported_rateset_ie(_Radio, #wlan{mode = Mode, rate_set = RateSet}) ->
     case lists:split(8, RateSet) of
 	{_, []} ->
 	    undefined;
