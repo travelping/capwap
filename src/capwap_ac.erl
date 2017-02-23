@@ -2172,16 +2172,13 @@ internal_add_station(#wlan{wlan_identifier = {RadioId, WlanId}, bss = BSS}, MAC,
     WBID = ?CAPWAP_BINDING_802_11,
     Flags = [{frame,'802.3'}],
 
-    %% FIXME: generate uniq value...
-    AID = (rand:uniform(2007) + 1) bor 16#C000,
-
     ReqElements0 = [#add_station{
 		      radio_id	= RadioId,
 		      mac	= MAC,
 		      vlan_name = <<>>},
 		   #ieee_802_11_station{
 		      radio_id	= RadioId,
-		      association_id = AID,
+		      association_id = StaCaps#sta_cap.aid,
 		      mac_address = MAC,
 		      capabilities = [ess, short_slot_time] ++ [ 'privacy' || Encryption ],
 		      wlan_id = WlanId,

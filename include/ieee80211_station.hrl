@@ -14,6 +14,7 @@
 %% along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 -record(sta_cap, {
+	  aid = 16#C001      :: integer(),
 	  wmm = false        :: boolean(),
 	  sgi_20mhz = 0      :: boolean(),
 	  sgi_40mhz = 0      :: boolean(),

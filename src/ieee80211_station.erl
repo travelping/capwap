@@ -67,6 +67,7 @@
           mac_mode,
           tunnel_mode,
           out_action,
+	  aid,
 	  capabilities,
 
           radio_mac,
@@ -220,9 +221,10 @@ init_assoc(Event = {FrameType, _DA, _SA, BSS, 0, 0, Frame},
     %%   necessary, and upon receipt of a failed Association Response frame
     %%   from the AC, the WTP MUST send a Disassociation frame to the station.
 
-    State1 = update_sta_from_mgmt_frame(FrameType, Frame, State0),
-    State2 = aaa_association(State1),
-    State = wtp_add_station(State2),
+    State1 = assign_aid(State0),
+    State2 = update_sta_from_mgmt_frame(FrameType, Frame, State1),
+    State3 = aaa_association(State2),
+    State = wtp_add_station(State3),
 
     {next_state, connected, State, ?IDLE_TIMEOUT};
 
@@ -633,6 +635,10 @@ encode_auth_frame(#auth_frame{algo   = Algo, seq_no = SeqNo,
     <<Algo:16/little-integer, SeqNo:16/little-integer,
       Status:16/little-integer, Params/binary>>.
 
+assign_aid(State) ->
+    %% FIXME: generate uniq value...
+    State#state{aid = (rand:uniform(2007) + 1) bor 16#C000}.
+
 update_sta_from_mgmt_frame(FrameType, Frame, State)
   when (FrameType == 'Association Request') ->
     <<_Capability:16, _ListenInterval:16,
@@ -646,9 +652,9 @@ update_sta_from_mgmt_frame(FrameType, Frame, State)
 update_sta_from_mgmt_frame(_FrameType, _Frame, State) ->
     State.
 
-update_sta_from_mgmt_frame_ies(IEs, #state{capabilities = Cap0} = State) ->
+update_sta_from_mgmt_frame_ies(IEs, #state{aid = AID, capabilities = Cap0} = State) ->
     ListIE = [ {Id, Data} || <<Id:8, Len:8, Data:Len/bytes>> <= IEs ],
-    Cap = lists:foldl(fun update_sta_cap_from_mgmt_frame_ie/2, Cap0, ListIE),
+    Cap = lists:foldl(fun update_sta_cap_from_mgmt_frame_ie/2, Cap0#sta_cap{aid = AID}, ListIE),
     lager:debug("New Station Caps: ~p", [lager:pr(Cap, ?MODULE)]),
     lager:info("STA: ~p, Ciphers: Group ~p, PairWise: ~p, AKM: ~p, Caps: ~w, Mgmt: ~p",
 	       [flower_tools:format_mac(State#state.mac),
