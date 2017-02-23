@@ -2215,7 +2215,8 @@ internal_add_station(#wlan{wlan_identifier = {RadioId, WlanId}, bss = BSS}, MAC,
 internal_add_station(_, _MAC, _StaCaps, _CryptoState, NotifyFun, State) ->
     response_notify(NotifyFun, -1, [], State).
 
-station_session_key(_RadioId, _WlanId, MAC, {AKMonly, false, _CipherState}, IEs) ->
+station_session_key(_RadioId, _WlanId, MAC, {AKMonly, false, CipherState}, IEs)
+  when is_record(CipherState, ccmp) ->
     IE = #ieee_802_11_station_session_key{
 	    mac_address = MAC,
 	    flags = ['akm_only' || AKMonly],
