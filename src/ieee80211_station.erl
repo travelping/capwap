@@ -240,13 +240,33 @@ init_assoc(Event = {'Deauthentication', _DA, _SA, BSS, 0, 0, _Frame},
     {next_state, initial_state(MacMode), State, ?SHUTDOWN_TIMEOUT};
 
 init_assoc(Event = {FrameType, DA, SA, BSS, 0, 0, ReqFrame},
-	   #state{response_ies = ResponseIEs} = State0)
+	   #state{response_ies = ResponseIEs0,
+		  wpa_config = #wpa_config{
+				  rsn = #wtp_wlan_rsn{
+					   version = RSNversion,
+					   management_frame_protection = MFP}}
+		 } = State0)
   when (FrameType == 'Association Request' orelse FrameType == 'Reassociation Request') ->
     lager:debug("in INIT_ASSOC got Association Request: ~p", [Event]),
 
     State1 = assign_aid(State0),
     State2 = update_sta_from_mgmt_frame(FrameType, ReqFrame, State1),
     State3 = aaa_association(State2),
+
+    %% TODO: validate RSNE against Wlan Config
+    #state{capabilities = StaCaps} = State3,
+    StaRSN = capwap_ac:rsn_ie(#wtp_wlan_rsn{
+				 version =		   RSNversion,
+				 capabilities =		   StaCaps#sta_cap.rsn_capabilities,
+				 group_cipher_suite =	   StaCaps#sta_cap.group_cipher_suite,
+				 group_mgmt_cipher_suite = StaCaps#sta_cap.group_mgmt_cipher_suite,
+				 cipher_suites =	   [StaCaps#sta_cap.cipher_suite],
+				 akm_suites =		   [StaCaps#sta_cap.akm_suite]}, MFP /= false),
+    ResponseIEs1 = lists:keystore(?WLAN_EID_RSN, 1, ResponseIEs0, {?WLAN_EID_RSN, StaRSN}),
+
+    %% TODO: NasId and R1KH (MAC)
+    R0KH = <<"scg4.tpip.net">>,
+    ResponseIEs = [encode_fte(R0KH, BSS) | ResponseIEs1],
 
     IEs = build_ies(ResponseIEs),
     MgmtFrame = <<16#01:16/integer-little, 0:16/integer-little,
@@ -727,8 +747,8 @@ decode_rsne(group_cipher_suite, <<GroupCipherSuite:4/bytes, Next/binary>>, Cap) 
     decode_rsne(pairwise_cipher_suite, Next, Cap#sta_cap{group_cipher_suite = GroupCipherSuite});
 decode_rsne(pairwise_cipher_suite, <<1:16/little, PairWiseCipherSuite:4/bytes, Next/binary>>, Cap) ->
     decode_rsne(auth_key_management, Next, Cap#sta_cap{cipher_suite = PairWiseCipherSuite});
-decode_rsne(auth_key_management, <<1:16/little, AKM:4/bytes, Next/binary>>, Cap) ->
-    decode_rsne(rsn_capabilities, Next, Cap#sta_cap{akm_suite = AKM});
+decode_rsne(auth_key_management, <<1:16/little, AKM:32, Next/binary>>, Cap) ->
+    decode_rsne(rsn_capabilities, Next, Cap#sta_cap{akm_suite = capwap_packet:decode_akm_suite(AKM)});
 decode_rsne(rsn_capabilities, <<RSNCaps:16/little, Next/binary>>, Cap) ->
     decode_rsne(pmkid, Next, Cap#sta_cap{rsn_capabilities = RSNCaps});
 decode_rsne(pmkid, <<0:16/little, Next/binary>>, Cap) ->
@@ -739,6 +759,23 @@ decode_rsne(pmkid, <<Count:16/little, Data/binary>>, Cap) ->
     decode_rsne(group_management_cipher, Next, Cap#sta_cap{pmk_ids = [ Id || <<Id:16/bytes>> <= PMKIds ]});
 decode_rsne(group_management_cipher, <<GroupMgmtCipherSuite:32>>, Cap) ->
     Cap#sta_cap{group_mgmt_cipher_suite = capwap_packet:decode_cipher_suite(GroupMgmtCipherSuite)}.
+
+ft_ie(R0KH, R1KH) ->
+%% Page 1312
+%% The (Re)Association Response frame from the AP shall contain an MDE, with contents as presented in
+%% Beacon and Probe Response frames. The FTE shall include the key holder identities of the AP, the R0KH-ID
+%% and R1KH-ID, set to the values of dot11FTR0KeyHolderID and dot11FTR1KeyHolderID, respectively. The
+%% FTE shall have a MIC element count of zero (i.e., no MIC present) and have ANonce, SNonce, and MIC
+%% fields set to 0.
+    R1KHie = <<1:8, (size(R1KH)):8, R1KH/binary>>,
+    R0KHie = <<3:8, (size(R0KH)):8, R0KH/binary>>,
+    capwap_ac:ieee_802_11_ie(?WLAN_EID_FAST_BSS_TRANSITION, <<0:8, 0:8, 0:(16 * 8), 0:(32 * 8), 0:(32 * 8),
+							      R1KHie/binary, R0KHie/binary>>).
+encode_fte(R0KH, R1KH) ->
+    {?WLAN_EID_FAST_BSS_TRANSITION, ft_ie(R0KH, R1KH)}.
+
+%% ti_ie(Type, Interval) ->
+%%     capwap_ac:ieee_802_11_ie(?WLAN_EID_TIMEOUT_INTERVAL, <<Type:8, Interval:32/little>>).
 
 strip_ht_control(0, Frame) ->
     Frame;
@@ -973,14 +1010,14 @@ send_eapol_key(Flags, KeyData,
 
 init_eapol(#state{capabilities = #sta_cap{akm_suite = AKM},
 		  wpa_config = #wpa_config{ssid = SSID, secret = Secret}} = State)
-  when AKM == ?IEEE_802_1_AKM_PSK ->
-    {ok, PMK} = eapol:phrase2psk(Secret, SSID),
-    lager:debug("PMK: ~s", [pbkdf2:to_hex(PMK)]),
-    rsna_4way_handshake({init, PMK}, State#state{rekey_running = ptk});
+  when AKM == 'PSK'; AKM == 'FT-PSK' ->
+    {ok, PSK} = eapol:phrase2psk(Secret, SSID),
+    lager:debug("PSK: ~s", [pbkdf2:to_hex(PSK)]),
+    rsna_4way_handshake({init, PSK}, State#state{rekey_running = ptk});
 
 init_eapol(#state{capabilities = #sta_cap{akm_suite = AKM},
 		  wpa_config = #wpa_config{ssid = SSID}} = State)
-  when AKM == ?IEEE_802_1_AKM_WPA ->
+  when AKM == '802.1x'; AKM == 'FT-802.1x' ->
     ReqData = <<0, "networkid=", SSID/binary, ",nasid=SCG4,portid=1">>,
     Id = 1,
     EAPData = eapol:request(Id, identity, ReqData),
@@ -1029,9 +1066,8 @@ eap_handshake_next({authenticate, Opts}, #state{aaa_session = Session} = State) 
 	    SessionOpts = ergw_aaa_session:get(Session),
 	    MSK = << (ergw_aaa_session:attr_get('MS-MPPE-Recv-Key', SessionOpts, <<>>))/binary,
 		     (ergw_aaa_session:attr_get('MS-MPPE-Send-Key', SessionOpts, <<>>))/binary>>,
-	    %% IEEE 802.11-2012, Sect. 11.6.1.3
-	    <<PMK:32/bytes, _/binary>> = MSK,
-	    rsna_4way_handshake({init, PMK}, State);
+	    lager:debug("MSK: ~s", [flower_tools:hexdump(MSK)]),
+	    rsna_4way_handshake({init, MSK}, State);
 
 	challenge ->
 	    lager:info("AuthResult: challenge"),
@@ -1070,13 +1106,32 @@ encode_igtk_ie(#ieee80211_key{index = Index, key = Key}) ->
       16#00, 16#0F, 16#AC, ?IGTK_KDE:8,
       (Index + 4):16/little-integer, 0:48, Key/binary>>.
 
-rsna_4way_handshake({init, PMK}, #state{capabilities =
-					    #sta_cap{group_mgmt_cipher_suite = GroupMgmtCipherSuite}}
+mic_for_akm('802.1x')			-> 'HMAC-SHA1-128';
+mic_for_akm('PSK')			-> 'HMAC-SHA1-128';
+mic_for_akm('FT-802.1x')		-> 'AES-128-CMAC';
+mic_for_akm('FT-PSK')			-> 'AES-128-CMAC';
+mic_for_akm('802.1x-SHA256')		-> 'AES-128-CMAC';
+mic_for_akm('PSK-SHA256')		-> 'AES-128-CMAC';
+mic_for_akm('802.1x-Suite-B')		-> 'HMAC-SHA256';
+mic_for_akm('802.1x-Suite-B-192')	-> 'HMAC-SHA384';
+mic_for_akm('FT-802.1x-SHA384')		-> 'HMAC-SHA384';
+mic_for_akm(X)				-> X.
+
+rsna_4way_handshake({init, MSK}, #state{capabilities =
+					    #sta_cap{
+					       akm_suite = AKM,
+					       group_mgmt_cipher_suite = GroupMgmtCipherSuite}}
 		   = State) ->
+
+    %% IEEE 802.11-2012, Sect. 11.6.1.3
+    <<PMK:32/bytes, _/binary>> = MSK,
+
     ANonce = crypto:strong_rand_bytes(32),
-    CipherState = #ccmp{cipher_suite = 'AES-HMAC-SHA1',
+    CipherState = #ccmp{akm_algo = AKM,
+			mic_algo = mic_for_akm(AKM),
 			group_mgmt_cipher_suite = GroupMgmtCipherSuite,
 			replay_counter = 0,
+			master_session_key = MSK,
 			pre_master_key = PMK,
 			nonce = ANonce},
     send_eapol_key([pairwise, ack], <<>>,
@@ -1094,7 +1149,123 @@ rsna_4way_handshake(rekey, State = #state{eapol_state = installed,
 			       eapol_retransmit = 0,
 			       cipher_state = CipherState});
 
-rsna_4way_handshake({key, Flags, CipherSuite, ReplayCounter, SNonce, KeyData, MICData},
+rsna_4way_handshake({key, _Flags, MICAlgo, ReplayCounter, SNonce, KeyData, MICData},
+		    State0 = #state{radio_mac = BSS, mac = StationMAC,
+				    wpa_config = #wpa_config{
+						    ssid = SSID,
+						    mobility_domain = MDomain,
+						    rsn = #wtp_wlan_rsn{
+							     management_frame_protection = MFP} = RSN},
+				    gtk = GTK,
+				    igtk = IGTK,
+				    eapol_state = init,
+				    cipher_state =
+					#ccmp{
+					   akm_algo = AKM,
+					   mic_algo = MICAlgo,
+					   group_mgmt_cipher_suite = GroupMgmtCipherSuite,
+					   replay_counter = ReplayCounter,
+					   master_session_key = MSK,
+					   pre_master_key = PMK,
+					   nonce = ANonce} = CipherState0})
+  when AKM == 'FT-802.1x'; AKM == 'FT-PSK' ->
+    %%
+    %% Expected Msg: S1KH→R1KH: EAPOL-Key(0, 1, 0, 0, P, 0, 0, SNonce, MIC, RSNE[PMKR1Name], MDE, FTE)
+    %%
+
+    %% CipherSuite and ReplayCounter match...
+    lager:debug("KeyData: ~p", [pbkdf2:to_hex(KeyData)]),
+    lager:debug("PMK: ~p", [pbkdf2:to_hex(PMK)]),
+    lager:debug("BSS: ~p", [pbkdf2:to_hex(BSS)]),
+    lager:debug("StationMAC: ~p", [pbkdf2:to_hex(StationMAC)]),
+    lager:debug("ANonce: ~p", [pbkdf2:to_hex(ANonce)]),
+    lager:debug("SNonce: ~p", [pbkdf2:to_hex(SNonce)]),
+    lager:debug("CipherState: ~p", [lager:pr(CipherState0, ?MODULE)]),
+    State = stop_eapol_timer(State0),
+
+    %%
+    %% 802.11-2012, Sect. 11.6.6.3: 4-Way Handshake Message 2
+    %%
+    %%    Processing for PTK generation is as follows:
+    %%
+    %%    ...
+    %%
+    %%    On reception of Message 2, the Authenticator checks that the key
+    %%    replay counter corresponds to the outstanding Message 1. If not,
+    %%    it silently discards the message. Otherwise, the Authenticator:
+    %%
+    %%       a) Derives PTK.
+    %%       b) Verifies the Message 2 MIC.
+    %%       c)
+    %%            1) If the calculated MIC does not match the MIC that the
+    %%               Supplicant included in the EAPOL-Key frame, the
+    %%               Authenticator silently discards Message 2.
+    %%
+    %%
+    %% 802.11-2012, Sect. 12.4.2 FT initial mobility domain association in an RSN
+    %%
+    %%    The message sequence is similar to that of 11.6.6. The contents of
+    %%    each message shall be as described in 11.6.6 except as follows:
+    %%      - Message 2: the S1KH shall include the PMKR1Name in the PMKID field of
+    %%        the RSNE. The PMKR1Name shall be as calculated by the S1KH according
+    %%        to the procedures of 11.6.1.7.4; all other fields of the RSNE shall be
+    %%        identical to the RSNE present in the (Re)Association Request frame. The
+    %%        S1KH shall include the FTE and MDE; the FTE and MDE shall be the same as
+    %%        those provided in the AP’s (Re)Association Response frame.
+    %%
+    R0KH = <<"scg4.tpip.net">>,
+    {KCK, KEK, TK, _PMKR0Name, PMKR1Name} =
+	eapol:ft_msk2ptk(MSK, SNonce, ANonce, BSS, StationMAC,
+			 SSID, MDomain, R0KH, BSS, StationMAC, StationMAC),
+    CipherState = CipherState0#ccmp{rsn = RSN, kck = KCK, kek = KEK, tk = TK},
+
+    case eapol:validate_mic(CipherState, MICData) of
+	ok ->
+	    lager:debug("rsna_4way_handshake 2 of 4: ok"),
+	    %% R1KH→S1KH: EAPOL-Key(1, 1, 1, 1, P, 0, 0, ANonce, MIC, RSNE[PMKR1Name], MDE,
+	    %%                      GTK[N], IGTK[M], FTE, TIE[ReassociationDeadline],
+	    %%                      TIE[KeyLifetime])
+
+	    RSNIE = capwap_ac:rsn_ie(RSN, [PMKR1Name], MFP == required),
+	    MDE = capwap_ac:ieee_802_11_ie(?WLAN_EID_MOBILITY_DOMAIN, <<MDomain:16, 1>>),
+	    Tx = 0,
+	    GTKIE = encode_gtk_ie(Tx, GTK),
+	    IGTKIE = case GroupMgmtCipherSuite of
+			 'AES-CMAC' ->
+			     encode_igtk_ie(IGTK);
+			 _ ->
+			     <<>>
+		     end,
+	    FTE = ft_ie(R0KH, BSS),
+
+	    %% TODO: possibly....
+	    %%
+	    %% IEEE 802.11 says ReassociationDeadline and KeyLifetime should be
+	    %% present, but it seems to work without....
+	    %%
+	    %% TIEReassociationDeadLine = ti_ie(1, ReassociationDeadline),
+	    %% TIEKeyLifetime = ti_ie(2, KeyLifetime),
+
+	    TxKeyData = pad_key_data(<<RSNIE/binary, MDE/binary, GTKIE/binary,
+				       IGTKIE/binary, FTE/binary>>),
+				     %% TIEReassociationDeadLine/binary,
+				     %% TIEKeyLifetime/binary>>),
+	    lager:debug("TxKeyData: ~p", [pbkdf2:to_hex(TxKeyData)]),
+	    EncTxKeyData = eapol:aes_key_wrap(KEK, TxKeyData),
+	    lager:debug("EncTxKeyData: ~p", [pbkdf2:to_hex(EncTxKeyData)]),
+
+	    send_eapol_key([pairwise, install, ack, mic, secure, enc], EncTxKeyData,
+			   State#state{eapol_state = install,
+				       eapol_retransmit = 0,
+				       cipher_state = CipherState});
+
+	Other ->
+	    lager:debug("rsna_4way_handshake FT 2 of 4: ~p", [Other]),
+	    %% silently discard, see above
+	    State
+    end;
+
+rsna_4way_handshake({key, _Flags, MICAlgo, ReplayCounter, SNonce, KeyData, MICData},
 		    State0 = #state{radio_mac = BSS, mac = StationMAC,
 				    capabilities = #sta_cap{last_rsne = LastRSNE},
 				    wpa_config = #wpa_config{
@@ -1105,11 +1276,13 @@ rsna_4way_handshake({key, Flags, CipherSuite, ReplayCounter, SNonce, KeyData, MI
 				    eapol_state = init,
 				    cipher_state =
 					#ccmp{
-					   cipher_suite = CipherSuite,
+					   akm_algo = AKM,
+					   mic_algo = MICAlgo,
 					   group_mgmt_cipher_suite = GroupMgmtCipherSuite,
 					   replay_counter = ReplayCounter,
 					   pre_master_key = PMK,
-					   nonce = ANonce} = CipherState0}) ->
+					   nonce = ANonce} = CipherState0})
+  when AKM == '802.1x'; AKM == 'PSK' ->
     %% CipherSuite and ReplayCounter match...
     lager:debug("KeyData: ~p", [pbkdf2:to_hex(KeyData)]),
     lager:debug("PMK: ~p", [pbkdf2:to_hex(PMK)]),
@@ -1139,9 +1312,12 @@ rsna_4way_handshake({key, Flags, CipherSuite, ReplayCounter, SNonce, KeyData, MI
     %%               Authenticator silently discards Message 2.
     %%
 
-    {KCK, KEK, TK} = eapol:pmk2ptk(PMK, BSS, StationMAC, ANonce, SNonce, 48),
-    CipherState = CipherState0#ccmp{rsn = RSN,
-				    kck = KCK, kek = KEK, tk = TK},
+    {KCK, KEK, TK} = eapol:pmk2ptk(PMK, BSS, StationMAC, ANonce, SNonce, 384),
+    lager:debug("KCK: ~p", [pbkdf2:to_hex(KCK)]),
+    lager:debug("KEK: ~p", [pbkdf2:to_hex(KEK)]),
+    lager:debug("TK: ~p", [pbkdf2:to_hex(TK)]),
+
+    CipherState = CipherState0#ccmp{rsn = RSN, kck = KCK, kek = KEK, tk = TK},
 
     case {eapol:validate_mic(CipherState, MICData), KeyData} of
 	{ok, <<?WLAN_EID_RSN, RSNLen:8, LastRSNE:RSNLen/bytes, _/binary>>} ->
@@ -1156,8 +1332,8 @@ rsna_4way_handshake({key, Flags, CipherSuite, ReplayCounter, SNonce, KeyData, MI
 			     <<>>
 		     end,
 	    TxKeyData = pad_key_data(<<RSNIE/binary, GTKIE/binary, IGTKIE/binary>>),
-	    EncTxKeyData = eapol:aes_key_wrap(KEK, TxKeyData),
 	    lager:debug("TxKeyData: ~p", [pbkdf2:to_hex(TxKeyData)]),
+	    EncTxKeyData = eapol:aes_key_wrap(KEK, TxKeyData),
 	    lager:debug("EncTxKeyData: ~p", [pbkdf2:to_hex(EncTxKeyData)]),
 
 	    send_eapol_key([pairwise, install, ack, mic, secure, enc], EncTxKeyData,
@@ -1244,7 +1420,7 @@ rsna_2way_handshake(rekey, State = #state{eapol_state = installed,
 		   State#state{eapol_state = install,
 			       eapol_retransmit = 0});
 
-rsna_2way_handshake({key, _Flags, _CipherSuite, ReplayCounter, _SNonce, _KeyData, MICData},
+rsna_2way_handshake({key, _Flags, _MICAlgo, ReplayCounter, _SNonce, _KeyData, MICData},
 		    State0 = #state{eapol_state = install,
 				    rekey_control = RekeyCtl,
 				    cipher_state =

@@ -55,8 +55,8 @@ suite() ->
 do_prf([]) ->
     ok;
 do_prf([{Key, Label, Data, Expected} | Next]) ->
-    Len = byte_size(Expected),
-    ?equal(Expected, eapol:prf(Key, Label, Data, Len)),
+    Len = bit_size(Expected),
+    ?equal(Expected, eapol:prf(sha, Key, Label, Data, Len)),
     do_prf(Next).
 
 test_prf(_Config) ->
@@ -90,6 +90,24 @@ test_prf(_Config) ->
 
     do_prf(Cases).
 
+do_kdf([]) ->
+    ok;
+do_kdf([{Key, Label, Data, Expected} | Next]) ->
+    Len = bit_size(Expected),
+    ?equal(Expected, eapol:kdf(sha256, Key, Label, Data, Len)),
+    do_kdf(Next).
+
+test_kdf(_Config) ->
+    Cases = [{hexstr2bin("e3a83dee5b300abdd0801562089d22be012b0f"
+			 "eab5cef8b320ea85e5fdf931f0"),
+	      <<"FT-R0">>,
+	      hexstr2bin("0f54657374574c414e2d534347312d47dead0d"
+			 "736367342e747069702e6e6574f81a67210767"),
+	      hexstr2bin("a6d6a60cf34c0cb7113421d14078b7b467a074"
+			 "6ec887c874c2e71cf2f46876be238e3bd6400a"
+			 "0f7f013e65814ff1500d")}],
+    do_kdf(Cases).
+
 do_psk_hashing([]) ->
     ok;
 do_psk_hashing([{Phrase, SSID, Expected} | Next]) ->
@@ -121,7 +139,7 @@ test_ptk(_Config) ->
 			"f6f7f8f9fafbfcfdfeff000102030405"),
     ExpectedTK = hexstr2bin("b2360c79e9710fdd58bea93deaf06599"),
 
-    {_KCK, _KEK, TK} =  eapol:pmk2ptk(PMK, AA, SPA, ANonce, SNonce, 48),
+    {_KCK, _KEK, TK} =  eapol:pmk2ptk(PMK, AA, SPA, ANonce, SNonce, 384),
     ?equal(ExpectedTK, TK).
 
 do_aes_key_wrap([]) ->
@@ -155,7 +173,7 @@ test_aes_key_wrap(_Config) ->
     do_aes_key_wrap(Cases).
 
 all() ->
-    [test_prf, test_psk_hashing, test_ptk, test_aes_key_wrap].
+    [test_prf, test_kdf, test_psk_hashing, test_ptk, test_aes_key_wrap].
 
 init_per_suite(Config) ->
 	Config.

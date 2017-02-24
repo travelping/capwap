@@ -18,6 +18,7 @@
 -record(wpa_config, {
 	  ssid,
 	  privacy,
+	  mobility_domain,
 	  rsn,
 	  secret,
 	  peer_rekey,
@@ -37,6 +38,8 @@
 	  rate_set,
 	  privacy,
 	  wpa_config,
+	  fast_transition,
+	  mobility_domain,
 	  information_elements,
 
 	  state,

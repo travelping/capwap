@@ -87,6 +87,8 @@
 	  mac_mode,
 	  privacy,
 	  management_frame_protection,
+	  fast_transition,
+	  mobility_domain,
 	  secret,
 	  rsn,
 	  peer_rekey,

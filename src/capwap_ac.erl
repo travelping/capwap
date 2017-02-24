@@ -30,7 +30,8 @@
          stop_radio/2]).
 
 %% API for Station process
--export([add_station/5, del_station/3, send_80211/3, rsn_ie/2]).
+-export([add_station/5, del_station/3, send_80211/3, ieee_802_11_ie/2,
+	 rsn_ie/2, rsn_ie/3]).
 
 %% gen_fsm callbacks
 -export([init/1, listen/2, idle/2, join/2, configure/2, data_check/2, run/2,
@@ -1762,13 +1763,25 @@ select_mac_mode(#wtp_wlan_config{mac_mode = split_mac}, split) ->
 select_mac_mode(#wtp_wlan_config{mac_mode = Mode}, both) ->
     Mode.
 
-select_tunnel_mode(Modes, local_mac) ->
+%% CAPWAP RFC says the 802.3 tunnel is only permited with
+%% Local MAC. However, I don't see a reason why is shouldn't
+%% work in Split MAC with encryption provided by WTP as well.
+%%
+%% Select 802.3 tunnel mode by default if it is supported
+%%
+select_tunnel_mode(Modes, _MAC) ->
     case proplists:get_bool('802.3', Modes) of
 	true -> '802_3_tunnel';
 	_    -> '802_11_tunnel'
-    end;
-select_tunnel_mode(_Modes, split_mac) ->
-    '802_11_tunnel'.
+    end.
+
+%% select_tunnel_mode(Modes, Local_mac) ->
+%%     case proplists:get_bool('802.3', Modes) of
+%% 	true -> '802_3_tunnel';
+%% 	_    -> '802_11_tunnel'
+%%     end;
+%% select_tunnel_mode(_Modes, split_mac) ->
+%%     '802_11_tunnel'.
 
 tuple_to_ip({A, B, C, D}) ->
     <<A:8, B:8, C:8, D:8>>;
@@ -1816,7 +1829,8 @@ init_wlan_information_elements(Radio, WlanState) ->
 	      {fun wlan_wmm_ie/2, ProbeResponseFlags},
 	      {fun wlan_ht_opmode_ie/2, ProbeResponseFlags},
 	      {fun wlan_rsn_ie/2, ProbeResponseFlags},
-	      {fun wlan_ht_cap_ie/2, ProbeResponseFlags}],
+	      {fun wlan_ht_cap_ie/2, ProbeResponseFlags},
+	      {fun wlan_md_ie/2, ProbeResponseFlags}],
     lists:foldl(fun({Fun, Flags}, WS = #wlan{information_elements = IEs}) ->
 			case Fun(Radio, WS) of
 			    IE when is_binary(IE) ->
@@ -1858,13 +1872,15 @@ wlan_ht_opmode_ie(#wtp_radio{channel = Channel}, _WlanState) ->
 		   <<Channel:8, 16#00, 16#00, 16#00, 16#00, 16#00, 16#00, 16#00,
 		     16#00, 16#00, 16#00, 16#00, 16#00, 16#00, 16#00, 16#00,
 		     16#00, 16#00, 16#00, 16#00, 16#00, 16#00>>).
+rsn_ie(RSN, PMF) ->
+    rsn_ie(RSN, [], PMF).
 
 rsn_ie(#wtp_wlan_rsn{version = RSNVersion,
 		     capabilities = RSNCaps,
 		     group_cipher_suite = GroupCipherSuite,
 		     group_mgmt_cipher_suite = GroupMgmtCipherSuite,
 		     cipher_suites = CipherSuites,
-		     akm_suites = AKMs}, PMF) ->
+		     akm_suites = AKMs}, PMKIds, PMF) ->
     CipherSuitesBin = << <<X/binary>> || X <- CipherSuites >>,
     AKMsBin = << <<(capwap_packet:encode_akm_suite(X)):32>> || X <- AKMs >>,
 
@@ -1872,10 +1888,16 @@ rsn_ie(#wtp_wlan_rsn{version = RSNVersion,
 	    (length(CipherSuites)):16/little, CipherSuitesBin/binary,
 	    (length(AKMs)):16/little, AKMsBin/binary,
 	    RSNCaps:16/little>>,
+    IE1 = if length(PMKIds) /= 0 orelse
+	     (PMF == true andalso is_atom(GroupMgmtCipherSuite)) ->
+		  <<IE0/binary, (length(PMKIds)):16/little, << <<X/binary>> || X <- PMKIds >>/binary >>;
+	     true ->
+		  IE0
+	  end,
     IE = if PMF == true andalso is_atom(GroupMgmtCipherSuite) ->
-		 <<IE0/binary, 0, 0, (capwap_packet:encode_cipher_suite(GroupMgmtCipherSuite)):32>>;
+		 <<IE1/binary, (capwap_packet:encode_cipher_suite(GroupMgmtCipherSuite)):32>>;
 	    true ->
-		 IE0
+		 IE1
 	 end,
     ieee_802_11_ie(?WLAN_EID_RSN, IE).
 
@@ -1886,6 +1908,11 @@ wlan_rsn_ie(_Radio, #wlan{wpa_config =
 					  management_frame_protection = MFP} = RSN}}) ->
     rsn_ie(RSN, MFP == required);
 wlan_rsn_ie(_, _) ->
+    undefined.
+
+wlan_md_ie(_Radio, #wlan{fast_transition = true, mobility_domain = MDomain}) ->
+    ieee_802_11_ie(?WLAN_EID_MOBILITY_DOMAIN, <<MDomain:16, 1>>);
+wlan_md_ie(_, _) ->
     undefined.
 
 wlan_cfg_tp_hold_time(#wtp_radio{radio_id = RadioId},
@@ -2008,6 +2035,8 @@ init_wlan_state(#wtp_radio{radio_id = RadioId} = Radio, WlanId,
 		   suppress_ssid = SuppressSSID,
 		   mac_mode = MacMode,
 		   privacy = Privacy,
+		   fast_transition = FT,
+		   mobility_domain = MDomain,
 		   secret = Secret,
 		   peer_rekey = PeerRekey,
 		   group_rekey = GroupRekey,
@@ -2026,10 +2055,13 @@ init_wlan_state(#wtp_radio{radio_id = RadioId} = Radio, WlanId,
 	       mac_mode = MacMode,
 	       tunnel_mode = TunnelMode,
 	       privacy = Privacy,
+	       fast_transition = FT,
+	       mobility_domain = MDomain,
 	       information_elements = [],
 	       wpa_config = #wpa_config{
 			       ssid = SSID,
 			       privacy = Privacy,
+			       mobility_domain = MDomain,
 			       rsn = radio_rsn_cipher_capabilities(Radio, WlanConfig),
 			       secret = Secret,
 			       peer_rekey = PeerRekey,
@@ -2047,9 +2079,9 @@ init_key(Cipher) ->
 		   index = 0,
 		   key = crypto:strong_rand_bytes(eapol:key_len(Cipher))}.
 
-update_key(#ieee80211_key{cipher = Cipher, index = Index}) ->
-    #ieee80211_key{index = Index bxor 1,
-		   key = crypto:strong_rand_bytes(eapol:key_len(Cipher))};
+update_key(Key = #ieee80211_key{cipher = Cipher, index = Index}) ->
+    Key#ieee80211_key{index = Index bxor 1,
+		      key = crypto:strong_rand_bytes(eapol:key_len(Cipher))};
 update_key(undefined) ->
     undefined.
 

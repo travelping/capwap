@@ -16,7 +16,7 @@
 -module(eapol).
 
 -export([encode_802_11/3, packet/1, key/3, request/3, decode/1, validate_mic/2]).
--export([phrase2psk/2, prf/4, pmk2ptk/6, aes_key_wrap/2, key_len/1]).
+-export([phrase2psk/2, prf/5, kdf/5, pmk2ptk/6, ft_msk2ptk/11, aes_key_wrap/2, key_len/1]).
 
 -include("eapol.hrl").
 
@@ -44,8 +44,10 @@ key_len(#ccmp{})    -> 16;
 key_len('CCMP')     -> 16;
 key_len('AES-CMAC') -> 16.
 
-mic_len(#ccmp{}) -> 16;
-mic_len('AES-HMAC-SHA1') -> 16.
+mic_len('AES-HMAC-SHA1') -> 16;
+mic_len('AES-128-CMAC')  -> 16;
+mic_len('HMAC-SHA256')   -> 16;
+mic_len('HMAC-SHA384')   -> 24.
 
 keyinfo(group, Info) ->
     Info;
@@ -92,22 +94,23 @@ keyinfo(V, Cnt, Flags0) ->
 keyinfo(Info) ->
     keyinfo(Info bsr 3, 16#08, []).
 
-cipher_suite('AES-HMAC-SHA1') -> 2;
-cipher_suite(X) when is_atom(X) -> 0;
+mic_algo('AES-HMAC-SHA1') -> 2;
+mic_algo('AES-128-CMAC') -> 3;
+mic_algo(X) when is_atom(X) -> 0;
 
-cipher_suite(2) -> 'AES-HMAC-SHA1';
-cipher_suite(X) when is_integer(X) -> unknown.
+mic_algo(2) -> 'AES-HMAC-SHA1';
+mic_algo(3) -> 'AES-128-CMAC';
+mic_algo(X) when is_integer(X) -> unknown.
 
-hash('AES-HMAC-SHA1') ->
-    sha.
-
-calc_hmac(#ccmp{cipher_suite = CipherSuite, kck = KCK}, EAPOL, Data, MICLen) ->
-    Hash = hash(CipherSuite),
-    C1 = crypto:hmac_init(Hash, KCK),
+calc_hmac(#ccmp{mic_algo = 'AES-HMAC-SHA1', kck = KCK}, EAPOL, Data, MICLen) ->
+    C1 = crypto:hmac_init(sha, KCK),
     C2 = crypto:hmac_update(C1, EAPOL),
     C3 = crypto:hmac_update(C2, binary:copy(<<0>>, MICLen)),
     C4 = crypto:hmac_update(C3, Data),
-    crypto:hmac_final_n(C4, MICLen).
+    crypto:hmac_final_n(C4, MICLen);
+
+calc_hmac(#ccmp{mic_algo = 'AES-128-CMAC', kck = KCK}, EAPOL, Data, MICLen) ->
+    aes_cmac:aes_cmac(KCK, <<EAPOL/binary, 0:(MICLen * 8), Data/binary>>).
 
 packet(Data) ->
     DataLen = size(Data),
@@ -121,13 +124,13 @@ request(Id, Type, Data) ->
 %%
 %% EAPOL Key frames are defined in IEEE 802.11-2012, Sect. 11.6.2
 %%
-key(Flags, KeyData, #ccmp{cipher_suite = CipherSuite,
+key(Flags, KeyData, #ccmp{mic_algo = MICAlgo,
 			  replay_counter = ReplayCounter,
 			  nonce = Nonce} = CCMP) ->
     KeyInfo = lists:foldl(fun keyinfo/2, 0, Flags)
-	bor cipher_suite(CipherSuite),
+	bor mic_algo(MICAlgo),
     KeyLen = key_len(CCMP),
-    MICLen = mic_len(CipherSuite),
+    MICLen = mic_len(MICAlgo),
     EAPOLData = <<?EAPOL_KEY_802_11, KeyInfo:16, KeyLen:16, ReplayCounter:64,
 		  Nonce:32/bytes,		%% Key Nounce
 		  0:128,			%% EAPOL Key IV
@@ -150,6 +153,7 @@ validate_mic(Crypto, {Head, MIC, Tail}) ->
     case calc_hmac(Crypto, Head, Tail, byte_size(MIC)) of
 	MIC -> ok;
 	V   ->
+	    lager:debug("Algo: ~p", [Crypto#ccmp.mic_algo]),
 	    lager:debug("Head: ~s", [pbkdf2:to_hex(Head)]),
 	    lager:debug("MIC: ~s", [pbkdf2:to_hex(MIC)]),
 	    lager:debug("Tail: ~s", [pbkdf2:to_hex(Tail)]),
@@ -180,10 +184,10 @@ decode(Data = <<Version:8, ?EAPOL_PACKET_TYPE_KEY, DataLen:16, EAPOLData:DataLen
   when Version == 1; Version == 2 ->
     try
 	<<?EAPOL_KEY_802_11, KeyInfo:16, _/binary>> = EAPOLData,
-	CipherSuite = cipher_suite(KeyInfo band 16#07),
+	MICAlgo = mic_algo(KeyInfo band 16#07),
 	Flags = keyinfo(KeyInfo),
 	lager:debug("KeyInfo: ~p", [Flags]),
-	MICLen = mic_len(CipherSuite),
+	MICLen = mic_len(MICAlgo),
 
 	<< ?EAPOL_KEY_802_11, _:16, _KeyLen:16, ReplayCounter:64,
 	   Nonce:32/bytes, 0:128, 0:64, 0:64, _:MICLen/bytes,
@@ -191,7 +195,7 @@ decode(Data = <<Version:8, ?EAPOL_PACKET_TYPE_KEY, DataLen:16, EAPOLData:DataLen
 
 	<< Head:81/bytes, MIC:MICLen/bytes, Tail/bytes>> = Data,
 
-	{key, Flags, CipherSuite, ReplayCounter, Nonce, KeyData, {Head, MIC, Tail}}
+	{key, Flags, MICAlgo, ReplayCounter, Nonce, KeyData, {Head, MIC, Tail}}
     catch
 	_:_ -> {invalid, Data}
     end;
@@ -217,21 +221,36 @@ encode_802_11(DA, BSS, KeyData)
       QoS/binary,
       Frame/binary>>.
 
-hmac_sha1(Key, Label, Data, Count) ->
-    crypto:hmac(sha, Key, [Label, 0, Data, Count]).
+%% IEEE 802.11-2012, Sect. 11.6.1.2, PRF
+prf(Type, Key, Label, Data, WantedLength) ->
+    prf(Type, Key, Label, Data, WantedLength, 0, []).
 
-prf(Key, Label, Data, WantedLength) ->
-    prf(Key, Label, Data, WantedLength, 0, []).
-
-prf(_Key, _Label, _Data, WantedLength, _N, [Last | Acc])
+prf(_Type, _Key, _Label, _Data, WantedLength, _N, [Last | Acc])
   when WantedLength =< 0 ->
-    Keep = byte_size(Last) + WantedLength,
-    <<B:Keep/binary, _/binary>> = Last,
+    Keep = bit_size(Last) + WantedLength,
+    lager:debug("Size: ~p, Wanted: ~p, Keep: ~p", [bit_size(Last), WantedLength, Keep]),
+    <<B:Keep/bits, _/bits>> = Last,
     list_to_binary(lists:reverse(Acc, [B]));
 
-prf(Key, Label, Data, WantedLength, N, Acc) ->
-    Bin = hmac_sha1(Key, Label, Data, N),
-    prf(Key, Label, Data, WantedLength - byte_size(Bin), N + 1, [Bin|Acc]).
+prf(Type, Key, Label, Data, WantedLength, N, Acc) ->
+    Bin = crypto:hmac(Type, Key, [Label, 0, Data, N]),
+    prf(Type, Key, Label, Data, WantedLength - bit_size(Bin), N + 1, [Bin|Acc]).
+
+%% IEEE 802.11-2012, Sect. 11.6.1.7.2, KDF
+kdf(Type, Key, Label, Data, WantedLength) ->
+    kdf(Type, Key, Label, [Data, <<WantedLength:16/little>>], WantedLength, 1, []).
+
+kdf(_Type, _Key, _Label, _Data, WantedLength, _N, [Last | Acc])
+  when WantedLength =< 0 ->
+    Keep = bit_size(Last) + WantedLength,
+    lager:debug("Size: ~p, Wanted: ~p, Keep: ~p", [bit_size(Last), WantedLength, Keep]),
+    <<B:Keep/bits, _/bits>> = Last,
+    list_to_binary(lists:reverse(Acc, [B]));
+
+kdf(Type, Key, Label, Data, WantedLength, N, Acc) ->
+    Bin = crypto:hmac(Type, Key, [<<N:16/little>>, Label, Data]),
+    kdf(Type, Key, Label, Data, WantedLength - bit_size(Bin), N + 1, [Bin|Acc]).
+
 
 phrase2psk(Phrase, SSID)
   when is_binary(Phrase), is_binary(SSID) ->
@@ -245,11 +264,47 @@ phrase2psk(Phrase, SSID)
 
 pmk2ptk(PMK, AA, SPA, ANonce, SNonce, PRFLen) ->
     <<KCK:16/bytes, KEK:16/bytes, TK/binary>> =
-	prf(PMK, "Pairwise key expansion", [min(AA, SPA), max(AA, SPA),
-					    min(ANonce, SNonce), max(SNonce, ANonce)], PRFLen),
+	prf(sha, PMK, "Pairwise key expansion", [min(AA, SPA), max(AA, SPA),
+						  min(ANonce, SNonce), max(SNonce, ANonce)], PRFLen),
     {KCK, KEK, TK}.
 
+ft_msk2ptk(MSK, SNonce, ANonce, BSS, StationMAC, SSID, MDomain, R0KH, R1KH, S0KH, S1KH) ->
+    <<_:256/bits, XXKey:256/bits>> = MSK,
 
+    %% R0-Key-Data = KDF-384(XXKey, "FT-R0", SSIDlength || SSID ||
+    %%                        MDID || R0KHlength || R0KH-ID || S0KH-ID)
+    %% PMK-R0 = L(R0-Key-Data, 0, 256)
+    %% PMK-R0Name-Salt = L(R0-Key-Data, 256, 128)
+    %% PPMKR0Name = Truncate-128(SHA-256("FT-R0N" || PMK-R0Name-Salt))
+
+    lager:debug("FT XXKey: ~p", [pbkdf2:to_hex(XXKey)]),
+    lager:debug("FT: R0KH-Id: ~p", [pbkdf2:to_hex(R0KH)]),
+
+    <<PMKR0:256/bits, PMKR0NameSalt:128/bits>> =
+	kdf(sha256, XXKey, "FT-R0", [byte_size(SSID), SSID, <<MDomain:16>>,
+					   byte_size(R0KH), R0KH, S0KH], 384),
+    <<PMKR0Name:128/bits, _/binary>> = crypto:hash(sha256, ["FT-R0N", PMKR0NameSalt]),
+
+    lager:debug("FT PMK-R0: ~p", [pbkdf2:to_hex(PMKR0)]),
+    lager:debug("FT PMK-R0Name: ~p", [pbkdf2:to_hex(PMKR0Name)]),
+
+    %% PMK-R1 = KDF-256(PMK-R0, "FT-R1", R1KH-ID || S1KH-ID)
+    %% PMKR1Name = Truncate-128(SHA-256(“FT-R1N” || PMKR0Name || R1KH-ID || S1KH-ID))
+
+    PMKR1 =
+	kdf(sha256, PMKR0, "FT-R1", [R1KH, S1KH], 256),
+    <<PMKR1Name:128/bits, _/binary>> = crypto:hash(sha256, ["FT-R1N", PMKR0Name, BSS, StationMAC]),
+
+    lager:debug("FT PMK-R1: ~p", [pbkdf2:to_hex(PMKR1)]),
+    lager:debug("FT PMK-R1Name: ~p", [pbkdf2:to_hex(PMKR1Name)]),
+
+    %%PTK = KDF-PTKLen(PMK-R1, "FT-PTK", SNonce || ANonce || BSSID || STA-ADDR)
+    <<KCK:128/bits, KEK:128/bits, TK:128/bits>> =
+	kdf(sha256, PMKR1, "FT-PTK", [SNonce, ANonce, BSS, StationMAC], 384),
+    lager:debug("KCK: ~p", [pbkdf2:to_hex(KCK)]),
+    lager:debug("KEK: ~p", [pbkdf2:to_hex(KEK)]),
+    lager:debug("TK: ~p", [pbkdf2:to_hex(TK)]),
+    {KCK, KEK, TK, PMKR0Name, PMKR1Name}.
 
    %% Inputs:  Plaintext, n 64-bit values {P1, P2, ..., Pn}, and
    %%          Key, K (the KEK).

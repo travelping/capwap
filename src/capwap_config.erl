@@ -117,6 +117,8 @@ wtp_init_wlan_radio_defaults(Id, _Radio, WLAN) ->
 			 peer_rekey = 3600,
 			 group_rekey = 3600,
 			 management_frame_protection = false,
+			 fast_transition = false,
+			 mobility_domain = 0,
 			 strict_group_rekey = false
 		 }.
 
@@ -125,8 +127,12 @@ wtp_init_wlan_keymgmt(WLAN = #wtp_wlan_config{
 				= RSN}, Value) ->
     if Value == psk ->
 	    WLAN#wtp_wlan_config{rsn = RSN#wtp_wlan_rsn{akm_suites = ['PSK' | AKM]}};
+       Value == 'ft-psk' ->
+	    WLAN#wtp_wlan_config{rsn = RSN#wtp_wlan_rsn{akm_suites = ['FT-PSK' | AKM]}};
        Value == wpa ->
 	    WLAN#wtp_wlan_config{rsn = RSN#wtp_wlan_rsn{akm_suites = ['802.1x' | AKM]}};
+       Value == 'ft-wpa' ->
+	    WLAN#wtp_wlan_config{rsn = RSN#wtp_wlan_rsn{akm_suites = ['FT-802.1x' | AKM]}};
        is_list(Value) ->
 	    lists:foldl(fun(V, W) -> wtp_init_wlan_keymgmt(W, V) end, WLAN, Value);
        true ->
@@ -153,6 +159,12 @@ wtp_init_wlan(_CN, _Radio, {management_frame_protection, true}, WLAN) ->
     WLAN#wtp_wlan_config{management_frame_protection = required};
 wtp_init_wlan(_CN, _Radio, {management_frame_protection, false}, WLAN) ->
     WLAN#wtp_wlan_config{management_frame_protection = false};
+wtp_init_wlan(_CN, _Radio, {fast_transition, Value}, WLAN)
+  when is_boolean(Value) ->
+    WLAN#wtp_wlan_config{fast_transition = Value};
+wtp_init_wlan(_CN, _Radio, {mobility_domain, Value}, WLAN)
+  when is_integer(Value) ->
+    WLAN#wtp_wlan_config{mobility_domain = Value};
 wtp_init_wlan(_CN, _Radio, {secret, Value}, WLAN)
   when is_binary(Value) ->
     WLAN#wtp_wlan_config{secret = Value};
