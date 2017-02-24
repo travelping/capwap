@@ -1755,9 +1755,9 @@ get_ie(Key, Elements, Default) ->
 get_ies(Key, Elements) ->
     [E || E <- Elements, element(1, E) == Key].
 
-select_mac_mode(#wtp_wlan_config{mac_mode = local}, local) ->
+select_mac_mode(#wtp_wlan_config{mac_mode = local_mac}, local) ->
     local_mac;
-select_mac_mode(#wtp_wlan_config{mac_mode = split}, split) ->
+select_mac_mode(#wtp_wlan_config{mac_mode = split_mac}, split) ->
     split_mac;
 select_mac_mode(#wtp_wlan_config{mac_mode = Mode}, both) ->
     Mode.
