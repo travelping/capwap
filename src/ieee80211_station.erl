@@ -1021,7 +1021,8 @@ init_eapol(#state{capabilities = #sta_cap{akm_suite = AKM},
     ReqData = <<0, "networkid=", SSID/binary, ",nasid=SCG4,portid=1">>,
     Id = 1,
     EAPData = eapol:request(Id, identity, ReqData),
-    send_eapol_packet(EAPData, State#state{eapol_state = {request, Id},
+    send_eapol_packet(EAPData, State#state{rekey_running = 'WPA',
+					   eapol_state = {request, Id},
 					   eapol_retransmit = 0}).
 
 eap_handshake({start, _Data},
@@ -1063,7 +1064,16 @@ eap_handshake_next({authenticate, Opts}, #state{aaa_session = Session} = State) 
     case ergw_aaa_session:authenticate(Session, to_session(Opts)) of
 	success ->
 	    lager:info("AuthResult: success"),
+
 	    SessionOpts = ergw_aaa_session:get(Session),
+
+	    case ergw_aaa_session:attr_get('EAP-Data', SessionOpts) of
+		{ok, EAPData} ->
+		    send_eapol(eapol:packet(EAPData), State);
+		_ ->
+		    ok
+	    end,
+
 	    MSK = << (ergw_aaa_session:attr_get('MS-MPPE-Recv-Key', SessionOpts, <<>>))/binary,
 		     (ergw_aaa_session:attr_get('MS-MPPE-Send-Key', SessionOpts, <<>>))/binary>>,
 	    lager:debug("MSK: ~s", [flower_tools:hexdump(MSK)]),
