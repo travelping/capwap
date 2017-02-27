@@ -44,7 +44,7 @@ key_len(#ccmp{})    -> 16;
 key_len('CCMP')     -> 16;
 key_len('AES-CMAC') -> 16.
 
-mic_len('AES-HMAC-SHA1') -> 16;
+mic_len('HMAC-SHA1-128') -> 16;
 mic_len('AES-128-CMAC')  -> 16;
 mic_len('HMAC-SHA256')   -> 16;
 mic_len('HMAC-SHA384')   -> 24.
@@ -94,15 +94,15 @@ keyinfo(V, Cnt, Flags0) ->
 keyinfo(Info) ->
     keyinfo(Info bsr 3, 16#08, []).
 
-mic_algo('AES-HMAC-SHA1') -> 2;
+mic_algo('HMAC-SHA1-128') -> 2;
 mic_algo('AES-128-CMAC') -> 3;
 mic_algo(X) when is_atom(X) -> 0;
 
-mic_algo(2) -> 'AES-HMAC-SHA1';
+mic_algo(2) -> 'HMAC-SHA1-128';
 mic_algo(3) -> 'AES-128-CMAC';
 mic_algo(X) when is_integer(X) -> unknown.
 
-calc_hmac(#ccmp{mic_algo = 'AES-HMAC-SHA1', kck = KCK}, EAPOL, Data, MICLen) ->
+calc_hmac(#ccmp{mic_algo = 'HMAC-SHA1-128', kck = KCK}, EAPOL, Data, MICLen) ->
     C1 = crypto:hmac_init(sha, KCK),
     C2 = crypto:hmac_update(C1, EAPOL),
     C3 = crypto:hmac_update(C2, binary:copy(<<0>>, MICLen)),
