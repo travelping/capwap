@@ -820,7 +820,7 @@ accounting_update(STA, SessionOpts) ->
 	{ok, MAC} ->
 	    STAStats = capwap_dp:get_station(MAC),
 	    lager:debug("STA Stats: ~p", [STAStats]),
-	    {_MAC, _RadioId, _BSS, {RcvdPkts, SendPkts, RcvdBytes, SendBytes}} = STAStats,
+	    {_MAC, _VLan, _RadioId, _BSS, {RcvdPkts, SendPkts, RcvdBytes, SendBytes}} = STAStats,
 	    Acc = [{'InPackets',  RcvdPkts},
 		    {'OutPackets', SendPkts},
 		    {'InOctets',   RcvdBytes},

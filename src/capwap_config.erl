@@ -112,6 +112,7 @@ wtp_init_wlan_radio_defaults(Id, _Radio, WLAN) ->
     WLAN#wtp_wlan_config{wlan_id = Id,
 			 suppress_ssid = bool_to_int(get(ac, suppress_ssid, false)),
 			 mac_mode = local_mac,
+			 vlan = 0,
 			 privacy = false,
 			 rsn = RSN,
 			 peer_rekey = 3600,
@@ -147,6 +148,9 @@ wtp_init_wlan(_CN, _Radio, {suppress_ssid, Value}, WLAN) ->
 wtp_init_wlan(_CN, _Radio, {mac_mode, Value}, WLAN)
   when Value == local_mac; Value == split_mac ->
     WLAN#wtp_wlan_config{mac_mode = Value};
+wtp_init_wlan(_CN, _Radio, {vlan, Value}, WLAN)
+  when is_integer(Value) ->
+    WLAN#wtp_wlan_config{vlan = Value};
 wtp_init_wlan(_CN, _Radio, {keymgmt, Value}, WLAN) ->
     wtp_init_wlan_keymgmt(WLAN, Value);
 wtp_init_wlan(_CN, _Radio, {privacy, Value}, WLAN)

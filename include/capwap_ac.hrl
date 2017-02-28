@@ -35,6 +35,7 @@
 	  mode,
 	  mac_mode,
 	  tunnel_mode,
+	  vlan,
 	  rate_set,
 	  privacy,
 	  wpa_config,

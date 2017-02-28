@@ -433,7 +433,7 @@ print_worker_stats(Label, [RcvdPkts, SendPkts, RcvdBytes, SendBytes,
 	       ErrHdrLengthInvalid, ErrTooShort,
 	       RateLimitUnknownWtp]).
 
-print_dp_wtp(Verbose, {{Address, Port}, STAs, _RefCnt, _MTU, Stats}) ->
+print_dp_wtp(Verbose, {{Address, Port}, _WLANs, STAs, _RefCnt, _MTU, Stats}) ->
     io:format("~s:~w~n", [inet_parse:ntoa(Address), Port]),
     print_dp_wtp_stats(Verbose, Stats),
     print_dp_wtp_stas(Verbose, STAs).

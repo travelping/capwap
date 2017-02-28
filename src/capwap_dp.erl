@@ -23,8 +23,9 @@
 %% C-Node wrapper
 -export([bind/1, clear/0, get_stats/0]).
 -export([add_wtp/2, del_wtp/1, get_wtp/1, list_wtp/0]).
--export([attach_station/4, detach_station/1, get_station/1, list_stations/0]).
--export([sendto/2]).
+-export([add_wlan/5, del_wlan/3]).
+-export([attach_station/5, detach_station/1, get_station/1, list_stations/0]).
+-export([sendto/2, packet_out/3]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -67,8 +68,14 @@ get_wtp(WTP) ->
 list_wtp() ->
     call({list_wtp}).
 
-attach_station(WTP, STA, RadioId, BSS) ->
-    call({attach_station, WTP, STA, RadioId, BSS}).
+add_wlan(WTP, RadioId, WlanId, BSS, VlanId) ->
+    call({add_wlan, WTP, RadioId, WlanId, BSS, VlanId}).
+
+del_wlan(WTP, RadioId, WlanId) ->
+    call({del_wlan, WTP, RadioId, WlanId}).
+
+attach_station(WTP, STA, VlanId, RadioId, BSS) ->
+    call({attach_station, WTP, STA, VlanId, RadioId, BSS}).
 
 detach_station(STA) ->
     call({detach_station, STA}).
@@ -81,6 +88,9 @@ list_stations() ->
 
 sendto(WTP, Msg) when is_binary(Msg) ->
     call({sendto, WTP, Msg}).
+
+packet_out(tap, VlanId, Msg) when is_binary(Msg) ->
+    call({packet_out, tap, VlanId, Msg}).
 
 get_stats() ->
     call({get_stats}).
@@ -129,16 +139,20 @@ handle_info(Info, State = #state{state = disconnected}) ->
     lager:warning("got info ~p without active data path", [Info]),
     {noreply, State};
 
-handle_info({packet_in, tap, Packet}, State) ->
+handle_info({packet_in, tap, VlanId, Packet}, State) ->
     lager:debug("TAP: ~p", [Packet]),
     <<MAC:6/bytes, _/binary>> = Packet,
-    case flower_mac_learning:is_broadcast(MAC) of
-	true ->
-	    lager:warning("need to handle broadcast to ~s", [flower_tools:format_mac(MAC)]),
+    case MAC of
+	<<255, 255, 255, 255, 255, 255>> ->
+	    lager:warning("need to handle broadcast on VLAN ~w", [VlanId]),
+	    ok;
+
+	<<_:7, 1:1, _/binary>> ->
+	    lager:warning("need to handle multicast on VLAN ~w to ~s", [VlanId, flower_tools:format_mac(MAC)]),
 	    ok;
 
 	_ ->
-	    lager:warning("packet for invalid STA ~s", [flower_tools:format_mac(MAC)]),
+	    lager:warning("packet for invalid STA ~s on VLAN ~w", [flower_tools:format_mac(MAC), VlanId]),
 	    ok
     end,
     {noreply, State};
@@ -312,7 +326,7 @@ run_loop(WTP) ->
 		    io:format("install STA: ~p~n", [MAC]),
 		    RadioId = 1,
 		    BSS = <<1,1,1,1,1,1>>,
-		    attach_station(WTP, MAC, RadioId, BSS);
+		    attach_station(WTP, MAC, 0, RadioId, BSS);
 
 		_ ->
 		    ok

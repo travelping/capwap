@@ -568,17 +568,22 @@ run({echo_request, Seq, Elements, #capwap_header{
     State1 = send_response(Header, echo_response, Seq, Elements, State),
     next_state(run, State1);
 
-run({ieee_802_11_wlan_configuration_response, _Seq, Elements, _Header}, State0) ->
+run({ieee_802_11_wlan_configuration_response, _Seq, Elements, _Header},
+    State0 = #state{data_channel_address = WTPDataChannelAddress}) ->
     State =
 	case proplists:get_value(result_code, Elements) of
 	    0 ->
 		lager:debug("IEEE 802.11 WLAN Configuration ok"),
 		lists:foldl(fun(#ieee_802_11_assigned_wtp_bssid{radio_id = RadioId,
-							       wlan_id = WlanId,
-							       bssid = BSS}, S0) ->
-				   update_wlan_state({RadioId, WlanId},
-						     fun(W) -> W#wlan{bss = BSS} end, S0)
-			   end, State0, get_ies(ieee_802_11_assigned_wtp_bssid, Elements));
+								wlan_id = WlanId,
+								bssid = BSS}, S0) ->
+				    update_wlan_state({RadioId, WlanId},
+						      fun(W = #wlan{vlan = VlanId}) ->
+							      capwap_dp:add_wlan(WTPDataChannelAddress,
+										 RadioId, WlanId, BSS, VlanId),
+							      W#wlan{bss = BSS}
+						      end, S0)
+			    end, State0, get_ies(ieee_802_11_assigned_wtp_bssid, Elements));
 
 	    Code ->
 		lager:warning("IEEE 802.11 WLAN Configuration failed with ~w", [Code]),
@@ -1717,7 +1722,7 @@ accounting_update(WTP, SessionOpts) ->
 	    WTPStats = capwap_dp:get_wtp(WTPDataChannelAddress),
 	    lager:debug("WTP: ~p, ~p, ~p", [WTP, WTPDataChannelAddress, WTPStats]),
 	    lager:debug("WTP SessionOpts: ~p", [SessionOpts]),
-	    {_, _STAs, _RefCnt, _MTU, Stats} = WTPStats,
+	    {_, _WLANs, _STAs, _RefCnt, _MTU, Stats} = WTPStats,
 	    Acc = wtp_stats_to_accouting(Stats),
 
 	    CommonName = maps:get('Username', SessionOpts, <<"unknown">>),
@@ -1981,7 +1986,9 @@ internal_add_wlan_result(WlanIdent, NotifyFun, Code, Arg, State0) ->
 			      fun(W) -> W#wlan{state = unconfigured} end, State0),
     response_notify(NotifyFun, Code, Arg, State).
 
-internal_del_wlan(WlanIdent = {RadioId, WlanId}, NotifyFun, State) ->
+internal_del_wlan(WlanIdent = {RadioId, WlanId}, NotifyFun,
+		  State = #state{data_channel_address = WTPDataChannelAddress}) ->
+    capwap_dp:del_wlan(WTPDataChannelAddress, RadioId, WlanId),
     WBID = ?CAPWAP_BINDING_802_11,
     Flags = [{frame,'802.3'}],
     Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
@@ -2034,6 +2041,7 @@ init_wlan_state(#wtp_radio{radio_id = RadioId} = Radio, WlanId,
 		   ssid = SSID,
 		   suppress_ssid = SuppressSSID,
 		   mac_mode = MacMode,
+		   vlan = VlanId,
 		   privacy = Privacy,
 		   fast_transition = FT,
 		   mobility_domain = MDomain,
@@ -2054,6 +2062,7 @@ init_wlan_state(#wtp_radio{radio_id = RadioId} = Radio, WlanId,
 	       suppress_ssid = SuppressSSID,
 	       mac_mode = MacMode,
 	       tunnel_mode = TunnelMode,
+	       vlan = VlanId,
 	       privacy = Privacy,
 	       fast_transition = FT,
 	       mobility_domain = MDomain,
@@ -2205,11 +2214,11 @@ internal_new_station(_, StationMAC, State) ->
     lager:debug("Station ~p trying to associate on invalid Wlan", [StationMAC]),
     {{error, invalid_bss}, State}.
 
-internal_add_station(#wlan{wlan_identifier = {RadioId, WlanId}, bss = BSS}, MAC, StaCaps,
+internal_add_station(#wlan{wlan_identifier = {RadioId, WlanId}, vlan = VlanId, bss = BSS}, MAC, StaCaps,
 		     {_, Encryption, _} = CryptoState,
 		     NotifyFun, State = #state{data_channel_address = WTPDataChannelAddress}) ->
-    Ret = capwap_dp:attach_station(WTPDataChannelAddress, MAC, RadioId, BSS),
-    lager:debug("attach_station(~p, ~p, ~p, ~p): ~p", [WTPDataChannelAddress, MAC, RadioId, BSS, Ret]),
+    Ret = capwap_dp:attach_station(WTPDataChannelAddress, MAC, VlanId, RadioId, BSS),
+    lager:debug("attach_station(~p, ~p, ~p, ~p, ~p): ~p", [WTPDataChannelAddress, MAC, VlanId, RadioId, BSS, Ret]),
 
     WBID = ?CAPWAP_BINDING_802_11,
     Flags = [{frame,'802.3'}],
