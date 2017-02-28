@@ -6,7 +6,9 @@ Erlang CAPWAP AC implementation.
 Version 1.9.0 - xx Feb 2017
 ---------------------------
 
+* capwap-dp API version 1
 * implement Split MAC mode
+* implement VLAN to WLAN mapping
 
 Version 1.8.2 - 22 Feb 2017
 ---------------------------
