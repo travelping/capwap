@@ -35,7 +35,7 @@
 
 -include("include/capwap_packet.hrl").
 
--record(state, {state, tref, timeout, interim, interim_timer}).
+-record(state, {state, tref, timeout, interim, interim_timer, api_version}).
 
 -define(SERVER, ?MODULE).
 
@@ -202,10 +202,10 @@ connect(State0) ->
 	    lager:warning("Node ~p is up", [Node]),
 	    erlang:monitor_node(Node, true),
 	    clear(),
-	    bind(self()),
+	    {ok, APIVersion} = bind(self()),
 	    report_stats(),
 	    State1 = start_interim(State0),
-	    State1#state{state = connected, timeout = 10};
+	    State1#state{state = connected, timeout = 10, api_version = APIVersion};
 	pang ->
 	    lager:warning("Node ~p is down", [Node]),
 	    start_nodedown_timeout(State0)
