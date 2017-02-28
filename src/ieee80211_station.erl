@@ -757,8 +757,13 @@ decode_rsne(pmkid, <<Count:16/little, Data/binary>>, Cap) ->
     Length = Count * 16,
     <<PMKIds:Length/bytes, Next/binary>> = Data,
     decode_rsne(group_management_cipher, Next, Cap#sta_cap{pmk_ids = [ Id || <<Id:16/bytes>> <= PMKIds ]});
+decode_rsne(group_management_cipher, <<GroupMgmtCipherSuite:32>>, Cap)
+  when (Cap#sta_cap.rsn_capabilities band 16#0080) /= 0 ->
+    Cap#sta_cap{group_mgmt_cipher_suite = capwap_packet:decode_cipher_suite(GroupMgmtCipherSuite)};
 decode_rsne(group_management_cipher, <<GroupMgmtCipherSuite:32>>, Cap) ->
-    Cap#sta_cap{group_mgmt_cipher_suite = capwap_packet:decode_cipher_suite(GroupMgmtCipherSuite)}.
+    lager:error("STA send a GroupMgmtCipher but DID NOT indicate MFP capabilities: ~p, ~4.16.0b",
+		[capwap_packet:decode_cipher_suite(GroupMgmtCipherSuite), Cap#sta_cap.rsn_capabilities]),
+    Cap.
 
 ft_ie(R0KH, R1KH) ->
 %% Page 1312
