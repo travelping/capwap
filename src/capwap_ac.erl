@@ -31,7 +31,7 @@
 
 %% API for Station process
 -export([add_station/5, del_station/3, send_80211/3, ieee_802_11_ie/2,
-	 rsn_ie/2, rsn_ie/3]).
+	 rsn_ie/2, rsn_ie/3, get_station_config/2]).
 
 %% gen_fsm callbacks
 -export([init/1, listen/2, idle/2, join/2, configure/2, data_check/2, run/2,
@@ -247,6 +247,9 @@ del_station(AC, BSS, MAC) ->
 
 send_80211(AC, BSS, Data) ->
     gen_fsm:send_event(AC, {send_80211, BSS, Data}).
+
+get_station_config(AC, BSS) ->
+    gen_fsm:sync_send_event(AC,  {get_station_config, BSS}).
 
 %%%===================================================================
 %%% gen_fsm callbacks
@@ -549,7 +552,17 @@ run(Event = {add_station, BSS, MAC, StaCaps, CryptoState}, From, State0) ->
     Wlan = get_wlan_by_bss(BSS, State0),
     lager:warning("WLAN: ~p", [Wlan]),
     State = internal_add_station(Wlan, MAC, StaCaps, CryptoState, response_fsm_reply(From), State0),
-    next_state(run, State).
+    next_state(run, State);
+
+run({get_station_config, BSS}, _From, State) ->
+    Reply =
+	case get_wlan_by_bss(BSS, State) of
+	    Wlan = #wlan{state = running} ->
+		get_station_cfg(Wlan, State);
+	    _ ->
+		{error, invalid}
+	end,
+    reply(Reply, run, State).
 
 run({keep_alive, _DataPath, WTPDataChannelAddress, Header, PayLoad}, State) ->
     ?log_capwap_keep_alive(peer_log_str(WTPDataChannelAddress, State), PayLoad, Header),
@@ -2166,6 +2179,19 @@ update_wlan_state(WlanIdent, Fun, State = #state{wlans = Wlans})
     State#state{wlans =
 		    lists:keystore(WlanIdent, #wlan.wlan_identifier, Wlans, Fun(Wlan))}.
 
+get_station_cfg(#wlan{bss = BSS, mac_mode = MacMode, tunnel_mode = TunnelMode,
+		      information_elements = IEs,
+		      wpa_config = WpaConfig, gtk = GTK, igtk = IGTK},
+		#state{id = WtpId, session_id = SessionId,
+		       data_channel_address = WTPDataChannelAddress, data_path = DataPath}) ->
+    #station_config{
+       data_path = DataPath, wtp_data_channel_address = WTPDataChannelAddress,
+       wtp_id = WtpId, wtp_session_id = SessionId,
+       mac_mode = MacMode, tunnel_mode = TunnelMode,
+       bss = BSS, bss_ies = IEs, wpa_config = WpaConfig,
+       gtk = GTK, igtk = IGTK
+      }.
+
 internal_new_station(#wlan{}, StationMAC,
 		     State = #state{config = #wtp{max_stations = MaxStations},
 				    station_count  = StationCount})
@@ -2174,13 +2200,8 @@ internal_new_station(#wlan{}, StationMAC,
 		[StationMAC, StationCount, MaxStations]),
     {{error, too_many_clients}, State};
 
-internal_new_station(#wlan{bss = BSS, mac_mode = MacMode, tunnel_mode = TunnelMode,
-			   information_elements = IEs,
-			   wpa_config = WpaConfig, gtk = GTK, igtk = IGTK},
-		     StationMAC,
-		     State = #state{id = WtpId, session_id = SessionId,
-				    data_channel_address = WTPDataChannelAddress, data_path = DataPath,
-				    station_count  = StationCount}) ->
+internal_new_station(Wlan = #wlan{bss = BSS}, StationMAC,
+		     State = #state{id = WtpId, station_count  = StationCount}) ->
 
     %% we have to repeat the search again to avoid a race
     lager:debug("search for station ~p", [{self(), StationMAC}]),
@@ -2188,13 +2209,7 @@ internal_new_station(#wlan{bss = BSS, mac_mode = MacMode, tunnel_mode = TunnelMo
 	not_found ->
 	    exometer:update([capwap, ac, station_count], 1),
 	    exometer:update([capwap, wtp, WtpId, station_count], StationCount + 1),
-	    StationCfg = #station_config{
-			    data_path = DataPath, wtp_data_channel_address = WTPDataChannelAddress,
-			    wtp_id = WtpId, wtp_session_id = SessionId,
-			    mac_mode = MacMode, tunnel_mode = TunnelMode,
-			    bss = BSS, bss_ies = IEs, wpa_config = WpaConfig,
-			    gtk = GTK, igtk = IGTK
-			   },
+	    StationCfg = get_station_cfg(Wlan, State),
 	    Reply =
 		case capwap_station_reg:lookup(StationMAC) of
 		    not_found ->
