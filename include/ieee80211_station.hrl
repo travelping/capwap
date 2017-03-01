@@ -26,13 +26,7 @@
 	  rx_highest = 0     :: integer(),
 
 	  last_rsne          :: undefined | binary(),
-	  rsn_version        :: undefined | 1 | 2,
-	  group_cipher_suite :: undefined | binary(),
-	  cipher_suite       :: undefined | binary(),
-	  akm_suite          :: undefined | binary(),
-	  rsn_capabilities   :: undefined | integer(),
-	  pmk_ids            :: undefined | [binary()],
-	  group_mgmt_cipher_suite :: undefined | binary()
+	  rsn                :: undefiend | #wtp_wlan_rsn{}
 	 }).
 
 -record(station_config, {

@@ -254,15 +254,10 @@ init_assoc(Event = {FrameType, DA, SA, BSS, 0, 0, ReqFrame},
     State3 = aaa_association(State2),
 
     %% TODO: validate RSNE against Wlan Config
-    #state{capabilities = StaCaps} = State3,
-    StaRSN = capwap_ac:rsn_ie(#wtp_wlan_rsn{
-				 version =		   RSNversion,
-				 capabilities =		   StaCaps#sta_cap.rsn_capabilities,
-				 group_cipher_suite =	   StaCaps#sta_cap.group_cipher_suite,
-				 group_mgmt_cipher_suite = StaCaps#sta_cap.group_mgmt_cipher_suite,
-				 cipher_suites =	   [StaCaps#sta_cap.cipher_suite],
-				 akm_suites =		   [StaCaps#sta_cap.akm_suite]}, MFP /= false),
-    ResponseIEs1 = lists:keystore(?WLAN_EID_RSN, 1, ResponseIEs0, {?WLAN_EID_RSN, StaRSN}),
+    #state{capabilities = #sta_cap{rsn = StaRSN0}} = State3,
+    StaRSN = StaRSN0#wtp_wlan_rsn{version = RSNversion},
+    StaBinRSN =capwap_ac:rsn_ie(StaRSN, MFP /= false),
+    ResponseIEs1 = lists:keystore(?WLAN_EID_RSN, 1, ResponseIEs0, {?WLAN_EID_RSN, StaBinRSN}),
 
     %% TODO: NasId and R1KH (MAC)
     R0KH = <<"scg4.tpip.net">>,
@@ -693,11 +688,12 @@ update_sta_from_mgmt_frame_ies(IEs, #state{aid = AID, capabilities = Cap0} = Sta
     ListIE = [ {Id, Data} || <<Id:8, Len:8, Data:Len/bytes>> <= IEs ],
     Cap = lists:foldl(fun update_sta_cap_from_mgmt_frame_ie/2, Cap0#sta_cap{aid = AID}, ListIE),
     lager:debug("New Station Caps: ~p", [lager:pr(Cap, ?MODULE)]),
+    #sta_cap{rsn = RSN} = Cap,
     lager:info("STA: ~p, Ciphers: Group ~p, PairWise: ~p, AKM: ~p, Caps: ~w, Mgmt: ~p",
 	       [flower_tools:format_mac(State#state.mac),
-		Cap#sta_cap.group_cipher_suite, Cap#sta_cap.cipher_suite,
-		Cap#sta_cap.akm_suite, Cap#sta_cap.rsn_capabilities,
-		Cap#sta_cap.group_mgmt_cipher_suite]),
+		RSN#wtp_wlan_rsn.group_cipher_suite, RSN#wtp_wlan_rsn.cipher_suites,
+		RSN#wtp_wlan_rsn.akm_suites, RSN#wtp_wlan_rsn.capabilities,
+		RSN#wtp_wlan_rsn.group_mgmt_cipher_suite]),
     State#state{capabilities = Cap}.
 
 smps2atom(0) -> static;
@@ -735,35 +731,43 @@ update_sta_cap_from_mgmt_frame_ie(IE = {?WLAN_EID_VENDOR_SPECIFIC,
 
 update_sta_cap_from_mgmt_frame_ie(IE = {?WLAN_EID_RSN, <<RSNVersion:16/little, RSNData/binary>> = RSNE}, Cap) ->
     lager:debug("Mgmt IE RSN: ~p", [IE]),
-    decode_rsne(group_cipher_suite, RSNData, Cap#sta_cap{last_rsne = RSNE, rsn_version = RSNVersion});
+    RSN = decode_rsne(group_cipher_suite, RSNData, #wtp_wlan_rsn{version = RSNVersion}),
+    Cap#sta_cap{last_rsne = RSNE, rsn = RSN};
 
 update_sta_cap_from_mgmt_frame_ie(IE = {_Id, _Value}, Cap) ->
     lager:debug("Mgmt IE: ~p", [IE]),
     Cap.
 
-decode_rsne(_, <<>>, Cap) ->
-    Cap;
-decode_rsne(group_cipher_suite, <<GroupCipherSuite:4/bytes, Next/binary>>, Cap) ->
-    decode_rsne(pairwise_cipher_suite, Next, Cap#sta_cap{group_cipher_suite = GroupCipherSuite});
-decode_rsne(pairwise_cipher_suite, <<1:16/little, PairWiseCipherSuite:4/bytes, Next/binary>>, Cap) ->
-    decode_rsne(auth_key_management, Next, Cap#sta_cap{cipher_suite = PairWiseCipherSuite});
-decode_rsne(auth_key_management, <<1:16/little, AKM:32, Next/binary>>, Cap) ->
-    decode_rsne(rsn_capabilities, Next, Cap#sta_cap{akm_suite = capwap_packet:decode_akm_suite(AKM)});
-decode_rsne(rsn_capabilities, <<RSNCaps:16/little, Next/binary>>, Cap) ->
-    decode_rsne(pmkid, Next, Cap#sta_cap{rsn_capabilities = RSNCaps});
-decode_rsne(pmkid, <<0:16/little, Next/binary>>, Cap) ->
-    decode_rsne(group_management_cipher, Next, Cap);
-decode_rsne(pmkid, <<Count:16/little, Data/binary>>, Cap) ->
+decode_rsne(_, <<>>, RSN) ->
+    RSN;
+decode_rsne(group_cipher_suite, <<GroupCipherSuite:4/bytes, Next/binary>>, RSN) ->
+    decode_rsne(pairwise_cipher_suite, Next, RSN#wtp_wlan_rsn{group_cipher_suite = GroupCipherSuite});
+decode_rsne(pairwise_cipher_suite, <<Count:16/little, Data/binary>>, RSN) ->
+    Length = Count * 4,
+    <<Suites:Length/bytes, Next/binary>> = Data,
+    decode_rsne(auth_key_management, Next,
+		RSN#wtp_wlan_rsn{cipher_suites = [ Id || <<Id:4/bytes>> <= Suites ]});
+decode_rsne(auth_key_management, <<Count:16/little, Data/binary>>, RSN) ->
+    Length = Count * 4,
+    <<Suites:Length/bytes, Next/binary>> = Data,
+    decode_rsne(rsn_capabilities, Next,
+		RSN#wtp_wlan_rsn{akm_suites =
+				     [ capwap_packet:decode_akm_suite(Id) || <<Id:4/bytes>> <= Suites ]});
+decode_rsne(rsn_capabilities, <<RSNCaps:16/little, Next/binary>>, RSN) ->
+    decode_rsne(pmkid, Next, RSN#wtp_wlan_rsn{capabilities = RSNCaps});
+decode_rsne(pmkid, <<0:16/little, Next/binary>>, RSN) ->
+    decode_rsne(group_management_cipher, Next, RSN);
+decode_rsne(pmkid, <<Count:16/little, Data/binary>>, RSN) ->
     Length = Count * 16,
     <<PMKIds:Length/bytes, Next/binary>> = Data,
-    decode_rsne(group_management_cipher, Next, Cap#sta_cap{pmk_ids = [ Id || <<Id:16/bytes>> <= PMKIds ]});
-decode_rsne(group_management_cipher, <<GroupMgmtCipherSuite:32>>, Cap)
-  when (Cap#sta_cap.rsn_capabilities band 16#0080) /= 0 ->
-    Cap#sta_cap{group_mgmt_cipher_suite = capwap_packet:decode_cipher_suite(GroupMgmtCipherSuite)};
-decode_rsne(group_management_cipher, <<GroupMgmtCipherSuite:32>>, Cap) ->
+    decode_rsne(group_management_cipher, Next, RSN#wtp_wlan_rsn{pmk_ids = [ Id || <<Id:16/bytes>> <= PMKIds ]});
+decode_rsne(group_management_cipher, <<GroupMgmtCipherSuite:32>>, RSN)
+  when (RSN#wtp_wlan_rsn.capabilities band 16#0080) /= 0 ->
+    RSN#wtp_wlan_rsn{group_mgmt_cipher_suite = capwap_packet:decode_cipher_suite(GroupMgmtCipherSuite)};
+decode_rsne(group_management_cipher, <<GroupMgmtCipherSuite:32>>, RSN) ->
     lager:error("STA send a GroupMgmtCipher but DID NOT indicate MFP capabilities: ~p, ~4.16.0b",
-		[capwap_packet:decode_cipher_suite(GroupMgmtCipherSuite), Cap#sta_cap.rsn_capabilities]),
-    Cap.
+		[capwap_packet:decode_cipher_suite(GroupMgmtCipherSuite), RSN#wtp_wlan_rsn.capabilities]),
+    RSN.
 
 ft_ie(R0KH, R1KH) ->
 %% Page 1312
@@ -1013,14 +1017,14 @@ send_eapol_key(Flags, KeyData,
 		      State#state{eapol_retransmit = TxCnt + 1,
 				  cipher_state = CipherState}).
 
-init_eapol(#state{capabilities = #sta_cap{akm_suite = AKM},
+init_eapol(#state{capabilities = #sta_cap{rsn = #wtp_wlan_rsn{akm_suites = [AKM]}},
 		  wpa_config = #wpa_config{ssid = SSID, secret = Secret}} = State)
   when AKM == 'PSK'; AKM == 'FT-PSK' ->
     {ok, PSK} = eapol:phrase2psk(Secret, SSID),
     lager:debug("PSK: ~s", [pbkdf2:to_hex(PSK)]),
     rsna_4way_handshake({init, PSK}, State#state{rekey_running = ptk});
 
-init_eapol(#state{capabilities = #sta_cap{akm_suite = AKM},
+init_eapol(#state{capabilities = #sta_cap{rsn = #wtp_wlan_rsn{akm_suites = [AKM]}},
 		  wpa_config = #wpa_config{ssid = SSID}} = State)
   when AKM == '802.1x'; AKM == 'FT-802.1x' ->
     ReqData = <<0, "networkid=", SSID/binary, ",nasid=SCG4,portid=1">>,
@@ -1134,9 +1138,10 @@ mic_for_akm(X)				-> X.
 
 rsna_4way_handshake({init, MSK}, #state{capabilities =
 					    #sta_cap{
-					       akm_suite = AKM,
-					       group_mgmt_cipher_suite = GroupMgmtCipherSuite}}
-		   = State) ->
+					       rsn = #wtp_wlan_rsn{
+							akm_suites = [AKM],
+							group_mgmt_cipher_suite = GroupMgmtCipherSuite}}}
+		    = State) ->
 
     %% IEEE 802.11-2012, Sect. 11.6.1.3
     <<PMK:32/bytes, _/binary>> = MSK,

@@ -75,9 +75,10 @@
 	  group_cipher_suite,
 	  cipher_suites,
 	  akm_suites,
+	  pmk_ids,
+	  group_mgmt_cipher_suite,
 
-	  management_frame_protection,
-	  group_mgmt_cipher_suite
+	  management_frame_protection
 	 }).
 
 -record(wtp_wlan_config, {
