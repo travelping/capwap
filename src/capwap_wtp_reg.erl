@@ -19,7 +19,8 @@
 
 %% API
 -export([start_link/0]).
--export([register/1, register_args/2, unregister/0, lookup/1, register_sessionid/2, lookup_sessionid/2]).
+-export([register/1, register_args/2, unregister/0, unregister/1,
+	 lookup/1, register_sessionid/2, lookup_sessionid/2]).
 -export([list_commonnames/0, get_commonname/1]).
 
 %% regine_server callbacks
@@ -50,6 +51,9 @@ register_sessionid(PeerId, SessionId) ->
 
 unregister() ->
     regine_server:unregister_pid(?SERVER, self()).
+
+unregister(Key) ->
+    regine_server:unregister_pid(?SERVER, self(), Key).
 
 lookup(PeerId) ->
     case ets:lookup(?SERVER, PeerId) of

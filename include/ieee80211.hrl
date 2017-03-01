@@ -97,3 +97,6 @@
 -define(IEEE_802_1_AKM_PSK, <<?IEEE_802_1_OUI/binary, 2>>).
 -define(IEEE_802_1_AKM_FT_WPA, <<?IEEE_802_1_OUI/binary, 3>>).
 -define(IEEE_802_1_AKM_FT_PSK, <<?IEEE_802_1_OUI/binary, 4>>).
+
+%% 802.11 Action Category
+-define(WLAN_ACTION_FT, 6).

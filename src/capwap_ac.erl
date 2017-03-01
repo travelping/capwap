@@ -1952,7 +1952,8 @@ internal_del_wlan(WlanIdent = {RadioId, WlanId}, NotifyFun,
 
 remove_wlan(WlanIdent, Data = #data{wlans = Wlans}) ->
     case get_wlan(WlanIdent, Data) of
-	Wlan = #wlan{} ->
+	Wlan = #wlan{bss = BSS} ->
+	    ok = capwap_wtp_reg:unregister(BSS),
 	    stop_group_rekey_timer(Wlan);
 	_ ->
 	    ok

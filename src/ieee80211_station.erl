@@ -348,6 +348,32 @@ handle_event(cast, {'EAPOL', _DA, _SA, BSS, EAPData}, connected,
     Data = eap_handshake(eapol:decode(EAPData), Data0),
     {keep_state, Data, [?IDLE_TIMEOUT]};
 
+handle_event(cast, {'FT', _DA, _SA, _BSS, _Action, _STA, TargetAP, Body} = Event,
+	     connected, Data = #data{cipher_state = #ccmp{akm_algo = AKM}})
+  when AKM == 'FT-802.1x'; AKM == 'FT-PSK' ->
+    lager:info("in CONNECTED got FT over-the-DS: ~p", [Event]),
+    ListIE = [ {Id, Value} || <<Id:8, Len:8, Value:Len/bytes>> <= Body ],
+    lager:info("in CONNECTED got FT over-the-DS: ~p", [ListIE]),
+
+    case capwap_wtp_reg:lookup(TargetAP) of
+	{ok, Pid} ->
+	    lager:info("in CONNECTED got FT over-the-DS to: ~p", [Pid]),
+	    StaCfg = capwap_ac:get_station_config(Pid, TargetAP),
+	    lager:info("in CONNECTED got FT over-the-DS to: ~p", [lager:pr(StaCfg, ?MODULE)]),
+
+	    RSNE = proplists:get_value(?WLAN_EID_RSN, ListIE),
+	    <<RSNVersion:16/little, RSNData/binary>> = RSNE,
+	    RSN = decode_rsne(group_cipher_suite, RSNData, #wtp_wlan_rsn{version = RSNVersion}),
+
+	    MDomain = proplists:get_value(?WLAN_EID_MOBILITY_DOMAIN, ListIE),
+	    FTE = proplists:get_value(?WLAN_EID_FAST_BSS_TRANSITION, ListIE),
+
+	    ok;
+	_ ->
+	    lager:error("in CONNECTED got FT over-the-DS external Target AP")
+    end,
+    {keep_state, Data, [?IDLE_TIMEOUT]};
+
 handle_event(info, {rekey, Type}, connected, Data0) ->
     lager:warning("in CONNECTED got REKEY: ~p", [Type]),
     Data = rekey_start(Type, Data0),
@@ -596,6 +622,10 @@ ieee80211_request(AC, 'Data', DA, SA, BSS, _FromDS = 0, _ToDS = 1,
 			    ?LLC_CNTL_SNAP, ?SNAP_ORG_ETHERNET,
 			    ?ETH_P_PAE:16, AuthData/binary>>) ->
     with_station(AC, BSS, SA, gen_statem:cast(_, {'EAPOL', DA, SA, BSS, AuthData})),
+    ok;
+ieee80211_request(AC, 'Action', DA, SA, BSS, _FromDS = 0, _ToDS = 0,
+		  _Frame = <<?WLAN_ACTION_FT, Action:8, STA:6/bytes, TargetAP:6/bytes, Body/binary>>) ->
+    with_station(AC, BSS, SA, gen_statem:cast(_, {'FT', DA, SA, BSS, Action, STA, TargetAP, Body})),
     ok;
 ieee80211_request(_AC, FrameType, DA, SA, BSS, FromDS, ToDS, Frame) ->
     lager:warning("unhandled IEEE 802.11 Frame: ~p", [{FrameType, DA, SA, BSS, FromDS, ToDS, Frame}]),
