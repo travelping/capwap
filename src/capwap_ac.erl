@@ -2168,6 +2168,12 @@ add_wlan_keys(#wlan{wlan_identifier = {RadioId, WlanId}, privacy = true,
 add_wlan_keys(_, IEs) ->
     IEs.
 
+maybe_fixup_wlan(RadioMAC, #wlan{wlan_identifier = WlanIdent, bss = undefined},
+		 #state{config = #wtp{broken_add_wlan_workaround = true}} = State) ->
+    update_wlan_state(WlanIdent, fun(W) -> W#wlan{bss = RadioMAC} end, State);
+maybe_fixup_wlan(_RadioMAC, _Wlan, State) ->
+    State.
+
 get_wlan(WlanIdent, #state{wlans = Wlans}) ->
     lists:keyfind(WlanIdent, #wlan.wlan_identifier, Wlans).
 
@@ -2217,7 +2223,9 @@ internal_new_station(#wlan{}, StationMAC, _BSS,
     {{error, too_many_clients}, State};
 
 internal_new_station(Wlan = #wlan{}, StationMAC, BSS,
-		     State = #state{id = WtpId, station_count  = StationCount}) ->
+		     State0 = #state{id = WtpId, station_count = StationCount}) ->
+
+    State = maybe_fixup_wlan(BSS, Wlan, State0),
 
     %% we have to repeat the search again to avoid a race
     lager:debug("search for station ~p", [{self(), StationMAC}]),
