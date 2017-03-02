@@ -582,11 +582,26 @@ run({echo_request, Seq, Elements, #capwap_header{
     next_state(run, State1);
 
 run({ieee_802_11_wlan_configuration_response, _Seq, Elements, _Header},
-    State0 = #state{data_channel_address = WTPDataChannelAddress}) ->
+    #state{data_channel_address = WTPDataChannelAddress, id = CommonName,
+	   config = Config, wlans = Wlans} = State0) ->
     State =
 	case proplists:get_value(result_code, Elements) of
 	    0 ->
-		lager:debug("IEEE 802.11 WLAN Configuration ok"),
+		lager:debug("IEEE 802.11 WLAN Configuration ok for ~p", [CommonName]),
+
+		BSSIdIEs = get_ies(ieee_802_11_assigned_wtp_bssid, Elements),
+		State1 = State0#state{config = Config#wtp{broken_add_wlan_workaround = (BSSIdIEs =:= [])}},
+
+		if (BSSIdIEs == [] andalso length(Wlans) /= 1) ->
+			%% no BSS Id and multiple Wlans, this can not work, error out
+			lager:error("~p: WTP with broken Add WLAN Response and multiple WLAN is not working", [CommonName]);
+		   BSSIdIEs == [] ->
+			%% no BSS Ids means the WTP is broken, activate workaround
+			lager:warning("~p: WTP with broken Add WLAN Response, upgrade as soon as possible", [CommonName]);
+		   true ->
+			ok
+		end,
+
 		lists:foldl(fun(#ieee_802_11_assigned_wtp_bssid{radio_id = RadioId,
 								wlan_id = WlanId,
 								bssid = BSS}, S0) ->
@@ -596,13 +611,13 @@ run({ieee_802_11_wlan_configuration_response, _Seq, Elements, _Header},
 										 RadioId, WlanId, BSS, VlanId),
 							      W#wlan{bss = BSS}
 						      end, S0)
-			    end, State0, get_ies(ieee_802_11_assigned_wtp_bssid, Elements));
+			    end, State1, BSSIdIEs);
 
 	    Code ->
-		lager:warning("IEEE 802.11 WLAN Configuration failed with ~w", [Code]),
+		lager:warning("IEEE 802.11 WLAN Configuration failed for ~p with ~w", [CommonName, Code]),
 		%% TODO: handle Update failures
 		State0
-    end,
+	end,
     next_state(run, State);
 
 run({station_configuration_response, _Seq,
@@ -2156,7 +2171,7 @@ add_wlan_keys(_, IEs) ->
 get_wlan(WlanIdent, #state{wlans = Wlans}) ->
     lists:keyfind(WlanIdent, #wlan.wlan_identifier, Wlans).
 
-get_wlan_by_bss(BSS, #state{config = #wtp{broken_add_wlan_workarround = true},
+get_wlan_by_bss(BSS, #state{config = #wtp{broken_add_wlan_workaround = true},
 			    wlans = Wlans}) ->
     case lists:keyfind(BSS, #wlan.bss, Wlans) of
 	false when length(Wlans) == 1 ->

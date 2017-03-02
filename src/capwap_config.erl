@@ -88,7 +88,7 @@ wtp_config(CN) ->
 	    {ac_join_timeout,            70},
 	    {admin_pw,                   undefined},
 	    {wlan_hold_time,             15},
-	    {broken_add_wlan_workarround, false}],
+	    {broken_add_wlan_workaround, false}],
     WTP1 = wtp_get([defaults], WTP0),
     WTP2 = wtp_get([CN], WTP1),
     lager:debug("WTP: ~p", [WTP2]),
