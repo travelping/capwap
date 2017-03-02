@@ -544,7 +544,7 @@ run({new_station, BSS, SA}, _From, State0) ->
     %% {ok, MaxStations} = ergw_aaa_session:get(Session, 'CAPWAP-Max-WIFI-Clients'),
 
     Wlan = get_wlan_by_bss(BSS, State0),
-    {Reply, State} = internal_new_station(Wlan, SA, State0),
+    {Reply, State} = internal_new_station(Wlan, SA, BSS, State0),
     reply(Reply, run, State);
 
 run(Event = {add_station, BSS, MAC, StaCaps, CryptoState}, From, State0) ->
@@ -558,7 +558,7 @@ run({get_station_config, BSS}, _From, State) ->
     Reply =
 	case get_wlan_by_bss(BSS, State) of
 	    Wlan = #wlan{state = running} ->
-		get_station_cfg(Wlan, State);
+		get_station_cfg(Wlan, BSS, State);
 	    _ ->
 		{error, invalid}
 	end,
@@ -2194,9 +2194,10 @@ update_wlan_state(WlanIdent, Fun, State = #state{wlans = Wlans})
     State#state{wlans =
 		    lists:keystore(WlanIdent, #wlan.wlan_identifier, Wlans, Fun(Wlan))}.
 
-get_station_cfg(#wlan{bss = BSS, mac_mode = MacMode, tunnel_mode = TunnelMode,
+get_station_cfg(#wlan{mac_mode = MacMode, tunnel_mode = TunnelMode,
 		      information_elements = IEs,
 		      wpa_config = WpaConfig, gtk = GTK, igtk = IGTK},
+		BSS,
 		#state{id = WtpId, session_id = SessionId,
 		       data_channel_address = WTPDataChannelAddress, data_path = DataPath}) ->
     #station_config{
@@ -2207,7 +2208,7 @@ get_station_cfg(#wlan{bss = BSS, mac_mode = MacMode, tunnel_mode = TunnelMode,
        gtk = GTK, igtk = IGTK
       }.
 
-internal_new_station(#wlan{}, StationMAC,
+internal_new_station(#wlan{}, StationMAC, _BSS,
 		     State = #state{config = #wtp{max_stations = MaxStations},
 				    station_count  = StationCount})
   when StationCount + 1 > MaxStations ->
@@ -2215,7 +2216,7 @@ internal_new_station(#wlan{}, StationMAC,
 		[StationMAC, StationCount, MaxStations]),
     {{error, too_many_clients}, State};
 
-internal_new_station(Wlan = #wlan{bss = BSS}, StationMAC,
+internal_new_station(Wlan = #wlan{}, StationMAC, BSS,
 		     State = #state{id = WtpId, station_count  = StationCount}) ->
 
     %% we have to repeat the search again to avoid a race
@@ -2224,7 +2225,7 @@ internal_new_station(Wlan = #wlan{bss = BSS}, StationMAC,
 	not_found ->
 	    exometer:update([capwap, ac, station_count], 1),
 	    exometer:update([capwap, wtp, WtpId, station_count], StationCount + 1),
-	    StationCfg = get_station_cfg(Wlan, State),
+	    StationCfg = get_station_cfg(Wlan, BSS, State),
 	    Reply =
 		case capwap_station_reg:lookup(StationMAC) of
 		    not_found ->
@@ -2240,8 +2241,8 @@ internal_new_station(Wlan = #wlan{bss = BSS}, StationMAC,
 	    lager:debug("station ~p found as ~p", [{self(), StationMAC}, Station0]),
 	    {Ok, State}
     end;
-internal_new_station(_, StationMAC, State) ->
-    lager:debug("Station ~p trying to associate on invalid Wlan", [StationMAC]),
+internal_new_station(_, StationMAC, BSS, State) ->
+    lager:debug("Station ~p trying to associate on invalid Wlan ~p", [StationMAC, BSS]),
     {{error, invalid_bss}, State}.
 
 internal_add_station(#wlan{wlan_identifier = {RadioId, WlanId}, vlan = VlanId, bss = BSS}, MAC, StaCaps,
