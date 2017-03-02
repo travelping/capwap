@@ -186,27 +186,26 @@ print_wtp_config(#{config := Config}) ->
 	       Config#wtp.data_channel_dead_interval, Config#wtp.ac_join_timeout,
 	       Config#wtp.admin_pw, Config#wtp.wlan_hold_time]).
 
-print_wtp_radio_wlan(#wtp_radio{radio_id = RadioId},
-		     #wtp_wlan_config{wlan_id = WlanId} = Wlan,
-		     WlansState) ->
+print_wtp_radio_wlan_state(#wlan{bss = BSS,
+				 state = WlanState}) ->
+    io:format("    BSS: ~s~n"
+	      "    Running: ~w~n",
+	      [fmt_mac(BSS), WlanState]);
+print_wtp_radio_wlan_state(_) ->
+    io:format("    BSS: unconfigure~n"
+	      "    Running: unconfigure~n").
 
-    {BSS, WlanState} =
-	case lists:keyfind({RadioId, WlanId}, 2, WlansState) of
-	    #wlan{bss = BSS1, state = WlanState1} ->
-		{BSS1, WlanState1};
-	    Other ->
-		{<<0,0,0,0,0,0>>, unconfigured}
-	end,
+print_wtp_radio_wlan(#wtp_radio{radio_id = RadioId},
+		     #wtp_wlan_config{wlan_id = WlanId} = WlanCfg,
+		     WlansState) ->
     io:format("  WLAN #~w:~n"
 	      "    SSID: ~s~n"
 	      "    Hidden SSID: ~w~n"
-	      "    Privay: ~w~n"
-	      "    BSS: ~s~n"
-	      "    Running: ~w~n",
-	      [WlanId, Wlan#wtp_wlan_config.ssid,
-	       fmt_bool(Wlan#wtp_wlan_config.suppress_ssid),
-	       fmt_bool(Wlan#wtp_wlan_config.privacy, {enabled, disabled}),
-	       fmt_mac(BSS), WlanState]).
+	      "    Privay: ~w~n",
+	      [WlanId, WlanCfg#wtp_wlan_config.ssid,
+	       fmt_bool(WlanCfg#wtp_wlan_config.suppress_ssid),
+	       fmt_bool(WlanCfg#wtp_wlan_config.privacy, {enabled, disabled})]),
+    print_wtp_radio_wlan_state(lists:keyfind({RadioId, WlanId}, 2, WlansState)).
 
 fmt_wtp_radio_oper_mode(#wtp_radio{
 			   operation_mode = OperMode,
