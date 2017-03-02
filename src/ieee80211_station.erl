@@ -348,15 +348,21 @@ handle_event(cast, {'EAPOL', _DA, _SA, BSS, EAPData}, connected,
     Data = eap_handshake(eapol:decode(EAPData), Data0),
     {keep_state, Data, [?IDLE_TIMEOUT]};
 
-handle_event(cast, {'FT', _DA, _SA, _BSS, _Action, _STA, TargetAP, Body} = Event,
+handle_event(cast, {'FT', DA, SA, BSS, _Action, STA, TargetAP, ReqBody} = Event,
 	     connected, Data = #data{cipher_state = #ccmp{akm_algo = AKM}})
   when AKM == 'FT-802.1x'; AKM == 'FT-PSK' ->
     lager:info("in CONNECTED got FT over-the-DS: ~p", [Event]),
-    ListIE = [ {Id, Value} || <<Id:8, Len:8, Value:Len/bytes>> <= Body ],
+    ListIE = [ {Id, Value} || <<Id:8, Len:8, Value:Len/bytes>> <= ReqBody ],
     lager:info("in CONNECTED got FT over-the-DS: ~p", [ListIE]),
 
     case capwap_wtp_reg:lookup(TargetAP) of
 	{ok, Pid} ->
+	    %%
+	    %% IEEE 802.11-2012, 12.8.2 FT authentication sequence: contents of first message
+	    %%
+	    %% FTO→Target AP:
+	    %%   FT Request (FTO address, TargetAP address, RSNE[PMKR0Name], MDE, FTE[SNonce, R0KH-ID])
+
 	    lager:info("in CONNECTED got FT over-the-DS to: ~p", [Pid]),
 	    StaCfg = capwap_ac:get_station_config(Pid, TargetAP),
 	    lager:info("in CONNECTED got FT over-the-DS to: ~p", [lager:pr(StaCfg, ?MODULE)]),
@@ -367,6 +373,60 @@ handle_event(cast, {'FT', _DA, _SA, _BSS, _Action, _STA, TargetAP, Body} = Event
 
 	    MDomain = proplists:get_value(?WLAN_EID_MOBILITY_DOMAIN, ListIE),
 	    FTE = proplists:get_value(?WLAN_EID_FAST_BSS_TRANSITION, ListIE),
+	    FT = decode_fte(FTE),
+
+	    lager:info("in CONNECTED got FT over-the-DS: ~p", [lager:pr(RSN, ?MODULE)]),
+	    lager:info("in CONNECTED got FT over-the-DS: ~p", [lager:pr(FT, ?MODULE)]),
+
+	    %%
+	    %% IEEE 802.11-2012, 12.8.3 FT authentication sequence: contents of second message
+	    %%
+	    %% Target AP→FTO:
+	    %%  FT Response (FTO address, TargetAP address, Status, RSNE[PMKR0Name], MDE, FTE[ANonce, SNonce, R1KH-ID, R0KH-ID])
+
+	    %% Target AP Beacon RSN with PMKID List set to what the Sta requested
+	    #station_config{wpa_config = #wpa_config{rsn = DestRSN}} = StaCfg,
+	    lager:info("Target RSN0: ~p", [lager:pr(DestRSN, ?MODULE)]),
+
+	    DestMDomain = MDomain,   %% TODO: Should be Target AP MDomain...
+
+	    ANonce = crypto:strong_rand_bytes(32),
+	    DestFTE = #fte{anonce = ANonce,
+			   snonce = FT#fte.snonce,
+			   r0kh = FT#fte.r0kh,
+			   r1kh = StaCfg#station_config.bss},
+
+	    lager:info("Target RSN: ~p", [lager:pr(DestRSN, ?MODULE)]),
+	    lager:info("Target MDomain: ~p", [lager:pr(DestMDomain, ?MODULE)]),
+	    lager:info("Target FTE: ~p", [lager:pr(DestFTE, ?MODULE)]),
+
+	    %% TODO: check the MFP logic.....
+	    DestRSNie = capwap_ac:rsn_ie(DestRSN, RSN#wtp_wlan_rsn.pmk_ids,
+					 DestRSN#wtp_wlan_rsn.management_frame_protection),
+	    lager:info("Target RSNie: ~p", [pbkdf2:to_hex(DestRSNie)]),
+
+	    DestMDomainIE = capwap_ac:ieee_802_11_ie(?WLAN_EID_MOBILITY_DOMAIN, MDomain),
+	    lager:info("Target MDomainIE: ~p", [pbkdf2:to_hex(DestMDomainIE)]),
+
+	    DestFTie = ft_ie(DestFTE),
+	    lager:info("Target FTie: ~p", [pbkdf2:to_hex(DestFTie)]),
+
+	    Action = 2,    %% Response
+	    Status = 0,
+	    RespBody = <<DestRSNie/binary, DestMDomainIE/binary, DestFTie/binary>>,
+	    ActionFrame = <<?WLAN_ACTION_FT, Action:8, STA:6/bytes, TargetAP:6/bytes,
+			    Status:16/little, RespBody/binary>>,
+
+	    {Type, SubType} = frame_type('Action'),
+	    FrameControl = <<SubType:4, Type:2, 0:2, 0:6, 0:1, 0:1>>,
+	    Duration = 0,
+	    SequenceControl = 0,
+	    Frame = <<FrameControl/binary,
+		      Duration:16/integer-little,
+		      SA:6/bytes, DA:6/bytes, BSS:6/bytes,
+		      SequenceControl:16,
+		      ActionFrame/binary>>,
+	    wtp_send_80211(Frame, Data),
 
 	    ok;
 	_ ->
@@ -767,6 +827,29 @@ decode_rsne(group_management_cipher, <<GroupMgmtCipherSuite:32>>, RSN) ->
 		[capwap_packet:decode_cipher_suite(GroupMgmtCipherSuite), RSN#wtp_wlan_rsn.capabilities]),
     RSN.
 
+ft_ie_mic(#fte{mic = undefined}) ->
+    {0, <<0:(16*8)>>}.
+
+ft_ie_nonce(Nonce)
+  when is_binary(Nonce),
+       byte_size(Nonce) == 32 ->
+    Nonce;
+ft_ie_nonce(_Nonce) ->
+    <<0:(32*8)>>.
+
+ft_ie_opt(Id, Opt) when is_binary(Opt) ->
+    [Id, size(Opt), Opt];
+ft_ie_opt(_Id, _Opt) ->
+    [].
+
+ft_ie(#fte{anonce = ANonce, snonce = SNonce,
+	   r0kh = R0KH, r1kh = R1KH,
+	   gtk = GTK, igtk = IGTK} = FTE) ->
+    {Count, MIC} = ft_ie_mic(FTE),
+    IE = [0, Count, MIC, ft_ie_nonce(ANonce), ft_ie_nonce(SNonce),
+	  [ft_ie_opt(I, O) || {I, O} <- [{1, R1KH}, {2, GTK}, {3, R0KH}, {4, IGTK}]]],
+    capwap_ac:ieee_802_11_ie(?WLAN_EID_FAST_BSS_TRANSITION, iolist_to_binary(IE)).
+
 ft_ie(R0KH, R1KH) ->
 %% Page 1312
 %% The (Re)Association Response frame from the AP shall contain an MDE, with contents as presented in
@@ -780,6 +863,24 @@ ft_ie(R0KH, R1KH) ->
 							      R1KHie/binary, R0KHie/binary>>).
 encode_fte(R0KH, R1KH) ->
     {?WLAN_EID_FAST_BSS_TRANSITION, ft_ie(R0KH, R1KH)}.
+
+decode_fte(<<_:8, _Count:8, MIC:16/bytes, ANonce:32/bytes, SNonce:32/bytes, Opt/binary>>) ->
+    FT = #fte{mic = MIC,
+	      anonce = ANonce,
+	      snonce = SNonce},
+    OptList = [ {Id, Data} || <<Id:8, Len:8, Data:Len/bytes>> <= Opt ],
+    lists:foldl(fun decode_fte_opt/2, FT, OptList).
+
+decode_fte_opt({1, R1KH}, FT) ->
+    FT#fte{r1kh = R1KH};
+decode_fte_opt({2, GTK}, FT) ->
+    FT#fte{gtk = GTK};
+decode_fte_opt({3, R0KH}, FT) ->
+    FT#fte{r0kh = R0KH};
+decode_fte_opt({4, IGTK}, FT) ->
+    FT#fte{igtk = IGTK};
+decode_fte_opt(_, FT) ->
+    FT.
 
 %% ti_ie(Type, Interval) ->
 %%     capwap_ac:ieee_802_11_ie(?WLAN_EID_TIMEOUT_INTERVAL, <<Type:8, Interval:32/little>>).

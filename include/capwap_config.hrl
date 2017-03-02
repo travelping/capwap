@@ -70,13 +70,13 @@
 	 }).
 
 -record(wtp_wlan_rsn, {
-	  version,
-	  capabilities,
-	  group_cipher_suite,
-	  cipher_suites,
-	  akm_suites,
-	  pmk_ids,
-	  group_mgmt_cipher_suite,
+	  version			:: undefined | 1 | 2,
+	  capabilities			:: undefined | integer(),
+	  group_cipher_suite		:: undefined | binary(),
+	  cipher_suites			:: undefined | [binary()],
+	  akm_suites			:: undefined | [binary()],
+	  pmk_ids			:: undefined | [binary()],
+	  group_mgmt_cipher_suite	:: undefined | binary(),
 
 	  management_frame_protection
 	 }).

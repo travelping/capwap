@@ -100,3 +100,5 @@
 
 %% 802.11 Action Category
 -define(WLAN_ACTION_FT, 6).
+
+-record(fte, {mic, anonce, snonce, r1kh, gtk, r0kh, igtk}).
