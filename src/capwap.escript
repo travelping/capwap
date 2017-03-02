@@ -186,14 +186,20 @@ print_wtp_config(#{config := Config}) ->
 	       Config#wtp.data_channel_dead_interval, Config#wtp.ac_join_timeout,
 	       Config#wtp.admin_pw, Config#wtp.wlan_hold_time]).
 
-print_wtp_radio_wlan_state(#wlan{bss = BSS,
+print_wtp_radio_wlan_state(#wtp_wlan_config{mac_mode = CfgMacMode},
+			   #wlan{bss = BSS, mac_mode = MacMode, tunnel_mode = TunnelMode,
 				 state = WlanState}) ->
     io:format("    BSS: ~s~n"
+	      "    MAC Mode: ~s (~s)~n"
+	      "    Tunnel Mode: ~s~n"
 	      "    Running: ~w~n",
-	      [fmt_mac(BSS), WlanState]);
-print_wtp_radio_wlan_state(_) ->
+	      [fmt_mac(BSS), MacMode, CfgMacMode, TunnelMode, WlanState]);
+print_wtp_radio_wlan_state(#wtp_wlan_config{mac_mode = CfgMacMode}, _) ->
     io:format("    BSS: unconfigure~n"
-	      "    Running: unconfigure~n").
+	      "    MAC Mode: unconfigured (~s)~n"
+	      "    Tunnel Mode: unconfigured~n"
+	      "    Running: unconfigure~n",
+	      [CfgMacMode]).
 
 print_wtp_radio_wlan(#wtp_radio{radio_id = RadioId},
 		     #wtp_wlan_config{wlan_id = WlanId} = WlanCfg,
@@ -205,7 +211,7 @@ print_wtp_radio_wlan(#wtp_radio{radio_id = RadioId},
 	      [WlanId, WlanCfg#wtp_wlan_config.ssid,
 	       fmt_bool(WlanCfg#wtp_wlan_config.suppress_ssid),
 	       fmt_bool(WlanCfg#wtp_wlan_config.privacy, {enabled, disabled})]),
-    print_wtp_radio_wlan_state(lists:keyfind({RadioId, WlanId}, 2, WlansState)).
+    print_wtp_radio_wlan_state(WlanCfg, lists:keyfind({RadioId, WlanId}, 2, WlansState)).
 
 fmt_wtp_radio_oper_mode(#wtp_radio{
 			   operation_mode = OperMode,
@@ -387,8 +393,6 @@ print_wtp(#{id := Id,
 	    ctrl_channel_address := CtrlAddress,
 	    data_channel_address := DataAddress,
 	    session_id := SessionId,
-	    mac_mode := MacMode,
-	    tunnel_mode := TunnelMode,
 	    echo_request_timeout := EchoReqTimeout
 	   } = WTP) ->
     Now = erlang:system_time(milli_seconds),
@@ -401,14 +405,12 @@ print_wtp(#{id := Id,
 	      "  Control Channel Endpoint: ~s~n"
 	      "  Data Channel Endpoint: ~s~n"
 	      "  Session Id: ~32.16.0b~n"
-	      "  MAC Mode: ~s~n"
-	      "  Tunnel Mode: ~s~n"
 	      "  Echo Request Timeout: ~w sec~n",
 	      [Id, StationCnt, fmt_time_ms(StartTime), (Now - StartTime) / 1000,
 	       Location, format_wtp_board_data(BoardData),
 	       format_wtp_descriptor(Descriptor), Name,
 	       fmt_endpoint(CtrlAddress), fmt_endpoint(DataAddress),
-	       SessionId, MacMode, TunnelMode, EchoReqTimeout]),
+	       SessionId, EchoReqTimeout]),
     print_wtp_config(WTP),
     print_wtp_radios(WTP).
 
