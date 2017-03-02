@@ -166,7 +166,8 @@ init_auth(timeout, State) ->
     lager:warning("idle timeout in INIT_AUTH"),
     {stop, normal, State};
 
-init_auth(Event = {'Authentication', DA, SA, BSS, 0, 0, Frame}, State) ->
+init_auth(Event = {'Authentication', DA, SA, BSS, 0, 0, Frame},
+	  State = #state{radio_mac = BSS}) ->
     lager:debug("in INIT_AUTH got Authentication Request: ~p", [Event]),
     AuthFrame = decode_auth_frame(Frame),
     case AuthFrame of
@@ -200,8 +201,8 @@ init_assoc(timeout, State) ->
     lager:warning("idle timeout in INIT_ASSOC"),
     {stop, normal, State};
 
-init_assoc(Event = {'Authentication', _DA, _SA, _BSS, 0, 0, _Frame}, State)
-  when State#state.mac_mode == local_mac ->
+init_assoc(Event = {'Authentication', _DA, _SA, BSS, 0, 0, _Frame},
+	   State = #state{radio_mac = BSS, mac_mode = local_mac}) ->
     lager:debug("in INIT_ASSOC Local-MAC Mode got Authentication Request: ~p", [Event]),
     {next_state, init_assoc, State, ?IDLE_TIMEOUT};
 
@@ -229,7 +230,8 @@ init_assoc(Event = {FrameType, _DA, _SA, BSS, 0, 0, Frame},
 
     {next_state, connected, State, ?IDLE_TIMEOUT};
 
-init_assoc(Event = {'Authentication', _DA, _SA, _BSS, 0, 0, _Frame}, State) ->
+init_assoc(Event = {'Authentication', _DA, _SA, BSS, 0, 0, _Frame},
+	   State = #state{radio_mac = BSS}) ->
     lager:debug("in INIT_ASSOC got Authentication Request: ~p", [Event]),
     %% fall-back to init_auth....
     init_auth(Event, State);
@@ -240,7 +242,8 @@ init_assoc(Event = {'Deauthentication', _DA, _SA, BSS, 0, 0, _Frame},
     {next_state, initial_state(MacMode), State, ?SHUTDOWN_TIMEOUT};
 
 init_assoc(Event = {FrameType, DA, SA, BSS, 0, 0, ReqFrame},
-	   #state{response_ies = ResponseIEs0,
+	   #state{radio_mac = BSS,
+		  response_ies = ResponseIEs0,
 		  wpa_config = #wpa_config{
 				  rsn = #wtp_wlan_rsn{
 					   version = RSNversion,
