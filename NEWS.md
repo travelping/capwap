@@ -3,7 +3,7 @@ capwap
 
 Erlang CAPWAP AC implementation.
 
-Version 1.9.0 - xx Feb 2017
+Version 1.9.0 - 03 Feb 2017
 ---------------------------
 
 * capwap-dp API version 1
