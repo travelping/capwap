@@ -1925,6 +1925,8 @@ internal_add_wlan_result({RadioId, WlanId} = WlanIdent,
 	     fun(W0 = #wlan{vlan = VlanId}) ->
 		     W = case BSSIdIEs of
 			     [#ieee_802_11_assigned_wtp_bssid{bssid = BSS}] ->
+				 %% TODO: include the Mobility Domain ?
+				 ok = capwap_wtp_reg:register(BSS),
 				 capwap_dp:add_wlan(WTPDataChannelAddress,
 						    RadioId, WlanId, BSS, VlanId),
 				 W0#wlan{state = running, bss = BSS};
