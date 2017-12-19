@@ -691,12 +691,15 @@ update_sta_from_mgmt_frame_ies(IEs, #state{aid = AID, capabilities = Cap0} = Sta
     ListIE = [ {Id, Data} || <<Id:8, Len:8, Data:Len/bytes>> <= IEs ],
     Cap = lists:foldl(fun update_sta_cap_from_mgmt_frame_ie/2, Cap0#sta_cap{aid = AID}, ListIE),
     lager:debug("New Station Caps: ~p", [lager:pr(Cap, ?MODULE)]),
-    #sta_cap{rsn = RSN} = Cap,
-    lager:info("STA: ~p, Ciphers: Group ~p, PairWise: ~p, AKM: ~p, Caps: ~w, Mgmt: ~p",
-	       [flower_tools:format_mac(State#state.mac),
-		RSN#wtp_wlan_rsn.group_cipher_suite, RSN#wtp_wlan_rsn.cipher_suites,
-		RSN#wtp_wlan_rsn.akm_suites, RSN#wtp_wlan_rsn.capabilities,
-		RSN#wtp_wlan_rsn.group_mgmt_cipher_suite]),
+    case Cap of
+        #sta_cap{rsn = #wtp_wlan_rsn{} = RSN} ->
+            lager:info("STA: ~p, Ciphers: Group ~p, PairWise: ~p, AKM: ~p, Caps: ~w, Mgmt: ~p",
+                       [flower_tools:format_mac(State#state.mac),
+                        RSN#wtp_wlan_rsn.group_cipher_suite, RSN#wtp_wlan_rsn.cipher_suites,
+                        RSN#wtp_wlan_rsn.akm_suites, RSN#wtp_wlan_rsn.capabilities,
+                        RSN#wtp_wlan_rsn.group_mgmt_cipher_suite]);
+        _ -> nothing
+    end,
     State#state{capabilities = Cap}.
 
 smps2atom(0) -> static;
