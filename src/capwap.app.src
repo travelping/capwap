@@ -5,10 +5,10 @@
     {applications, [
         kernel,
         stdlib,
-	crypto,
+        crypto,
         dtlsex,
-	lager,
-	flower,
+        lager,
+        flower,
         pcapng,
         ssl,
         regine,
