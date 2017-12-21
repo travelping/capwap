@@ -3,6 +3,12 @@ capwap
 
 Erlang CAPWAP AC implementation.
 
+Version 1.9.1 - 21 Dec 2017
+---------------------------
+
+* fix a crash when not encrypted AP connect to CAPWAP AC
+* switch on rebar3 in Travis build rules
+
 Version 1.9.0 - 03 Feb 2017
 ---------------------------
 
