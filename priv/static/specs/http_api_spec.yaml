@@ -1,0 +1,259 @@
+swagger: '2.0'
+info:
+  title: "CAPWAP API"
+  version: "1.0.0"
+  description: "CAPWAP API to interact with CAPWAP AC"
+  license:
+    name: "GPL 2.0"
+    url: "https://www.gnu.org/licenses/#GPL"
+basePath: /api/v1
+paths:
+  /version:
+    get:
+      summary: get the CAPWAP version
+      responses:
+        '200':
+          description: 'returns version of the CAPWAP'
+          schema:
+            $ref: '#/definitions/Version'
+  /wtp:
+    get:
+      summary: list all registered wtps
+      responses:
+        '200':
+          description: returns list wtps
+          schema:
+            $ref: '#/definitions/WTPS'
+  /wtp/{id}:
+    get:
+      summary: show wtp information
+      parameters:
+        - name: id
+          in: path
+          required: true
+          type: string
+          description: whose id wtp is shown
+      responses:
+        '200':
+          description: show wtp information
+          schema:
+            $ref: '#/definitions/WTPInfo'
+  /wtp/{id}/update/{link}/{hash}:
+    post:
+      summary: update wtp
+      parameters:
+        - name: id
+          in: path
+          required: true
+          type: string
+          description: whose id wtp is update
+        - name: link
+          in: path
+          required: true
+          type: string
+          description: link
+        - name: hash
+          in: path
+          required: true
+          type: string
+          description: hash
+      responses:
+        '200':
+          description: returns status updating
+          schema:
+            $ref: '#/definitions/UpdateStatus'
+  /wtp/{id}/set-ssid/{ssid}/{radio_id}:
+    post:
+      summary: set ssid
+      parameters:
+        - name: id
+          in: path
+          required: true
+          type: string
+          description: id for wtp
+        - name: ssid
+          in: path
+          required: true
+          type: string
+          description: SSID
+        - name: radio_id
+          in: path
+          required: false
+          type: integer
+          description: Radio ID. (default 1)
+      responses:
+        '200':
+          description: returns status of operation
+          schema:
+            $ref: '#/definitions/SetStatus'
+  /wtp/{id}/stop-radio/{radio_id}:
+    delete:
+      summary: stop wifi radio
+      parameters:
+        - name: id
+          in: path
+          required: true
+          type: string
+          description: wtp id when wifi radio will be stopped
+        - name: radio_id
+          in: path
+          required: true
+          type: integer
+          description: Radio ID
+      responses:
+        '200':
+          description: returns status of operation
+          schema:
+            $ref: '#/definitions/SetStatus'
+  /station:
+    get:
+      summary: list all known stations
+      responses:
+        '200':
+          description: returns stations
+          schema:
+            $ref: '#/definitions/Stations'
+  /station/{mac}:
+    delete:
+      summary: detach station from WLAN
+      parameters:
+        - name: mac
+          in: path
+          required: true
+          type: string
+          description: mac
+      responses:
+        '200':
+          description: returns status of operation
+          schema:
+            $ref: '#/definitions/SetStatus'
+  /dp/wtp-list:
+    get:
+      summary: list all WTP's with active data path
+      parameters:
+        - name: verbose
+          in: header
+          required: false
+          type: boolean
+          description: verbose output provide
+      responses:
+        '200':
+          description: returns info about WTP's
+          schema:
+            $ref: '#/definitions/WTPS'
+  /dp/stats:
+    get:
+      summary: show data path statistics
+      parameters:
+        - name: verbose
+          in: header
+          required: false
+          type: boolean
+          description: verbose output provide
+      responses:
+        '200':
+          description: returns status of operation
+          schema:
+            $ref: '#/definitions/WTPStats'
+definitions:
+  Version:
+    type: "object"
+    properties:
+      version:
+        type: "string"
+  WTPS:
+    type: "array"
+    items: {
+      $ref: "#/definitions/WTP"
+    }
+  WTPInfo:
+    type: "object"
+    properties:
+      id:
+        type: "string"
+      location:
+        type: "string"
+      description:
+        $ref: "#/definitions/BoardDescription"
+      start_time:
+        $ref: "#/definitions/Time"
+      board_data:
+        $ref: "#/definitions/BoardData"
+      control_channel_endpoint:
+        $ref: "#/definitions/Endpoint"
+      data_channel_endpoint:
+        $ref: "#/definitions/Endpoint"
+      echo_request_timeout:
+        type: "integer"
+      session_id:
+        type: "string"
+  WTPStats:
+    type: "object"
+  WTP:
+    type: "object"
+    properties:
+      id:
+        type: "string"
+      endpoint:
+        $ref: "#/definitions/Endpoint"
+  Stations:
+    type: "object"
+  UpdateStatus:
+    type: "object"
+    properties:
+      user:
+        type: "string"
+      error:
+        type: "string"
+  SetStatus:
+    type: "object"
+    properties:
+      setup:
+        type: "string"
+      error:
+        type: "string"
+  BoardData:
+    type: "object"
+    properties:
+      base_mac:
+        type: "string"
+      board_id:
+        type: "string"
+      board_revision:
+        type: "string"
+      model:
+        type: "string"
+      serial:
+        type: "string"
+      vendor:
+        type: "string"
+      vendor_id:
+        type: "integer"
+  BoardDescription:
+    type: "object"
+    properties:
+      encription_sub_element:
+        type: "string"
+      max_radios:
+        type: "integer"
+      radios_in_use:
+        type: "integer"
+  Time:
+    type: "object"
+    properties:
+      duration:
+        type: "string"
+      time:
+        type: "string"
+  Endpoint:
+    type: "object"
+    properties:
+      ip:
+        type: "string"
+      port:
+        type: "integer"
+  Error:
+    type: "object"
+    properties:
+      error:
+        type: "string"
