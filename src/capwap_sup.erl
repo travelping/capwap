@@ -58,5 +58,5 @@ init([]) ->
 				  ?CHILD(capwap_station_reg, worker, []),
 				  ?CHILD(capwap_station_sup, supervisor, []),
 				  ?CHILD(capwap_dp, worker, []),
-                  ?CHILD(capwap_http_api_handler, supervisor, [])
+                  ?CHILD(capwap_http_api, supervisor, [])
     ]} }.

@@ -19,52 +19,15 @@
 -include("../include/capwap_config.hrl").
 -include("../include/capwap_ac.hrl").
 
--export([start_link/0]).
 -export([init/2, content_types_provided/2,
          handle_request_json/2,
          allowed_methods/2,
          content_types_accepted/2]).
 
--define(DEFAULT_PORT,	8000).
--define(DEFAULT_IP,     {127, 0, 0, 1}).
--define(ACCEPTORS_NUM,  100).
-
 -record(s, {
     verbose = false :: boolean(),
     opts
 }).
-
-start_link() ->
-    HttpConfig = application:get_env(capwap, http_api, []),
-    Port = proplists:get_value(port, HttpConfig, ?DEFAULT_PORT),
-    IP = proplists:get_value(ip, HttpConfig, ?DEFAULT_IP),
-    INet = get_inet(IP),
-    AcceptorsNum = proplists:get_value(acceptors_num, HttpConfig, ?ACCEPTORS_NUM),
-    Dispatch = cowboy_router:compile([
-		{'_', [
-			{"/api/v1/version",                          ?MODULE, []},
-
-			{"/api/v1/capwap/list",                      ?MODULE, []},
-			{"/api/v1/capwap/show/:id",                  ?MODULE, []},
-			{"/api/v1/capwap/update/:id/:link/:hash",    ?MODULE, []},
-			{"/api/v1/capwap/set_ssid/:id/:ssid[/:rid]", ?MODULE, []},
-			{"/api/v1/capwap/stop_radio/:id/:rid",       ?MODULE, []},
-
-			{"/api/v1/station",                     ?MODULE, []},
-			{"/api/v1/station/:id",               ?MODULE, []},
-
-			{"/api/v1/dp/wtp_list",                      ?MODULE, []},
-			{"/api/v1/dp/stats",                         ?MODULE, []}
-		]}
-	]),
-    TransOpts = [{port, Port}, {ip, IP}, INet, {num_acceptors, AcceptorsNum}],
-    ProtoOpts = #{env => #{dispatch => Dispatch}},
-    cowboy:start_clear(capwap_http_api, TransOpts, ProtoOpts).
-
-get_inet({_, _, _, _}) ->
-    inet;
-get_inet({_, _, _, _, _, _, _, _}) ->
-    inet6.
 
 init(Req, Opts) ->
     Verbose = cowboy_req:header(<<"verbose">>, Req, <<"false">>),
