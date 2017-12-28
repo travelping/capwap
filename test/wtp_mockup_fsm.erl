@@ -64,7 +64,6 @@
 		next_resp,
 		echo_request_timer,
 		echo_request_timeout,
-		flow_switches,
 		capwap_wtp_session_id,
 		wifi_up,
 		request_pending,
@@ -151,8 +150,6 @@ init([SCG = {SCGIP, SCGControlPort}, IP, Port, CertDir, RootCert, Mac, RemoteMod
 		      scg = SCG,
 		      simulated_data_port = Port,
 		      next_resp = undefined,
-		      flow_switches = {spawn(fun()-> ok end),
-				       spawn(fun()-> ok end)},
 		      echo_request_timeout = 0,
 		      keep_alive_timeout = 0,
 		      capwap_wtp_session_id = random:uniform(329785637896618622174542098706248598340),
@@ -228,7 +225,7 @@ join(send_config_status, From, State) ->
 	   #statistics_timer{statistics_timer = 120},
 	   #wtp_reboot_statistics{},
 	   #ieee_802_11_wtp_radio_information{radio_type = ['802.11g','802.11b']},
-	   #ieee_802_11_supported_rates{supported_rates = <<130,132,139,150,12,18,24,36>>},
+	   #ieee_802_11_supported_rates{supported_rates = [130,132,139,150,12,18,24,36]},
 	   #ieee_802_11_multi_domain_capability{first_channel = 1,
 						number_of_channels_ = 14,
 						max_tx_power_level = 27}
@@ -381,12 +378,11 @@ send_capwap(#state{remote_mode=false} = State, data, []) ->
     reset_keep_alive_timer(State);
 send_capwap(#state{data_socket=DS, remote_mode=false,
 		   simulated_data_port = Port,
-		   scg = {SCGIP, _}, ip = IP,
-		  flow_switches = {SW1, SW2}
+		   scg = {SCGIP, _}, ip = IP
 		  } = State,
 	    data, [Packet|Rest]) ->
     ct:pal("send simulated data capwap: ~p", [Packet]),
-    case capwap_ac:handle_data(SW1, SW2, IP, Port, Packet) of
+    case capwap_ac:handle_data(self(), {IP, Port}, Packet) of
 	{reply, Resp}  ->
 	    {udp, DS, SCGIP, Port + 1, Resp};
 	_ ->
