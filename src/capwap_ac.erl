@@ -17,7 +17,7 @@
 
 -compile({parse_transform, cut}).
 
--behaviour(gen_fsm).
+-behaviour(gen_statem).
 
 %% API
 -export([start_link/1, accept/3, get_data_channel_address/1, take_over/1, new_station/3,
@@ -33,11 +33,10 @@
 -export([add_station/5, del_station/3, send_80211/3, ieee_802_11_ie/2,
 	 rsn_ie/2, rsn_ie/3, get_station_config/2]).
 
-%% gen_fsm callbacks
--export([init/1, listen/2, idle/2, join/2, configure/2, data_check/2, run/2,
-	 run/3,
-	 handle_event/3,
-	 handle_sync_event/4, handle_info/3, terminate/3, code_change/4]).
+%% gen_statem callbacks
+-export([callback_mode/0, init/1,
+	 listen/3, idle/3, join/3, configure/3, data_check/3, run/3,
+	 terminate/3, code_change/4]).
 
 -export([handle_packet/2, handle_data/3]).
 
@@ -94,7 +93,6 @@
 	  echo_request_timeout,
 
 	  change_state_pending_timeout,
-	  protocol_timer,	  	  %% used for the CAPWAP ChangeStatePendingTimer
 
 	  seqno = 0,
 	  version,
@@ -132,17 +130,8 @@
 %%% API
 %%%===================================================================
 
-%%--------------------------------------------------------------------
-%% @doc
-%% Creates a gen_fsm process which calls Module:init/1 to
-%% initialize. To ensure a synchronized start-up procedure, this
-%% function does not return until Module:init/1 has returned.
-%%
-%% @spec start_link() -> {ok, Pid} | ignore | {error, Error}
-%% @end
-%%--------------------------------------------------------------------
 start_link(WTPControlChannelAddress) ->
-    gen_fsm:start_link(?MODULE, [WTPControlChannelAddress], [{debug, ?DEBUG_OPTS}]).
+    gen_statem:start_link(?MODULE, [WTPControlChannelAddress], [{debug, ?DEBUG_OPTS}]).
 
 handle_packet(WTPControlChannelAddress, Packet) ->
     try
@@ -185,22 +174,22 @@ handle_data(DataPath, WTPDataChannelAddress, Packet) ->
     end.
 
 accept(WTP, Type, Socket) ->
-    gen_fsm:send_event(WTP, {accept, Type, Socket}).
+    gen_statem:cast(WTP, {accept, Type, Socket}).
 
 get_data_channel_address(WTP) ->
-    gen_fsm:sync_send_all_state_event(WTP, get_data_channel_address).
+    gen_statem:call(WTP, get_data_channel_address).
 
 take_over(WTP) ->
-    gen_fsm:sync_send_all_state_event(WTP, {take_over, self()}).
+    gen_statem:call(WTP, {take_over, self()}).
 
 new_station(WTP, BSS, SA) ->
-    gen_fsm:sync_send_event(WTP, {new_station, BSS, SA}).
+    gen_statem:call(WTP, {new_station, BSS, SA}).
 
 station_detaching(AC) ->
-    gen_fsm:send_all_state_event(AC, station_detaching).
+    gen_statem:cast(AC, station_detaching).
 
 gtk_rekey_done({AC, WlanIdent}) ->
-    gen_fsm:send_event(AC, {gtk_rekey_done, WlanIdent}).
+    gen_statem:cast(AC, {gtk_rekey_done, WlanIdent}).
 
 %%%===================================================================
 %%% extern APIs
@@ -214,7 +203,7 @@ with_cn(CN, Fun) ->
     end.
 
 get_state(CN) ->
-    case with_cn(CN, gen_fsm:sync_send_all_state_event(_, get_state)) of
+    case with_cn(CN, gen_statem:call(_, get_state)) of
 	{ok, State} ->
 	    Fields = record_info(fields, state),
 	    [_Tag| Values] = tuple_to_list(State),
@@ -225,49 +214,38 @@ get_state(CN) ->
     end.
 
 firmware_download(CN, DownloadLink, Sha) ->
-    with_cn(CN, gen_fsm:send_event(_, {firmware_download, DownloadLink, Sha})).
+    with_cn(CN, gen_statem:cast(_, {firmware_download, DownloadLink, Sha})).
 
 set_ssid(CN, RadioId, SSID, SuppressSSID) ->
     WlanId = 1,
     WlanIdent = {RadioId, WlanId},
-    with_cn(CN, gen_fsm:sync_send_all_state_event(_, {set_ssid, WlanIdent, SSID, SuppressSSID})).
+    with_cn(CN, gen_statem:call(_, {set_ssid, WlanIdent, SSID, SuppressSSID})).
 
 stop_radio(CN, RadioId) ->
-    with_cn(CN, gen_fsm:sync_send_all_state_event(_, {stop_radio, RadioId})).
+    with_cn(CN, gen_statem:call(_, {stop_radio, RadioId})).
 
 %%%===================================================================
 %%% Station APIs
 %%%===================================================================
 
 add_station(AC, BSS, MAC, StaCaps, CryptoState) ->
-    gen_fsm:sync_send_event(AC, {add_station, BSS, MAC, StaCaps, CryptoState}).
+    gen_statem:call(AC, {add_station, BSS, MAC, StaCaps, CryptoState}).
 
 del_station(AC, BSS, MAC) ->
-    gen_fsm:send_event(AC, {del_station, BSS, MAC}).
+    gen_statem:cast(AC, {del_station, BSS, MAC}).
 
 send_80211(AC, BSS, Data) ->
-    gen_fsm:send_event(AC, {send_80211, BSS, Data}).
+    gen_statem:cast(AC, {send_80211, BSS, Data}).
 
 get_station_config(AC, BSS) ->
-    gen_fsm:sync_send_event(AC,  {get_station_config, BSS}).
+    gen_statem:call(AC,  {get_station_config, BSS}).
 
 %%%===================================================================
-%%% gen_fsm callbacks
+%%% gen_statem callbacks
 %%%===================================================================
+callback_mode() ->
+    [state_functions, state_enter].
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% Whenever a gen_fsm is started using gen_fsm:start/[3,4] or
-%% gen_fsm:start_link/[3,4], this function is called by the new
-%% process to initialize.
-%%
-%% @spec init(Args) -> {ok, StateName, State} |
-%%                     {ok, StateName, State, Timeout} |
-%%                     ignore |
-%%                     {stop, StopReason}
-%% @end
-%%--------------------------------------------------------------------
 init([WTPControlChannelAddress]) ->
     process_flag(trap_exit, true),
     lager:md([{control_channel_address, WTPControlChannelAddress}]),
@@ -280,22 +258,16 @@ init([WTPControlChannelAddress]) ->
 			change_state_pending_timeout = ?ChangeStatePendingTimeout,
                         wlans = []}, 5000}.
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% There should be one instance of this function for each possible
-%% state name. Whenever a gen_fsm receives an event sent using
-%% gen_fsm:send_event/2, the instance of this function with the same
-%% name as the current state name StateName is called to handle
-%% the event. It is also called if a timeout occurs.
-%%
-%% @spec state_name(Event, State) ->
-%%                   {next_state, NextStateName, NextState} |
-%%                   {next_state, NextStateName, NextState, Timeout} |
-%%                   {stop, Reason, NewState}
-%% @end
-%%--------------------------------------------------------------------
-listen({accept, udp, Socket}, State0) ->
+listen(enter, _OldStateName, _State) ->
+    keep_state_and_data;
+
+listen(timeout, _, State) ->
+    {stop, normal, State};
+
+listen({call, From}, Call, State) ->
+    handle_call(Call, From, listen, State);
+
+listen(cast, {accept, udp, Socket}, State0) ->
     capwap_udp:setopts(Socket, [{active, true}, {mode, binary}]),
     lager:info("udp_accept: ~p", [Socket]),
     {ok, Session} = start_session(Socket, State0),
@@ -322,7 +294,7 @@ listen({accept, udp, Socket}, State0) ->
 	    {stop, normal, State0#state{session=Session}}
     end;
 
-listen({accept, dtls, Socket}, State) ->
+listen(cast, {accept, dtls, Socket}, State) ->
     {ok, Session} = start_session(Socket, State),
     lager:info("ssl_accept on: ~p, Opts: ~p", [Socket, mk_ssl_opts(Session)]),
 
@@ -349,28 +321,38 @@ listen({accept, dtls, Socket}, State) ->
             {stop, normal, State#state{session=Session}}
     end;
 
+listen(cast, Event, State) ->
+    handle_event(Event, listen, State);
 
-listen(timeout, State) ->
-    {stop, normal, State}.
+listen(info, Info, State) ->
+    handle_info(Info, listen, State).
 
-idle({keep_alive, _DataPath, _WTPDataChannelAddress, Header, PayLoad}, State) ->
-    lager:warning("in IDLE got unexpected keep_alive: ~p", [{Header, PayLoad}]),
-    next_state(idle, State);
+idle(enter, _OldStateName, _State) ->
+    keep_state_and_data;
 
-idle(timeout, State) ->
+idle(timeout, _, State) ->
     lager:info("timeout in IDLE -> stop"),
     {stop, normal, State};
 
-idle({discovery_request, Seq, Elements, #capwap_header{
-				radio_id = RadioId, wb_id = WBID, flags = Flags}},
+idle({call, From}, Call, State) ->
+    handle_call(Call, From, idle, State);
+
+idle(cast, {keep_alive, _DataPath, _WTPDataChannelAddress, Header, PayLoad}, State) ->
+    lager:warning("in IDLE got unexpected keep_alive: ~p", [{Header, PayLoad}]),
+    next_state(idle, State);
+
+idle(cast, {discovery_request, Seq, Elements,
+	    #capwap_header{
+	       radio_id = RadioId, wb_id = WBID, flags = Flags}},
      State) ->
     RespElements = ac_info(discover, Elements),
     Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
     State1 = send_response(Header, discovery_response, Seq, RespElements, State),
     next_state(idle, State1);
 
-idle({join_request, Seq, Elements, #capwap_header{
-			   radio_id = RadioId, wb_id = WBID, flags = Flags}},
+idle(cast, {join_request, Seq, Elements,
+	    #capwap_header{
+	       radio_id = RadioId, wb_id = WBID, flags = Flags}},
      State0 = #state{ctrl_channel_address = WTPControlChannelAddress,
 		     session = Session, id = CommonName,
 		     config = Config0}) ->
@@ -416,24 +398,33 @@ idle({join_request, Seq, Elements, #capwap_header{
     ergw_aaa_session:start(Session, to_session(SessionOpts)),
     next_state(join, State);
 
-idle(Event, State) when ?IS_RUN_CONTROL_EVENT(Event) ->
+idle(cast, Event, State) when ?IS_RUN_CONTROL_EVENT(Event) ->
     lager:debug("in IDLE got control event: ~p", [Event]),
     next_state(idle, State);
 
-idle({Msg, Seq, Elements, Header}, State) ->
-    lager:warning("in IDLE got unexpexted: ~p", [{Msg, Seq, Elements, Header}]),
-    next_state(idle, State).
+idle(cast, Event, State) ->
+    handle_event(Event, idle, State);
 
-join({keep_alive, _DataPath, _WTPDataChannelAddress, Header, PayLoad}, State) ->
-    lager:warning("in JOIN got unexpected keep_alive: ~p", [{Header, PayLoad}]),
-    next_state(join, State);
+idle(info, Info, State) ->
+    handle_info(Info, idle, State).
 
-join(timeout, State) ->
+join(enter, _OldStateName, _State) ->
+    keep_state_and_data;
+
+join(timeout, _, State) ->
     lager:info("timeout in JOIN -> stop"),
     {stop, normal, State};
 
-join({configuration_status_request, Seq, Elements, #capwap_header{
-						      wb_id = WBID, flags = Flags}},
+join({call, From}, Call, State) ->
+    handle_call(Call, From, join, State);
+
+join(cast, {keep_alive, _DataPath, _WTPDataChannelAddress, Header, PayLoad}, State) ->
+    lager:warning("in JOIN got unexpected keep_alive: ~p", [{Header, PayLoad}]),
+    next_state(join, State);
+
+join(cast, {configuration_status_request, Seq, Elements,
+	    #capwap_header{
+	       wb_id = WBID, flags = Flags}},
      #state{config = Config0} = State0) ->
 
     Config = update_radio_information(Elements, Config0),
@@ -471,46 +462,70 @@ join({configuration_status_request, Seq, Elements, #capwap_header{
 
     Header = #capwap_header{radio_id = 0, wb_id = WBID, flags = Flags},
     State1 = send_response(Header, configuration_status_response, Seq, RespElements, State0),
-    State2 = start_change_state_pending_timer(State1),
-    State = State2#state{
+    State = State1#state{
 	      config = Config,
 	      echo_request_timeout = EchoRequestInterval * 2},
 
     next_state(configure, State);
 
-join(Event, State) when ?IS_RUN_CONTROL_EVENT(Event) ->
+join(cast, Event, State) when ?IS_RUN_CONTROL_EVENT(Event) ->
     lager:debug("in JOIN got control event: ~p", [Event]),
     next_state(join, State);
 
-join({Msg, Seq, Elements, Header}, State) ->
-    lager:warning("in JOIN got unexpexted: ~p", [{Msg, Seq, Elements, Header}]),
-    next_state(join, State).
+join(cast, Event, State) ->
+    handle_event(Event, join, State);
 
-configure({keep_alive, _DataPath, _WTPDataChannelAddress, Header, PayLoad}, State) ->
-    lager:warning("in CONFIGURE got unexpected keep_alive: ~p", [{Header, PayLoad}]),
-    next_state(configure, State);
+join(info, Info, State) ->
+    handle_info(Info, join, State).
 
-configure(timeout, State) ->
+configure(enter, _OldStateName, #state{change_state_pending_timeout = Timeout}) ->
+    Actions = [{state_timeout, Timeout, change_state_pending_timeout}],
+    {keep_state_and_data, Actions};
+
+configure(state_timeout, _, State) ->
+    lager:info("change state timeout in CONFIGURE -> stop"),
+    {stop, normal, State};
+
+configure(timeout, _, State) ->
     lager:info("timeout in CONFIGURE -> stop"),
     {stop, normal, State};
 
-configure({change_state_event_request, Seq, _Elements, #capwap_header{
-					      radio_id = RadioId, wb_id = WBID, flags = Flags}},
+configure({call, From}, Call, State) ->
+    handle_call(Call, From, configure, State);
+
+configure(cast, {keep_alive, _DataPath, _WTPDataChannelAddress, Header, PayLoad}, State) ->
+    lager:warning("in CONFIGURE got unexpected keep_alive: ~p", [{Header, PayLoad}]),
+    next_state(configure, State);
+
+configure(cast, {change_state_event_request, Seq, _Elements,
+		 #capwap_header{
+		    radio_id = RadioId, wb_id = WBID, flags = Flags}},
 	  State) ->
     Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
     State1 = send_response(Header, change_state_event_response, Seq, [], State),
-    State2 = cancel_change_state_pending_timer(State1),
-    next_state(data_check, State2);
+    next_state(data_check, State1);
 
-configure(Event, State) when ?IS_RUN_CONTROL_EVENT(Event) ->
+configure(cast, Event, State) when ?IS_RUN_CONTROL_EVENT(Event) ->
     lager:debug("in CONFIGURE got control event: ~p", [Event]),
     next_state(configure, State);
 
-configure({Msg, Seq, Elements, Header}, State) ->
-    lager:debug("in configure got: ~p", [{Msg, Seq, Elements, Header}]),
-    next_state(configure, State).
+configure(cast, Event, State) ->
+    handle_event(Event, configure, State);
 
-data_check({keep_alive, DataPath, WTPDataChannelAddress, Header, PayLoad},
+configure(info, Info, State) ->
+    handle_info(Info, configure, State).
+
+data_check(timeout, _, State) ->
+    lager:info("timeout in DATA_CHECK -> stop"),
+    {stop, normal, State};
+
+data_check(enter, _OldStateName, _State) ->
+    keep_state_and_data;
+
+data_check({call, From}, Call, State) ->
+    handle_call(Call, From, data_check, State);
+
+data_check(cast, {keep_alive, DataPath, WTPDataChannelAddress, Header, PayLoad},
 	   State0 = #state{ctrl_stream = CtrlStreamState}) ->
     lager:md([{data_channel_address, WTPDataChannelAddress}]),
     ?log_capwap_keep_alive(peer_log_str(WTPDataChannelAddress, State0), PayLoad, Header),
@@ -520,24 +535,25 @@ data_check({keep_alive, DataPath, WTPDataChannelAddress, Header, PayLoad},
     capwap_dp:add_wtp(WTPDataChannelAddress, MTU),
     State = State0#state{data_channel_address = WTPDataChannelAddress, data_path = DataPath},
 
-    gen_fsm:send_event(self(), configure),
+    gen_statem:cast(self(), configure),
 
     sendto(Header, PayLoad, State),
     next_state(run, State);
 
-data_check(timeout, State) ->
-    lager:info("timeout in DATA_CHECK -> stop"),
-    {stop, normal, State};
-
-data_check(Event, State) when ?IS_RUN_CONTROL_EVENT(Event) ->
+data_check(cast, Event, State) when ?IS_RUN_CONTROL_EVENT(Event) ->
     lager:debug("in DATA_CHECK got control event: ~p", [Event]),
     next_state(data_check, State);
 
-data_check({Msg, Seq, Elements, Header}, State) ->
-    lager:warning("in DATA_CHECK got unexpexted: ~p", [{Msg, Seq, Elements, Header}]),
-    next_state(data_check, State).
+data_check(cast, Event, State) ->
+    handle_event(Event, data_check, State);
 
-run({new_station, BSS, SA}, _From, State0) ->
+data_check(info, Info, State) ->
+    handle_info(Info, data_check, State).
+
+run(enter, _OldStateName, _State) ->
+    keep_state_and_data;
+
+run({call, From}, {new_station, BSS, SA}, State0) ->
     lager:info("in RUN got new_station: ~p", [SA]),
 
     %% TODO: rework session context to handle this again
@@ -545,16 +561,16 @@ run({new_station, BSS, SA}, _From, State0) ->
 
     Wlan = get_wlan_by_bss(BSS, State0),
     {Reply, State} = internal_new_station(Wlan, SA, BSS, State0),
-    reply(Reply, run, State);
+    reply(From, Reply, run, State);
 
-run(Event = {add_station, BSS, MAC, StaCaps, CryptoState}, From, State0) ->
+run({call, From}, Event = {add_station, BSS, MAC, StaCaps, CryptoState}, State0) ->
     lager:warning("in RUN got expexted: ~p", [Event]),
     Wlan = get_wlan_by_bss(BSS, State0),
     lager:warning("WLAN: ~p", [Wlan]),
     State = internal_add_station(Wlan, MAC, StaCaps, CryptoState, response_fsm_reply(From), State0),
     next_state(run, State);
 
-run({get_station_config, BSS}, _From, State) ->
+run({call, From}, {get_station_config, BSS}, State) ->
     Reply =
 	case get_wlan_by_bss(BSS, State) of
 	    Wlan = #wlan{state = running} ->
@@ -562,26 +578,30 @@ run({get_station_config, BSS}, _From, State) ->
 	    _ ->
 		{error, invalid}
 	end,
-    reply(Reply, run, State).
+    reply(From, Reply, run, State);
 
-run({keep_alive, _DataPath, WTPDataChannelAddress, Header, PayLoad}, State) ->
+run({call, From}, Call, State) ->
+    handle_call(Call, From, run, State);
+
+run(cast, {keep_alive, _DataPath, WTPDataChannelAddress, Header, PayLoad}, State) ->
     ?log_capwap_keep_alive(peer_log_str(WTPDataChannelAddress, State), PayLoad, Header),
     sendto(Header, PayLoad, State),
     next_state(run, State);
 
-run(echo_timeout, State) ->
+run(info, echo_timeout, State) ->
     lager:info("Echo Timeout in Run"),
     {stop, normal, State};
 
-run({echo_request, Seq, Elements, #capwap_header{
-			  radio_id = RadioId, wb_id = WBID, flags = Flags}},
+run(cast, {echo_request, Seq, Elements,
+	   #capwap_header{
+	      radio_id = RadioId, wb_id = WBID, flags = Flags}},
     State) ->
     lager:debug("EchoReq in Run got: ~p", [{Seq, Elements}]),
     Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
     State1 = send_response(Header, echo_response, Seq, Elements, State),
     next_state(run, State1);
 
-run({ieee_802_11_wlan_configuration_response, _Seq, Elements, _Header},
+run(cast, {ieee_802_11_wlan_configuration_response, _Seq, Elements, _Header},
     #state{data_channel_address = WTPDataChannelAddress, id = CommonName,
 	   config = Config, wlans = Wlans} = State0) ->
     State =
@@ -620,8 +640,8 @@ run({ieee_802_11_wlan_configuration_response, _Seq, Elements, _Header},
 	end,
     next_state(run, State);
 
-run({station_configuration_response, _Seq,
-     Elements, _Header}, State) ->
+run(cast, {station_configuration_response, _Seq,
+	   Elements, _Header}, State) ->
     %% TODO: timeout and Error handling, e.g. shut the station process down when the Add Station failed
     case proplists:get_value(result_code, Elements) of
 	0 ->
@@ -633,8 +653,8 @@ run({station_configuration_response, _Seq,
     end,
     next_state(run, State);
 
-run({configuration_update_response, _Seq,
-     Elements, _Header}, State) ->
+run(cast, {configuration_update_response, _Seq,
+	   Elements, _Header}, State) ->
     %% TODO: Error handling
     case proplists:get_value(result_code, Elements) of
     0 ->
@@ -646,15 +666,15 @@ run({configuration_update_response, _Seq,
     end,
     next_state(run, State);
 
-run({wtp_event_request, Seq, Elements, RequestHeader =
-	 #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags}}, State) ->
+run(cast, {wtp_event_request, Seq, Elements, RequestHeader =
+	       #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags}}, State) ->
     ResponseHeader = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
     State1 = send_response(ResponseHeader, wtp_event_response, Seq, [], State),
     State2 = handle_wtp_event(Elements, RequestHeader, State1),
     next_state(run, State2);
 
-run(configure, State = #state{id = WtpId, config = #wtp{radios = Radios},
-			      session = Session}) ->
+run(cast, configure, State = #state{id = WtpId, config = #wtp{radios = Radios},
+				    session = Session}) ->
     lager:debug("configure WTP: ~p, Session: ~p, Radios: ~p", [WtpId, Session, Radios]),
 
     State1 =
@@ -663,17 +683,17 @@ run(configure, State = #state{id = WtpId, config = #wtp{radios = Radios},
 		    end, State, Radios),
     next_state(run, State1);
 
-run({del_station, BSS, MAC}, State0) ->
+run(cast, {del_station, BSS, MAC}, State0) ->
     Wlan = get_wlan_by_bss(BSS, State0),
     State = internal_del_station(Wlan, MAC, State0),
     next_state(run, State);
 
-run({send_80211, BSS, Data}, State) ->
+run(cast, {send_80211, BSS, Data}, State) ->
     Wlan = get_wlan_by_bss(BSS, State),
     internal_send_80211_station(Wlan, Data, State),
     next_state(run, State);
 
-run({firmware_download, DownloadLink, Sha}, State) ->
+run(cast, {firmware_download, DownloadLink, Sha}, State) ->
     Flags = [{frame,'802.3'}],
     ReqElements = [#firmware_download_information{
         sha256_image_hash = Sha,
@@ -682,57 +702,24 @@ run({firmware_download, DownloadLink, Sha}, State) ->
     State1 = send_request(Header1, configuration_update_request, ReqElements, State),
     next_state(run, State1);
 
-run(Event = {group_rekey, WlanIdent}, State0) ->
+run(info, Event = {group_rekey, WlanIdent}, State0) ->
     lager:warning("in RUN got GTK rekey: ~p", [Event]),
     Wlan = get_wlan(WlanIdent, State0),
     State = start_gtk_rekey(WlanIdent, Wlan, State0),
     next_state(run, State);
 
-run(Event = {gtk_rekey_done, WlanIdent}, State0) ->
+run(cast, Event = {gtk_rekey_done, WlanIdent}, State0) ->
     lager:warning("in RUN got GTK rekey DONE: ~p", [Event]),
     Wlan = get_wlan(WlanIdent, State0),
     State = finish_gtk_rekey(WlanIdent, Wlan, State0),
     next_state(run, State);
 
-run(Event, State) ->
-    lager:warning("in RUN got unexpexted: ~p", [Event]),
-    next_state(run, State).
+run(cast, Event, State) ->
+    handle_event(Event, run, State);
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% There should be one instance of this function for each possible
-%% state name. Whenever a gen_fsm receives an event sent using
-%% gen_fsm:sync_send_event/[2,3], the instance of this function with
-%% the same name as the current state name StateName is called to
-%% handle the event.
-%%
-%% @spec state_name(Event, From, State) ->
-%%                   {next_state, NextStateName, NextState} |
-%%                   {next_state, NextStateName, NextState, Timeout} |
-%%                   {reply, Reply, NextStateName, NextState} |
-%%                   {reply, Reply, NextStateName, NextState, Timeout} |
-%%                   {stop, Reason, NewState} |
-%%                   {stop, Reason, Reply, NewState}
-%% @end
-%%--------------------------------------------------------------------
-%% start(_Event, _From, State) ->
-%%     Reply = ok,
-%%     {reply, Reply, state_name, State}.
+run(info, Info, State) ->
+    handle_info(Info, run, State).
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% Whenever a gen_fsm receives an event sent using
-%% gen_fsm:send_all_state_event/2, this function is called to handle
-%% the event.
-%%
-%% @spec handle_event(Event, StateName, State) ->
-%%                   {next_state, NextStateName, NextState} |
-%%                   {next_state, NextStateName, NextState, Timeout} |
-%%                   {stop, Reason, NewState}
-%% @end
-%%--------------------------------------------------------------------
 handle_event(station_detaching, StateName, State=#state{id = WtpId, station_count = SC}) ->
     if SC == 0 ->
             lager:error("Station counter and stations got out of sync", []),
@@ -743,30 +730,15 @@ handle_event(station_detaching, StateName, State=#state{id = WtpId, station_coun
             next_state(StateName, State#state{station_count = SC - 1})
     end;
 
-handle_event(_Event, StateName, State) ->
+handle_event({Msg, Seq, Elements, Header}, StateName, State) ->
+    lager:warning("in ~s got unexpexted: ~p",
+		  [StateName, {Msg, Seq, Elements, Header}]),
     next_state(StateName, State).
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% Whenever a gen_fsm receives an event sent using
-%% gen_fsm:sync_send_all_state_event/[2,3], this function is called
-%% to handle the event.
-%%
-%% @spec handle_sync_event(Event, From, StateName, State) ->
-%%                   {next_state, NextStateName, NextState} |
-%%                   {next_state, NextStateName, NextState, Timeout} |
-%%                   {reply, Reply, NextStateName, NextState} |
-%%                   {reply, Reply, NextStateName, NextState, Timeout} |
-%%                   {stop, Reason, NewState} |
-%%                   {stop, Reason, Reply, NewState}
-%% @end
-%%--------------------------------------------------------------------
+handle_call(get_state, From, StateName, State) ->
+    reply(From, {ok, State}, StateName, State);
 
-handle_sync_event(get_state, _From, StateName, State) ->
-    reply({ok, State}, StateName, State);
-
-handle_sync_event({set_ssid, {RadioId, WlanId} = WlanIdent, SSID, SuppressSSID},
+handle_call({set_ssid, {RadioId, WlanId} = WlanIdent, SSID, SuppressSSID},
 		  From, run, #state{config = Config0} = State0) ->
     Settings = [{ssid, SSID}, {suppress_ssid, SuppressSSID}],
     Config = capwap_config:update_wlan_config(RadioId, WlanId, Settings, Config0),
@@ -775,8 +747,8 @@ handle_sync_event({set_ssid, {RadioId, WlanId} = WlanIdent, SSID, SuppressSSID},
     AddResponseFun = fun(Code, _, DState) ->
 			     lager:debug("AddResponseFun: ~w", [Code]),
 			     case Code of
-				 0 -> gen_fsm:reply(From, ok);
-				 _ -> gen_fsm:reply(From, {error, Code})
+				 0 -> gen_statem:reply(From, ok);
+				 _ -> gen_statem:reply(From, {error, Code})
 			     end,
 			     DState
 		     end,
@@ -798,48 +770,35 @@ handle_sync_event({set_ssid, {RadioId, WlanId} = WlanIdent, SSID, SuppressSSID},
 	end,
     next_state(run, State);
 
-handle_sync_event({stop_radio, RadioId}, _From, run, State) ->
+handle_call({stop_radio, RadioId}, From, run, State) ->
     State1 =
 	lists:foldl(fun(WlanIdent = {RId, _}, S) when RId == RadioId->
 			    internal_del_wlan(WlanIdent, undefined, S);
 		       (_, S) ->
 			    S
 		    end, State, State#state.wlans),
-    reply(ok, run, State1);
+    reply(From, ok, run, State1);
 
-handle_sync_event({set_ssid, _SSID, _RadioId}, _From, StateName, State)
+handle_call({set_ssid, _SSID, _RadioId}, From, StateName, State)
   when StateName =/= run ->
-    reply({error, not_in_run_state}, StateName, State);
+    reply(From, {error, not_in_run_state}, StateName, State);
 
-handle_sync_event(get_data_channel_address, _From, run, State) ->
+handle_call(get_data_channel_address, From, run, State) ->
     Reply = {ok, State#state.data_channel_address},
-    reply(Reply, run, State);
-handle_sync_event(get_data_channel_address, _From, StateName, State) ->
+    reply(From, Reply, run, State);
+handle_call(get_data_channel_address, From, StateName, State) ->
     Reply = {error, not_connected},
-    reply(Reply, StateName, State);
-handle_sync_event({take_over, NewWtp}, _From, _StateName, State) ->
+    reply(From, Reply, StateName, State);
+handle_call({take_over, NewWtp}, From, _StateName, State) ->
     %% TODO: move Stations to new wtp
     lager:debug("take_over: old: ~p, new: ~p", [self(), NewWtp]),
     capwap_wtp_reg:unregister(),
     Reply = ok,
-    {stop, normal, Reply, State};
-handle_sync_event(_Event, _From, StateName, State) ->
+    {stop_and_reply, normal, {reply, From, Reply}, State};
+handle_call(_Event, From, StateName, State) ->
     Reply = ok,
-    reply(Reply, StateName, State).
+    reply(From, Reply, StateName, State).
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% This function is called by a gen_fsm when it receives any
-%% message other than a synchronous or asynchronous event
-%% (or a system message).
-%%
-%% @spec handle_info(Info,StateName,State)->
-%%                   {next_state, NextStateName, NextState} |
-%%                   {next_state, NextStateName, NextState, Timeout} |
-%%                   {stop, Reason, NewState}
-%% @end
-%%--------------------------------------------------------------------
 -define(SEQ_LE(S1, S2), (S1 < S2 andalso (S2-S1) < 128) orelse (S1>S2 andalso (S1-S2) > 128)).
 
 handle_info({capwap_udp, Socket, Packet}, StateName, State = #state{socket = {_, Socket}}) ->
@@ -858,17 +817,6 @@ handle_info(Info, StateName, State) ->
     lager:warning("in State ~p unexpected Info: ~p", [StateName, Info]),
     next_state(StateName, State).
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% This function is called by a gen_fsm when it is about to
-%% terminate. It should be the opposite of Module:init/1 and do any
-%% necessary cleaning up. When it returns, the gen_fsm terminates with
-%% Reason. The return value is ignored.
-%%
-%% @spec terminate(Reason, StateName, State) -> void()
-%% @end
-%%--------------------------------------------------------------------
 terminate(Reason, StateName,
 	  State = #state{socket = Socket, session = Session,
 			 id = CommonName, station_count = StationCount}) ->
@@ -889,21 +837,22 @@ terminate(Reason, StateName,
     socket_close(Socket),
     ok.
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% Convert process state when code is changed
-%%
-%% @spec code_change(OldVsn, StateName, State, Extra) ->
-%%                   {ok, StateName, NewState}
-%% @end
-%%--------------------------------------------------------------------
 code_change(_OldVsn, StateName, State, _Extra) ->
     {ok, StateName, State}.
 
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
+cancel_timer(Ref) ->
+    case erlang:cancel_timer(Ref) of
+	false ->
+	    receive {timeout, Ref, _} -> 0
+	    after 0 -> false
+	    end;
+	RemainingTime ->
+	    RemainingTime
+    end.
+
 gpsutc_to_iso(GPSTime, GPSDate) ->
     try
 	{ok, [Hour, Minute, Second], _} = io_lib:fread("~2s~2s~s", GPSTime),
@@ -932,11 +881,11 @@ next_state(NextStateName, State)
 next_state(NextStateName, State) ->
     {next_state, NextStateName, State, ?IDLE_TIMEOUT}.
 
-reply(Reply, NextStateName, State)
+reply(From, Reply, NextStateName, State)
   when NextStateName == idle; NextStateName == run  ->
-    {reply, Reply, NextStateName, State};
-reply(Reply, NextStateName, State) ->
-    {reply, Reply, NextStateName, State, ?IDLE_TIMEOUT}.
+    {next_state, NextStateName, State, [{reply, From, Reply}]};
+reply(From, Reply, NextStateName, State) ->
+    {next_state, NextStateName, State, [{reply, From, Reply}, ?IDLE_TIMEOUT]}.
 
 %% non-DTLS join-reqeust, check app config
 handle_plain_join(Peer, Seq, _Elements, #capwap_header{
@@ -964,7 +913,7 @@ handle_capwap_data(DataPath, WTPDataChannelAddress, Header, true, PayLoad) ->
 	    lager:warning("CAPWAP data from unknown WTP ~s", [format_peer(WTPDataChannelAddress)]),
 	    ok;
 	{ok, AC} ->
-	    gen_fsm:send_event(AC, {keep_alive, DataPath, WTPDataChannelAddress, Header, PayLoad})
+	    gen_statem:cast(AC, {keep_alive, DataPath, WTPDataChannelAddress, Header, PayLoad})
     end;
 
 handle_capwap_data(_DataPath, WTPDataChannelAddress,
@@ -1018,7 +967,7 @@ handle_capwap_message(Header, {Msg, 1, Seq, Elements}, StateName,
 	    %% old request, silently ignore
 	    next_state(StateName, State);
 	_ ->
-	    ?MODULE:StateName({Msg, Seq, Elements, Header}, State)
+	    {keep_state, State, {next_event, cast, {Msg, Seq, Elements, Header}}}
     end;
 
 handle_capwap_message(Header, {Msg, 0, Seq, Elements}, StateName,
@@ -1030,7 +979,7 @@ handle_capwap_message(Header, {Msg, 0, Seq, Elements}, StateName,
 	    State1 = ack_request(State),
 	    State2 = response_notify(NotifyFun, proplists:get_value(result_code, Elements),
 				     {Msg, Elements, Header}, State1),
-	    ?MODULE:StateName({Msg, Seq, Elements, Header}, State2);
+	    {keep_state, State2, {next_event, cast, {Msg, Seq, Elements, Header}}};
 	_ ->
 	    %% invalid Seq, out-of-order packet, silently ignore,
 	    next_state(StateName, State)
@@ -1429,12 +1378,12 @@ radio_configuration(Radio, IEs) ->
 reset_echo_request_timer(State = #state{echo_request_timer = Timer,
 					echo_request_timeout = Timeout}) ->
     if is_reference(Timer) ->
-	    gen_fsm:cancel_timer(Timer);
+	    cancel_timer(Timer);
        true ->
 	    ok
     end,
     TRef = if is_integer(Timeout) ->
-		   gen_fsm:send_event_after(Timeout * 1000, echo_timeout);
+		   erlang:send_after(Timeout * 1000, self(), echo_timeout);
 	      true ->
 		   undefined
 	   end,
@@ -1502,7 +1451,7 @@ ack_request(State0) ->
 cancel_retransmit(State = #state{retransmit_timer = undefined}) ->
     State;
 cancel_retransmit(State = #state{retransmit_timer = Timer}) ->
-    gen_fsm:cancel_timer(Timer),
+    cancel_timer(Timer),
     State#state{retransmit_timer = undefined}.
 
 queue_request(State = #state{request_queue = Queue}, Request) ->
@@ -2391,26 +2340,17 @@ get_admin_wifi_update([#ieee_802_11_tp_wlan{radio_id = RadioId,
             get_admin_wifi_update(RestWlan, AdminSSIds, [UpdatedWlan | Accu])
     end.
 
-start_change_state_pending_timer(#state{change_state_pending_timeout = Timeout}
-				 = State) ->
-    TRef = gen_fsm:send_event_after(Timeout, timeout),
-    State#state{protocol_timer = TRef}.
-
-cancel_change_state_pending_timer(#state{protocol_timer = TRef} = State) ->
-    gen_fsm:cancel_timer(TRef),
-    State#state{protocol_timer = undefined}.
-
 start_group_rekey_timer(#wlan{wlan_identifier = WlanIdent,
 			      wpa_config = #wpa_config{group_rekey = Timeout}} = Wlan)
   when is_integer(Timeout) andalso Timeout > 0 ->
-    TRef = gen_fsm:send_event_after(Timeout * 1000, {group_rekey, WlanIdent}),
+    TRef = erlang:send_after(Timeout * 1000, self(), {group_rekey, WlanIdent}),
     Wlan#wlan{group_rekey_timer = TRef};
 start_group_rekey_timer(Wlan) ->
     Wlan.
 
 stop_group_rekey_timer(#wlan{group_rekey_timer = TRef} = Wlan)
   when is_reference(TRef) ->
-    gen_fsm:cancel_timer(TRef),
+    cancel_timer(TRef),
     Wlan#wlan{group_rekey_timer = undefined};
 stop_group_rekey_timer(Wlan) ->
     Wlan.
@@ -2554,8 +2494,8 @@ response_fsm_reply(From) ->
     response_fsm_reply(From, _, _, _).
 
 response_fsm_reply(From, 0, _, State) ->
-    gen_fsm:reply(From, ok),
+    gen_statem:reply(From, ok),
     State;
 response_fsm_reply(From, Code, _, State) ->
-    gen_fsm:reply(From, {error, Code}),
+    gen_statem:reply(From, {error, Code}),
     State.
