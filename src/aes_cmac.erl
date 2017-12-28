@@ -106,7 +106,7 @@ generate_subkeys(<<_:128>> = K) ->
 aes_cmac(<<_:128>> = K, M) ->
     case erlang:function_exported(crypto, cmac, 3) of
 	true ->
-	    crypto:cmac(aes, K, M);
+	    crypto:cmac(aes_cbc, K, M);
 	false ->
 	    {K1, K2} = generate_subkeys(K),
 	    calc(M, {K, K1, K2})
