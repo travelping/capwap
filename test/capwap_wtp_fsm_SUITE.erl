@@ -177,9 +177,10 @@ setup_applications() ->
 				 {lager_file_backend, [{file, "log/console.log"}, {level, debug}, {size, 0}, {date, ""}]}]}]},
 	    {capwap, [{server_ip, {127, 0, 0, 1}},
 		      {enforce_dtls_control, false},
-		      {ergw_aaa_provider, {ergw_aaa_mock, [{secret, <<"MySecret">>}]}},
 		      {server_socket_opts, [{recbuf, 1048576}, {sndbuf, 1048576}]}
-		     ]}
+		     ]},
+
+	    {ergw_aaa, [{ergw_aaa_provider, {ergw_aaa_mock, [{shared_secret, <<"MySecret">>}]}}]}
 	   ],
     [setup_application(A) || A <- Apps].
 
