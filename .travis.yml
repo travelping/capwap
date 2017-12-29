@@ -1,7 +1,13 @@
 sudo: false
+
+dist: xenial
+
 language: erlang
+
 otp_release:
-- 19.1
+- 20.0
+- 20.1
+
 script:
 - rebar3 compile
-- rebar3 xref
+- rebar3 do xref, ct, coveralls send
