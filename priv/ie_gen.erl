@@ -37,9 +37,11 @@ wlan_attr(Id, Name) ->
     {Id, Name,
       [{"Radio ID", 8, integer},
        {"WLAN ID", 8, integer},
-       {"Capability", {flags, ["ess", "ibss", "cf-pollable", "cf-poll-request", "privacy", "short_preamble", "pbcc",
-                   "channel_agility", "spectrum_management", "qos", "short_slot_time", "apsd", "reserved",
-                   "dsss_ofdm", "delayed_block_ack", "immediate_block_ack"]}},
+       {"Capability", {flags, ["ess", "ibss", "cf-pollable", "cf-poll-request", "privacy",
+			       "short_preamble", "pbcc", "channel_agility",
+			       "spectrum_management", "qos", "short_slot_time", "apsd",
+			       "reserved", "dsss_ofdm", "delayed_block_ack",
+			       "immediate_block_ack"]}},
        {"Key Index", 8, integer},
        {"Key Status", 8, {enum, [per_station, static_wep, begin_rekeying, completed_rekeying]}},
        {"Key", 16, length_binary},
@@ -280,10 +282,11 @@ ies() ->
        {"Association ID", 16, integer},
        {'_', 8},
        {"MAC Address", 6, bytes},
-       {"Capabilities", {flags, ["ess", "ibss", "cf-pollable", "cf-poll-request",
-				 "privacy", "short_preamble", "pbcc", "channel_agility",
+       {"Capabilities", {flags, ["ess", "ibss", "cf-pollable", "cf-poll-request", "privacy",
+				 "short_preamble", "pbcc", "channel_agility",
 				 "spectrum_management", "qos", "short_slot_time", "apsd",
-				 "reserved", "dsss_ofdm", "delayed_block_ack", "immediate_block_ack"]}},
+				 "reserved", "dsss_ofdm", "delayed_block_ack",
+				 "immediate_block_ack"]}},
        {"WLAN ID", 8, integer},
        {"Supported Rate", '_', {array, 8}}]},
      {1037, "IEEE 802.11 Station QoS Profile",
@@ -336,9 +339,11 @@ ies() ->
      {1044, "IEEE 802.11 Update WLAN",
       [{"Radio ID", 8, integer},
        {"WLAN ID", 8, integer},
-       {"Capability", {flags, ["ess", "ibss", "cf-pollable", "cf-poll-request", "privacy", "short_preamble", "pbcc",
-			       "channel_agility", "spectrum_management", "qos", "short_slot_time", "apsd", "reserved",
-			       "dsss_ofdm", "delayed_block_ack", "immediate_block_ack"]}},
+       {"Capability", {flags, ["ess", "ibss", "cf-pollable", "cf-poll-request", "privacy",
+			       "short_preamble", "pbcc", "channel_agility",
+			       "spectrum_management", "qos", "short_slot_time", "apsd",
+			       "reserved", "dsss_ofdm", "delayed_block_ack",
+			       "immediate_block_ack"]}},
        {"Key Index", 8, integer},
        {"Key Status", 8, {enum, [per_station, static_wep, begin_rekeying, completed_rekeying]}},
        {"Key", 16, length_binary}]},
@@ -596,7 +601,9 @@ indent(Atom, Extra) when is_atom(Atom) ->
     indent(atom_to_list(Atom), Extra);
 indent(List, Extra) ->
     Indent = length(lists:flatten(List)) + Extra,
-    lists:duplicate(Indent, " ").
+    Spaces = Indent rem 8,
+    Tabs = Indent div 8,
+    [lists:duplicate(Tabs, "\t"), lists:duplicate(Spaces, " ")].
 
 s2a(Name) ->
     lists:map(fun(32) -> $_;
@@ -679,16 +686,18 @@ write_enums(IEs) ->
     {_, Str} = lists:unzip(E),
     string:join(Str, "\n").
 
+write_record({_Id, Name, []}) ->
+    io_lib:format("-record(~s, {~n}).~n", [s2a(Name)]);
 write_record({_Id, Name, Fields}) ->
-    Indent = "        ",
+    Indent = "\t  ",
     RecordDef = string:join(collect(fun(X) -> gen_record_def(X) end, Fields), [",\n", Indent]),
     io_lib:format("-record(~s, {~n~s~s~n}).~n", [s2a(Name), Indent, RecordDef]).
 
 %% hand crafted vendor IE
 write_decoder(_FunName, {37, _Name, _Fields}) ->
 "decode_element(37, <<M_vendor:32/integer,
-                     M_element_id:16/integer,
-                     M_data/binary>>) ->
+		     M_element_id:16/integer,
+		     M_data/binary>>) ->
     decode_vendor_element({M_vendor, M_element_id}, M_data)";
 
 write_decoder(FunName, {Id, Name, Fields}) ->
@@ -708,7 +717,7 @@ write_decoder(FunName, {Id, Name, Fields}) ->
     io_lib:format("~s<<~s>>) ->~n~s    #~s{~s}", [FunHead, Match, Body, s2a(Name), RecAssign]).
 
 write_encoder(FunName, {Id, Name, Fields}) ->
-    RecIdent = indent("encode_element(#", 4),
+    RecIdent = indent("encode_element(#", 2),
     RecAssign = string:join(collect(fun(X) -> gen_encoder_record_assign(X) end, Fields), [",\n", RecIdent]),
     FunHead = io_lib:format("encode_element(#~s{~n~s~s}) ->~n", [s2a(Name), RecIdent, RecAssign]),
     DecHead = io_lib:format("    ~s(~w, ", [FunName, Id]),
@@ -717,8 +726,6 @@ write_encoder(FunName, {Id, Name, Fields}) ->
     io_lib:format("~s~s<<~s>>)", [FunHead, DecHead, BinAssign]).
 
 main(_) ->
-    io:format("ies: ~p~n", [ies()]),
-
     MsgDescription = string:join([io_lib:format("msg_description(~s) -> <<\"~s\">>", [s2a(X), X]) || {_, X} <- msgs()]
 				 ++ ["msg_description(X) -> io_lib:format(\"~p\", [X])"], ";\n") ++ ".\n",
 
@@ -727,11 +734,11 @@ main(_) ->
     MTypes = string:join(FwdFuns ++ RevFuns ++ WildFun, ";\n") ++ ".\n",
 
     Records = string:join([write_record(X) || X <- ies() ++ vendor_ies(), element(1, X) /= 37], "\n"),
-    HrlRecs = io_lib:format(?COPYRIGHT "%% This file is auto-generated. DO NOT EDIT~n~n~s~n", [Records]),
+    HrlRecs = io_lib:format(?COPYRIGHT "%% This file is auto-generated. DO NOT EDIT~n~n~s", [Records]),
     Enums = write_enums(ies() ++ vendor_ies()),
 
-    CatchAnyDecoder = "decode_element(Tag, Value) ->\n        {Tag, Value}",
-    CatchAnyVendorDecoder = "decode_vendor_element(Tag, Value) ->\n        {Tag, Value}",
+    CatchAnyDecoder = "decode_element(Tag, Value) ->\n    {Tag, Value}",
+    CatchAnyVendorDecoder = "decode_vendor_element(Tag, Value) ->\n    {Tag, Value}",
 
     Funs = string:join([write_decoder("decode_element", X) || X <- ies()] ++ [CatchAnyDecoder], ";\n\n"),
     VendorFuns = string:join([write_decoder("decode_vendor_element", X) || X <- vendor_ies()] ++ [CatchAnyVendorDecoder], ";\n\n"),
@@ -739,12 +746,11 @@ main(_) ->
     CatchAnyVendorEncoder = "encode_element({Tag = {Vendor, Type}, Value}) when is_integer(Vendor), is_integer(Type), is_binary(Value) ->\n    encode_vendor_element(Tag, Value)",
     CatchAnyEncoder = "encode_element({Tag, Value}) when is_integer(Tag), is_binary(Value) ->\n    encode_element(Tag, Value)",
     EncFuns = string:join([write_encoder("encode_element", X) || X <- ies(), element(1, X) /= 37] ++
-                          [write_encoder("encode_vendor_element", X) || X <- vendor_ies()]
-                          ++ [CatchAnyVendorEncoder, CatchAnyEncoder] , ";\n\n"),
+			  [write_encoder("encode_vendor_element", X) || X <- vendor_ies()]
+			  ++ [CatchAnyVendorEncoder, CatchAnyEncoder] , ";\n\n"),
 
     ErlDecls = io_lib:format(?COPYRIGHT
 			     "%% This file is auto-generated. DO NOT EDIT~n~n~s~n~s~n~s~n~s.~n~n~s.~n~n~s.~n",
 			     [MsgDescription, MTypes, Enums, Funs, VendorFuns, EncFuns]),
-    io:format(ErlDecls),
     file:write_file("include/capwap_packet_gen.hrl", HrlRecs),
     file:write_file("src/capwap_packet_gen.hrl", ErlDecls).
