@@ -295,6 +295,11 @@ test_wwan_stats_long(_Config) ->
 		  end, Msgs),
     ok.
 
+pkt_properties() ->
+    [{doc, "Check that Message encoding/decoding matches"}].
+pkt_properties(Config) ->
+    ct_property_test:quickcheck(capwap_packet_prop:enc_dec_prop(Config), Config).
+
 all() ->
     [test_discovery_request,
      test_discovery_reponse,
@@ -310,12 +315,12 @@ all() ->
      test_station_configuration_response,
      test_echo_request,
      test_echo_response,
-     test_wwan_stats_long
+     test_wwan_stats_long,
+     pkt_properties
     ].
 
 init_per_suite(Config) ->
-	Config.
+    ct_property_test:init_per_suite(Config).
 
 end_per_suite(_Config) ->
-	ok.
-
+    ok.

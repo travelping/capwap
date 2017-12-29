@@ -141,11 +141,11 @@ enum_auth_type(1) -> wep_shared_key.
 enum_qos(best_effort) -> 0;
 enum_qos(video) -> 1;
 enum_qos(voice) -> 2;
-enum_qos(backgroung) -> 3;
+enum_qos(background) -> 3;
 enum_qos(0) -> best_effort;
 enum_qos(1) -> video;
 enum_qos(2) -> voice;
-enum_qos(3) -> backgroung.
+enum_qos(3) -> background.
 
 enum_status(reserved) -> 0;
 enum_status(in_progress) -> 1;
@@ -1139,10 +1139,10 @@ encode_element(#ac_descriptor{
                     r_mac = M_r_mac,
                     dtls_policy = M_dtls_policy,
                     sub_elements = M_sub_elements}) ->
-    encode_element(1, <<M_stations:16,
-                        M_limit:16,
-                        M_active_wtps:16,
-                        M_max_wtps:16,
+    encode_element(1, <<M_stations:16/integer,
+                        M_limit:16/integer,
+                        M_active_wtps:16/integer,
+                        M_max_wtps:16/integer,
                         0:5,
                         (encode_flag('pre-shared', M_security)):1,
                         (encode_flag('x509', M_security)):1,
@@ -1170,12 +1170,12 @@ encode_element(#ac_name{
 encode_element(#ac_name_with_priority{
                     priority = M_priority,
                     name = M_name}) ->
-    encode_element(5, <<M_priority:8,
+    encode_element(5, <<M_priority:8/integer,
                         M_name/binary>>);
 
 encode_element(#ac_timestamp{
                     timestamp = M_timestamp}) ->
-    encode_element(6, <<M_timestamp:32>>);
+    encode_element(6, <<M_timestamp:32/integer>>);
 
 encode_element(#add_mac_acl{
                     macs = M_macs}) ->
@@ -1185,7 +1185,7 @@ encode_element(#add_station{
                     radio_id = M_radio_id,
                     mac = M_mac,
                     vlan_name = M_vlan_name}) ->
-    encode_element(8, <<M_radio_id:8,
+    encode_element(8, <<M_radio_id:8/integer,
                         (byte_size(M_mac)):8/integer, M_mac/binary,
                         M_vlan_name/binary>>);
 
@@ -1193,13 +1193,13 @@ encode_element(#control_ipv4_address{
                     ip_address = M_ip_address,
                     wtp_count = M_wtp_count}) ->
     encode_element(10, <<M_ip_address:4/bytes,
-                         M_wtp_count:16>>);
+                         M_wtp_count:16/integer>>);
 
 encode_element(#control_ipv6_address{
                     ip_address = M_ip_address,
                     wtp_count = M_wtp_count}) ->
     encode_element(11, <<M_ip_address:16/bytes,
-                         M_wtp_count:16>>);
+                         M_wtp_count:16/integer>>);
 
 encode_element(#local_ipv4_address{
                     ip_address = M_ip_address}) ->
@@ -1212,8 +1212,8 @@ encode_element(#local_ipv6_address{
 encode_element(#timers{
                     discovery = M_discovery,
                     echo_request = M_echo_request}) ->
-    encode_element(12, <<M_discovery:8,
-                         M_echo_request:8>>);
+    encode_element(12, <<M_discovery:8/integer,
+                         M_echo_request:8/integer>>);
 
 encode_element(#transport_protocol{
                     transport = M_transport}) ->
@@ -1234,14 +1234,14 @@ encode_element(#data_transfer_mode{
 encode_element(#decryption_error_report{
                     radio_id = M_radio_id,
                     macs = M_macs}) ->
-    encode_element(15, <<M_radio_id:8,
+    encode_element(15, <<M_radio_id:8/integer,
                          (encode_mac_list(M_macs))/binary>>);
 
 encode_element(#decryption_error_report_period{
                     radio_id = M_radio_id,
                     report_interval = M_report_interval}) ->
-    encode_element(16, <<M_radio_id:8,
-                         M_report_interval:16>>);
+    encode_element(16, <<M_radio_id:8/integer,
+                         M_report_interval:16/integer>>);
 
 encode_element(#delete_mac_acl_entry{
                     macs = M_macs}) ->
@@ -1250,7 +1250,7 @@ encode_element(#delete_mac_acl_entry{
 encode_element(#delete_station{
                     radio_id = M_radio_id,
                     mac = M_mac}) ->
-    encode_element(18, <<M_radio_id:8,
+    encode_element(18, <<M_radio_id:8/integer,
                          (byte_size(M_mac)):8/integer, M_mac/binary>>);
 
 encode_element(#discovery_type{
@@ -1262,7 +1262,7 @@ encode_element(#duplicate_ipv4_address{
                     status = M_status,
                     mac = M_mac}) ->
     encode_element(21, <<M_ip_address:4/bytes,
-                         M_status:8,
+                         M_status:8/integer,
                          (byte_size(M_mac)):8/integer, M_mac/binary>>);
 
 encode_element(#duplicate_ipv6_address{
@@ -1270,12 +1270,12 @@ encode_element(#duplicate_ipv6_address{
                     status = M_status,
                     mac = M_mac}) ->
     encode_element(22, <<M_ip_address:16/bytes,
-                         M_status:8,
+                         M_status:8/integer,
                          (byte_size(M_mac)):8/integer, M_mac/binary>>);
 
 encode_element(#idle_timeout{
                     timeout = M_timeout}) ->
-    encode_element(23, <<M_timeout:32>>);
+    encode_element(23, <<M_timeout:32/integer>>);
 
 encode_element(#ecn_support{
                     ecn_support = M_ecn_support}) ->
@@ -1290,13 +1290,13 @@ encode_element(#image_data{
 encode_element(#image_identifier{
                     vendor = M_vendor,
                     data = M_data}) ->
-    encode_element(25, <<M_vendor:32,
+    encode_element(25, <<M_vendor:32/integer,
                          M_data/binary>>);
 
 encode_element(#image_information{
                     file_size = M_file_size,
                     hash = M_hash}) ->
-    encode_element(26, <<M_file_size:32,
+    encode_element(26, <<M_file_size:32/integer,
                          M_hash:16/bytes>>);
 
 encode_element(#initiate_download{
@@ -1309,7 +1309,7 @@ encode_element(#location_data{
 
 encode_element(#maximum_message_length{
                     maximum_message_length = M_maximum_message_length}) ->
-    encode_element(29, <<M_maximum_message_length:16>>);
+    encode_element(29, <<M_maximum_message_length:16/integer>>);
 
 encode_element(#mtu_discovery_padding{
                     padding = M_padding}) ->
@@ -1318,20 +1318,20 @@ encode_element(#mtu_discovery_padding{
 encode_element(#radio_administrative_state{
                     radio_id = M_radio_id,
                     admin_state = M_admin_state}) ->
-    encode_element(31, <<M_radio_id:8,
+    encode_element(31, <<M_radio_id:8/integer,
                          (enum_admin_state(M_admin_state)):8/integer>>);
 
 encode_element(#radio_operational_state{
                     radio_id = M_radio_id,
                     state = M_state,
                     cause = M_cause}) ->
-    encode_element(32, <<M_radio_id:8,
+    encode_element(32, <<M_radio_id:8/integer,
                          (enum_state(M_state)):8/integer,
                          (enum_cause(M_cause)):8/integer>>);
 
 encode_element(#result_code{
                     result_code = M_result_code}) ->
-    encode_element(33, <<M_result_code:32>>);
+    encode_element(33, <<M_result_code:32/integer>>);
 
 encode_element(#returned_message_element{
                     reason = M_reason,
@@ -1341,16 +1341,16 @@ encode_element(#returned_message_element{
 
 encode_element(#session_id{
                     session_id = M_session_id}) ->
-    encode_element(35, <<M_session_id:128>>);
+    encode_element(35, <<M_session_id:128/integer>>);
 
 encode_element(#statistics_timer{
                     statistics_timer = M_statistics_timer}) ->
-    encode_element(36, <<M_statistics_timer:16>>);
+    encode_element(36, <<M_statistics_timer:16/integer>>);
 
 encode_element(#wtp_board_data{
                     vendor = M_vendor,
                     board_data_sub_elements = M_board_data_sub_elements}) ->
-    encode_element(38, <<M_vendor:32,
+    encode_element(38, <<M_vendor:32/integer,
                          (encode_subelements(M_board_data_sub_elements))/binary>>);
 
 encode_element(#wtp_descriptor{
@@ -1358,8 +1358,8 @@ encode_element(#wtp_descriptor{
                     radios_in_use = M_radios_in_use,
                     encryption_sub_element = M_encryption_sub_element,
                     sub_elements = M_sub_elements}) ->
-    encode_element(39, <<M_max_radios:8,
-                         M_radios_in_use:8,
+    encode_element(39, <<M_max_radios:8/integer,
+                         M_radios_in_use:8/integer,
                          (length(M_encryption_sub_element)):8/integer, (<< <<X/binary>> || X <- M_encryption_sub_element>>)/binary,
                          (encode_vendor_subelements(M_sub_elements))/binary>>);
 
@@ -1395,17 +1395,17 @@ encode_element(#wtp_radio_statistics{
                     channel_change_count = M_channel_change_count,
                     band_change_count = M_band_change_count,
                     current_noise_floor = M_current_noise_floor}) ->
-    encode_element(47, <<M_radio_id:8,
+    encode_element(47, <<M_radio_id:8/integer,
                          (enum_last_fail_type(M_last_fail_type)):8/integer,
-                         M_reset_count:16,
-                         M_sw_failure_count:16,
-                         M_hw_failure_count:16,
-                         M_other__failure_count:16,
-                         M_unknown_failure_count:16,
-                         M_config_update_count:16,
-                         M_channel_change_count:16,
-                         M_band_change_count:16,
-                         M_current_noise_floor:16>>);
+                         M_reset_count:16/integer,
+                         M_sw_failure_count:16/integer,
+                         M_hw_failure_count:16/integer,
+                         M_other__failure_count:16/integer,
+                         M_unknown_failure_count:16/integer,
+                         M_config_update_count:16/integer,
+                         M_channel_change_count:16/integer,
+                         M_band_change_count:16/integer,
+                         M_current_noise_floor:16/integer>>);
 
 encode_element(#wtp_reboot_statistics{
                     reboot_count_ = M_reboot_count_,
@@ -1416,13 +1416,13 @@ encode_element(#wtp_reboot_statistics{
                     other_failure_count = M_other_failure_count,
                     unknown_failure_count = M_unknown_failure_count,
                     last_failure_type = M_last_failure_type}) ->
-    encode_element(48, <<M_reboot_count_:16,
-                         M_ac_initiated_count:16,
-                         M_link_failure_count:16,
-                         M_sw_failure_count:16,
-                         M_hw_failure_count:16,
-                         M_other_failure_count:16,
-                         M_unknown_failure_count:16,
+    encode_element(48, <<M_reboot_count_:16/integer,
+                         M_ac_initiated_count:16/integer,
+                         M_link_failure_count:16/integer,
+                         M_sw_failure_count:16/integer,
+                         M_hw_failure_count:16/integer,
+                         M_other_failure_count:16/integer,
+                         M_unknown_failure_count:16/integer,
                          (enum_last_failure_type(M_last_failure_type)):8/integer>>);
 
 encode_element(#wtp_static_ip_address_information{
@@ -1433,7 +1433,7 @@ encode_element(#wtp_static_ip_address_information{
     encode_element(49, <<M_ip_address:4/bytes,
                          M_netmask:4/bytes,
                          M_gateway:4/bytes,
-                         M_static:8>>);
+                         M_static:8/integer>>);
 
 encode_element(#ieee_802_11_add_wlan{
                     radio_id = M_radio_id,
@@ -1449,8 +1449,8 @@ encode_element(#ieee_802_11_add_wlan{
                     tunnel_mode = M_tunnel_mode,
                     suppress_ssid = M_suppress_ssid,
                     ssid = M_ssid}) ->
-    encode_element(1024, <<M_radio_id:8,
-                           M_wlan_id:8,
+    encode_element(1024, <<M_radio_id:8/integer,
+                           M_wlan_id:8/integer,
                            (encode_flag('ess', M_capability)):1,
                            (encode_flag('ibss', M_capability)):1,
                            (encode_flag('cf-pollable', M_capability)):1,
@@ -1467,7 +1467,7 @@ encode_element(#ieee_802_11_add_wlan{
                            (encode_flag('dsss_ofdm', M_capability)):1,
                            (encode_flag('delayed_block_ack', M_capability)):1,
                            (encode_flag('immediate_block_ack', M_capability)):1,
-                           M_key_index:8,
+                           M_key_index:8/integer,
                            (enum_key_status(M_key_status)):8/integer,
                            (byte_size(M_key)):16/integer, M_key/binary,
                            M_group_tsc:6/bytes,
@@ -1475,7 +1475,7 @@ encode_element(#ieee_802_11_add_wlan{
                            (enum_auth_type(M_auth_type)):8/integer,
                            (enum_mac_mode(M_mac_mode)):8/integer,
                            (enum_tunnel_mode(M_tunnel_mode)):8/integer,
-                           M_suppress_ssid:8,
+                           M_suppress_ssid:8/integer,
                            M_ssid/binary>>);
 
 encode_element(#ieee_802_11_antenna{
@@ -1483,7 +1483,7 @@ encode_element(#ieee_802_11_antenna{
                     diversity = M_diversity,
                     combiner = M_combiner,
                     antenna_selection = M_antenna_selection}) ->
-    encode_element(1025, <<M_radio_id:8,
+    encode_element(1025, <<M_radio_id:8/integer,
                            (enum_diversity(M_diversity)):8/integer,
                            (enum_combiner(M_combiner)):8/integer,
                            (byte_size(M_antenna_selection)):8/integer, M_antenna_selection/binary>>);
@@ -1492,34 +1492,34 @@ encode_element(#ieee_802_11_assigned_wtp_bssid{
                     radio_id = M_radio_id,
                     wlan_id = M_wlan_id,
                     bssid = M_bssid}) ->
-    encode_element(1026, <<M_radio_id:8,
-                           M_wlan_id:8,
+    encode_element(1026, <<M_radio_id:8/integer,
+                           M_wlan_id:8/integer,
                            M_bssid:6/bytes>>);
 
 encode_element(#ieee_802_11_delete_wlan{
                     radio_id = M_radio_id,
                     wlan_id = M_wlan_id}) ->
-    encode_element(1027, <<M_radio_id:8,
-                           M_wlan_id:8>>);
+    encode_element(1027, <<M_radio_id:8/integer,
+                           M_wlan_id:8/integer>>);
 
 encode_element(#ieee_802_11_direct_sequence_control{
                     radio_id = M_radio_id,
                     current_chan = M_current_chan,
                     current_cca = M_current_cca,
                     energy_detect_threshold = M_energy_detect_threshold}) ->
-    encode_element(1028, <<M_radio_id:8,
+    encode_element(1028, <<M_radio_id:8/integer,
                            0:8,
-                           M_current_chan:8,
+                           M_current_chan:8/integer,
                            (enum_current_cca(M_current_cca)):8/integer,
-                           M_energy_detect_threshold:32>>);
+                           M_energy_detect_threshold:32/integer>>);
 
 encode_element(#ieee_802_11_information_element{
                     radio_id = M_radio_id,
                     wlan_id = M_wlan_id,
                     flags = M_flags,
                     ie = M_ie}) ->
-    encode_element(1029, <<M_radio_id:8,
-                           M_wlan_id:8,
+    encode_element(1029, <<M_radio_id:8/integer,
+                           M_wlan_id:8/integer,
                            (encode_flag('beacon', M_flags)):1,
                            (encode_flag('probe_response', M_flags)):1,
                            0:6,
@@ -1533,21 +1533,21 @@ encode_element(#ieee_802_11_mac_operation{
                     fragmentation_threshold = M_fragmentation_threshold,
                     tx_msdu_lifetime = M_tx_msdu_lifetime,
                     rx_msdu_lifetime = M_rx_msdu_lifetime}) ->
-    encode_element(1030, <<M_radio_id:8,
+    encode_element(1030, <<M_radio_id:8/integer,
                            0:8,
-                           M_rts_threshold:16,
-                           M_short_retry:8,
-                           M_long_retry:8,
-                           M_fragmentation_threshold:16,
-                           M_tx_msdu_lifetime:32,
-                           M_rx_msdu_lifetime:32>>);
+                           M_rts_threshold:16/integer,
+                           M_short_retry:8/integer,
+                           M_long_retry:8/integer,
+                           M_fragmentation_threshold:16/integer,
+                           M_tx_msdu_lifetime:32/integer,
+                           M_rx_msdu_lifetime:32/integer>>);
 
 encode_element(#ieee_802_11_mic_countermeasures{
                     radio_id = M_radio_id,
                     wlan_id = M_wlan_id,
                     mac = M_mac}) ->
-    encode_element(1031, <<M_radio_id:8,
-                           M_wlan_id:8,
+    encode_element(1031, <<M_radio_id:8/integer,
+                           M_wlan_id:8/integer,
                            M_mac:6/bytes>>);
 
 encode_element(#ieee_802_11_multi_domain_capability{
@@ -1555,27 +1555,27 @@ encode_element(#ieee_802_11_multi_domain_capability{
                     first_channel = M_first_channel,
                     number_of_channels_ = M_number_of_channels_,
                     max_tx_power_level = M_max_tx_power_level}) ->
-    encode_element(1032, <<M_radio_id:8,
+    encode_element(1032, <<M_radio_id:8/integer,
                            0:8,
-                           M_first_channel:16,
-                           M_number_of_channels_:16,
-                           M_max_tx_power_level:16>>);
+                           M_first_channel:16/integer,
+                           M_number_of_channels_:16/integer,
+                           M_max_tx_power_level:16/integer>>);
 
 encode_element(#ieee_802_11_ofdm_control{
                     radio_id = M_radio_id,
                     current_chan = M_current_chan,
                     band_support = M_band_support,
                     ti_threshold = M_ti_threshold}) ->
-    encode_element(1033, <<M_radio_id:8,
+    encode_element(1033, <<M_radio_id:8/integer,
                            0:8,
-                           M_current_chan:8,
-                           M_band_support:8,
-                           M_ti_threshold:32>>);
+                           M_current_chan:8/integer,
+                           M_band_support:8/integer,
+                           M_ti_threshold:32/integer>>);
 
 encode_element(#ieee_802_11_rate_set{
                     radio_id = M_radio_id,
                     rate_set = M_rate_set}) ->
-    encode_element(1034, <<M_radio_id:8,
+    encode_element(1034, <<M_radio_id:8/integer,
                            (<< <<X:8>> || X <- M_rate_set>>)/binary>>);
 
 encode_element(#ieee_802_11_rsna_error_report_from_station{
@@ -1591,15 +1591,15 @@ encode_element(#ieee_802_11_rsna_error_report_from_station{
                     tkip_replays = M_tkip_replays}) ->
     encode_element(1035, <<M_client_mac_address:6/bytes,
                            M_bssid:6/bytes,
-                           M_radio_id:8,
-                           M_wlan_id:8,
+                           M_radio_id:8/integer,
+                           M_wlan_id:8/integer,
                            0:16,
-                           M_tkip_icv_errors:32,
-                           M_tkip_local_mic_failures:32,
-                           M_tkip_remote_mic_failures:32,
-                           M_ccmp_replays:32,
-                           M_ccmp_decrypt_errors:32,
-                           M_tkip_replays:32>>);
+                           M_tkip_icv_errors:32/integer,
+                           M_tkip_local_mic_failures:32/integer,
+                           M_tkip_remote_mic_failures:32/integer,
+                           M_ccmp_replays:32/integer,
+                           M_ccmp_decrypt_errors:32/integer,
+                           M_tkip_replays:32/integer>>);
 
 encode_element(#ieee_802_11_station{
                     radio_id = M_radio_id,
@@ -1608,8 +1608,8 @@ encode_element(#ieee_802_11_station{
                     capabilities = M_capabilities,
                     wlan_id = M_wlan_id,
                     supported_rate = M_supported_rate}) ->
-    encode_element(1036, <<M_radio_id:8,
-                           M_association_id:16,
+    encode_element(1036, <<M_radio_id:8/integer,
+                           M_association_id:16/integer,
                            0:8,
                            M_mac_address:6/bytes,
                            (encode_flag('ess', M_capabilities)):1,
@@ -1628,7 +1628,7 @@ encode_element(#ieee_802_11_station{
                            (encode_flag('dsss_ofdm', M_capabilities)):1,
                            (encode_flag('delayed_block_ack', M_capabilities)):1,
                            (encode_flag('immediate_block_ack', M_capabilities)):1,
-                           M_wlan_id:8,
+                           M_wlan_id:8/integer,
                            (<< <<X:8>> || X <- M_supported_rate>>)/binary>>);
 
 encode_element(#ieee_802_11_station_qos_profile{
@@ -1636,7 +1636,7 @@ encode_element(#ieee_802_11_station_qos_profile{
                     p8021p = M_p8021p}) ->
     encode_element(1037, <<M_mac_address:6/bytes,
                            0:13,
-                           M_p8021p:3>>);
+                           M_p8021p:3/integer>>);
 
 encode_element(#ieee_802_11_station_session_key{
                     mac_address = M_mac_address,
@@ -1673,52 +1673,52 @@ encode_element(#ieee_802_11_statistics{
                     qos_cf_polls_received_count = M_qos_cf_polls_received_count,
                     qos_cf_polls_unused_count = M_qos_cf_polls_unused_count,
                     qos_cf_polls_unusable_count = M_qos_cf_polls_unusable_count}) ->
-    encode_element(1039, <<M_radio_id:8,
+    encode_element(1039, <<M_radio_id:8/integer,
                            0:24,
-                           M_tx_fragment_count:32,
-                           M_multicast_tx_count:32,
-                           M_failed_count:32,
-                           M_retry_count:32,
-                           M_multiple_retry_count:32,
-                           M_frame_duplicate_count:32,
-                           M_rts_success_count:32,
-                           M_rts_failure_count:32,
-                           M_ack_failure_count:32,
-                           M_rx_fragment_count:32,
-                           M_multicast_rx_count:32,
-                           M_fcs_error__count:32,
-                           M_tx_frame_count:32,
-                           M_decryption_errors:32,
-                           M_discarded_qos_fragment_count:32,
-                           M_associated_station_count:32,
-                           M_qos_cf_polls_received_count:32,
-                           M_qos_cf_polls_unused_count:32,
-                           M_qos_cf_polls_unusable_count:32>>);
+                           M_tx_fragment_count:32/integer,
+                           M_multicast_tx_count:32/integer,
+                           M_failed_count:32/integer,
+                           M_retry_count:32/integer,
+                           M_multiple_retry_count:32/integer,
+                           M_frame_duplicate_count:32/integer,
+                           M_rts_success_count:32/integer,
+                           M_rts_failure_count:32/integer,
+                           M_ack_failure_count:32/integer,
+                           M_rx_fragment_count:32/integer,
+                           M_multicast_rx_count:32/integer,
+                           M_fcs_error__count:32/integer,
+                           M_tx_frame_count:32/integer,
+                           M_decryption_errors:32/integer,
+                           M_discarded_qos_fragment_count:32/integer,
+                           M_associated_station_count:32/integer,
+                           M_qos_cf_polls_received_count:32/integer,
+                           M_qos_cf_polls_unused_count:32/integer,
+                           M_qos_cf_polls_unusable_count:32/integer>>);
 
 encode_element(#ieee_802_11_supported_rates{
                     radio_id = M_radio_id,
                     supported_rates = M_supported_rates}) ->
-    encode_element(1040, <<M_radio_id:8,
+    encode_element(1040, <<M_radio_id:8/integer,
                            (<< <<X:8>> || X <- M_supported_rates>>)/binary>>);
 
 encode_element(#ieee_802_11_tx_power{
                     radio_id = M_radio_id,
                     current_tx_power = M_current_tx_power}) ->
-    encode_element(1041, <<M_radio_id:8,
+    encode_element(1041, <<M_radio_id:8/integer,
                            0:8,
-                           M_current_tx_power:16>>);
+                           M_current_tx_power:16/integer>>);
 
 encode_element(#ieee_802_11_tx_power_level{
                     radio_id = M_radio_id,
                     power_level = M_power_level}) ->
-    encode_element(1042, <<M_radio_id:8,
+    encode_element(1042, <<M_radio_id:8/integer,
                            (length(M_power_level)):8/integer, (<< <<X/binary>> || X <- M_power_level>>)/binary>>);
 
 encode_element(#ieee_802_11_update_station_qos{
                     radio_id = M_radio_id,
                     mac_address = M_mac_address,
                     qos_sub_element = M_qos_sub_element}) ->
-    encode_element(1043, <<M_radio_id:8,
+    encode_element(1043, <<M_radio_id:8/integer,
                            M_mac_address:6/bytes,
                            M_qos_sub_element:8/bytes>>);
 
@@ -1729,8 +1729,8 @@ encode_element(#ieee_802_11_update_wlan{
                     key_index = M_key_index,
                     key_status = M_key_status,
                     key = M_key}) ->
-    encode_element(1044, <<M_radio_id:8,
-                           M_wlan_id:8,
+    encode_element(1044, <<M_radio_id:8/integer,
+                           M_wlan_id:8/integer,
                            (encode_flag('ess', M_capability)):1,
                            (encode_flag('ibss', M_capability)):1,
                            (encode_flag('cf-pollable', M_capability)):1,
@@ -1747,7 +1747,7 @@ encode_element(#ieee_802_11_update_wlan{
                            (encode_flag('dsss_ofdm', M_capability)):1,
                            (encode_flag('delayed_block_ack', M_capability)):1,
                            (encode_flag('immediate_block_ack', M_capability)):1,
-                           M_key_index:8,
+                           M_key_index:8/integer,
                            (enum_key_status(M_key_status)):8/integer,
                            (byte_size(M_key)):16/integer, M_key/binary>>);
 
@@ -1755,7 +1755,7 @@ encode_element(#ieee_802_11_wtp_quality_of_service{
                     radio_id = M_radio_id,
                     tagging_policy = M_tagging_policy,
                     qos_sub_element = M_qos_sub_element}) ->
-    encode_element(1045, <<M_radio_id:8,
+    encode_element(1045, <<M_radio_id:8/integer,
                            0:3,
                            M_tagging_policy:5/bits,
                            M_qos_sub_element:32/bytes>>);
@@ -1768,27 +1768,27 @@ encode_element(#ieee_802_11_wtp_radio_configuration{
                     bssid = M_bssid,
                     beacon_period = M_beacon_period,
                     country_string = M_country_string}) ->
-    encode_element(1046, <<M_radio_id:8,
+    encode_element(1046, <<M_radio_id:8/integer,
                            (enum_short_preamble(M_short_preamble)):8/integer,
-                           M_num_of_bssids:8,
-                           M_dtim_period:8,
+                           M_num_of_bssids:8/integer,
+                           M_dtim_period:8/integer,
                            M_bssid:6/bytes,
-                           M_beacon_period:16,
+                           M_beacon_period:16/integer,
                            M_country_string:4/bytes>>);
 
 encode_element(#ieee_802_11_wtp_radio_fail_alarm_indication{
                     radio_id = M_radio_id,
                     type = M_type,
                     status = M_status}) ->
-    encode_element(1047, <<M_radio_id:8,
+    encode_element(1047, <<M_radio_id:8/integer,
                            (enum_type(M_type)):8/integer,
-                           M_status:8,
+                           M_status:8/integer,
                            0:8>>);
 
 encode_element(#ieee_802_11_wtp_radio_information{
                     radio_id = M_radio_id,
                     radio_type = M_radio_type}) ->
-    encode_element(1048, <<M_radio_id:8,
+    encode_element(1048, <<M_radio_id:8/integer,
                            0:28,
                            (encode_flag('802.11n', M_radio_type)):1,
                            (encode_flag('802.11g', M_radio_type)):1,
@@ -1802,14 +1802,14 @@ encode_element(#tp_wtp_wwan_statistics_0_9{
                     rssi = M_rssi,
                     lac = M_lac,
                     cell_id = M_cell_id}) ->
-    encode_vendor_element({18681,1}, <<M_timestamp:32,
-                                       M_wwan_id:8,
-                                       M_rat:8,
-                                       M_rssi:8,
+    encode_vendor_element({18681,1}, <<M_timestamp:32/integer-little,
+                                       M_wwan_id:8/integer,
+                                       M_rat:8/integer,
+                                       M_rssi:8/integer,
                                        0:8,
-                                       M_lac:16,
+                                       M_lac:16/integer-little,
                                        0:16,
-                                       M_cell_id:32>>);
+                                       M_cell_id:32/integer-little>>);
 
 encode_element(#tp_wtp_wwan_statistics{
                     timestamp = M_timestamp,
@@ -1822,56 +1822,56 @@ encode_element(#tp_wtp_wwan_statistics{
                     mcc = M_mcc,
                     mnc = M_mnc,
                     cell_id = M_cell_id}) ->
-    encode_vendor_element({18681,1}, <<M_timestamp:32,
-                                       M_wwan_id:8,
-                                       M_rat:8,
-                                       M_rssi:8,
-                                       M_creg:8,
-                                       M_lac:16,
-                                       M_latency:16,
-                                       M_mcc:10,
-                                       M_mnc:10,
+    encode_vendor_element({18681,1}, <<M_timestamp:32/integer,
+                                       M_wwan_id:8/integer,
+                                       M_rat:8/integer,
+                                       M_rssi:8/integer,
+                                       M_creg:8/integer,
+                                       M_lac:16/integer,
+                                       M_latency:16/integer,
+                                       M_mcc:10/integer,
+                                       M_mnc:10/integer,
                                        0:12,
-                                       M_cell_id:32>>);
+                                       M_cell_id:32/integer>>);
 
 encode_element(#tp_wtp_timestamp{
                     second = M_second,
                     fraction = M_fraction}) ->
-    encode_vendor_element({18681,2}, <<M_second:32,
-                                       M_fraction:32>>);
+    encode_vendor_element({18681,2}, <<M_second:32/integer,
+                                       M_fraction:32/integer>>);
 
 encode_element(#tp_wtp_timestamp_1_1{
                     second = M_second}) ->
-    encode_vendor_element({18681,2}, <<M_second:32>>);
+    encode_vendor_element({18681,2}, <<M_second:32/integer>>);
 
 encode_element(#tp_wtp_wwan_iccid{
                     wwan_id = M_wwan_id,
                     iccid = M_iccid}) ->
-    encode_vendor_element({18681,3}, <<M_wwan_id:8,
+    encode_vendor_element({18681,3}, <<M_wwan_id:8/integer,
                                        M_iccid/binary>>);
 
 encode_element(#tp_ieee_802_11_wlan_hold_time{
                     radio_id = M_radio_id,
                     wlan_id = M_wlan_id,
                     hold_time = M_hold_time}) ->
-    encode_vendor_element({18681,4}, <<M_radio_id:8,
-                                       M_wlan_id:8,
-                                       M_hold_time:16>>);
+    encode_vendor_element({18681,4}, <<M_radio_id:8/integer,
+                                       M_wlan_id:8/integer,
+                                       M_hold_time:16/integer>>);
 
 encode_element(#tp_data_channel_dead_interval{
                     data_channel_dead_interval = M_data_channel_dead_interval}) ->
-    encode_vendor_element({18681,5}, <<M_data_channel_dead_interval:16>>);
+    encode_vendor_element({18681,5}, <<M_data_channel_dead_interval:16/integer>>);
 
 encode_element(#tp_ac_join_timeout{
                     ac_join_timeout = M_ac_join_timeout}) ->
-    encode_vendor_element({18681,6}, <<M_ac_join_timeout:16>>);
+    encode_vendor_element({18681,6}, <<M_ac_join_timeout:16/integer>>);
 
 encode_element(#tp_ac_address_with_priority{
                     priority = M_priority,
                     type = M_type,
                     value = M_value}) ->
-    encode_vendor_element({18681,7}, <<M_priority:8,
-                                       M_type:8,
+    encode_vendor_element({18681,7}, <<M_priority:8/integer,
+                                       M_type:8/integer,
                                        M_value/binary>>);
 
 encode_element(#wtp_apn_settings{
@@ -1898,8 +1898,8 @@ encode_element(#firmware_download_status{
                     bytes_remaining = M_bytes_remaining}) ->
     encode_vendor_element({18681,11}, <<(enum_status(M_status)):16/integer,
                                         0:16,
-                                        M_bytes_downloaded:32,
-                                        M_bytes_remaining:32>>);
+                                        M_bytes_downloaded:32/integer,
+                                        M_bytes_remaining:32/integer>>);
 
 encode_element(#ieee_802_11_tp_wlan{
                     radio_id = M_radio_id,
@@ -1915,8 +1915,8 @@ encode_element(#ieee_802_11_tp_wlan{
                     tunnel_mode = M_tunnel_mode,
                     suppress_ssid = M_suppress_ssid,
                     ssid = M_ssid}) ->
-    encode_vendor_element({18681,13}, <<M_radio_id:8,
-                                        M_wlan_id:8,
+    encode_vendor_element({18681,13}, <<M_radio_id:8/integer,
+                                        M_wlan_id:8/integer,
                                         (encode_flag('ess', M_capability)):1,
                                         (encode_flag('ibss', M_capability)):1,
                                         (encode_flag('cf-pollable', M_capability)):1,
@@ -1933,7 +1933,7 @@ encode_element(#ieee_802_11_tp_wlan{
                                         (encode_flag('dsss_ofdm', M_capability)):1,
                                         (encode_flag('delayed_block_ack', M_capability)):1,
                                         (encode_flag('immediate_block_ack', M_capability)):1,
-                                        M_key_index:8,
+                                        M_key_index:8/integer,
                                         (enum_key_status(M_key_status)):8/integer,
                                         (byte_size(M_key)):16/integer, M_key/binary,
                                         M_group_tsc:6/bytes,
@@ -1941,25 +1941,25 @@ encode_element(#ieee_802_11_tp_wlan{
                                         (enum_auth_type(M_auth_type)):8/integer,
                                         (enum_mac_mode(M_mac_mode)):8/integer,
                                         (enum_tunnel_mode(M_tunnel_mode)):8/integer,
-                                        M_suppress_ssid:8,
+                                        M_suppress_ssid:8/integer,
                                         M_ssid/binary>>);
 
 encode_element(#apply_confirmation_timeout{
                     apply_confirmation_timeout = M_apply_confirmation_timeout}) ->
-    encode_vendor_element({18681,12}, <<M_apply_confirmation_timeout:16>>);
+    encode_vendor_element({18681,12}, <<M_apply_confirmation_timeout:16/integer>>);
 
 encode_element(#power_save_mode{
                     idle_timeout = M_idle_timeout,
                     busy_timeout = M_busy_timeout}) ->
-    encode_vendor_element({18681,14}, <<M_idle_timeout:32,
-                                        M_busy_timeout:32>>);
+    encode_vendor_element({18681,14}, <<M_idle_timeout:32/integer,
+                                        M_busy_timeout:32/integer>>);
 
 encode_element(#gps_last_acquired_position{
                     timestamp = M_timestamp,
                     wwan_id = M_wwan_id,
                     gpsatc = M_gpsatc}) ->
-    encode_vendor_element({18681,15}, <<M_timestamp:32,
-                                        M_wwan_id:8,
+    encode_vendor_element({18681,15}, <<M_timestamp:32/integer,
+                                        M_wwan_id:8/integer,
                                         M_gpsatc/binary>>);
 
 encode_element(#ieee_802_11n_wlan_radio_configuration{
@@ -1973,17 +1973,17 @@ encode_element(#ieee_802_11n_wlan_radio_configuration{
                     max_mandatory_mcs = M_max_mandatory_mcs,
                     tx_antenna = M_tx_antenna,
                     rx_antenna = M_rx_antenna}) ->
-    encode_vendor_element({18681,16}, <<M_radio_id:8,
-                                        M_a_msdu:1,
-                                        M_a_mpdu:1,
-                                        M_deny_non_11n:1,
-                                        M_short_gi:1,
-                                        M_bandwidth_binding:1,
+    encode_vendor_element({18681,16}, <<M_radio_id:8/integer,
+                                        M_a_msdu:1/integer,
+                                        M_a_mpdu:1/integer,
+                                        M_deny_non_11n:1/integer,
+                                        M_short_gi:1/integer,
+                                        M_bandwidth_binding:1/integer,
                                         0:3,
-                                        M_max_supported_mcs:8,
-                                        M_max_mandatory_mcs:8,
-                                        M_tx_antenna:8,
-                                        M_rx_antenna:8,
+                                        M_max_supported_mcs:8/integer,
+                                        M_max_mandatory_mcs:8/integer,
+                                        M_tx_antenna:8/integer,
+                                        M_rx_antenna:8/integer,
                                         0:16>>);
 
 encode_element(#ieee_802_11n_station_information{
@@ -2001,24 +2001,24 @@ encode_element(#ieee_802_11n_station_information{
                     htcsupp = M_htcsupp,
                     mcs_set = M_mcs_set}) ->
     encode_vendor_element({18681,17}, <<M_mac_address:6/bytes,
-                                        M_bandwith_40mhz:1,
+                                        M_bandwith_40mhz:1/integer,
                                         (enum_power_save_mode(M_power_save_mode)):2/integer,
-                                        M_sgi_20mhz:1,
-                                        M_sgi_40mhz:1,
-                                        M_ba_delay_mode:1,
-                                        M_max_a_msdu:1,
+                                        M_sgi_20mhz:1/integer,
+                                        M_sgi_40mhz:1/integer,
+                                        M_ba_delay_mode:1/integer,
+                                        M_max_a_msdu:1/integer,
                                         0:1,
-                                        M_max_rxfactor:8,
-                                        M_min_staspacing:8,
-                                        M_hisuppdatarate:16,
-                                        M_ampdubufsize:16,
-                                        M_htcsupp:8,
+                                        M_max_rxfactor:8/integer,
+                                        M_min_staspacing:8/integer,
+                                        M_hisuppdatarate:16/integer,
+                                        M_ampdubufsize:16/integer,
+                                        M_htcsupp:8/integer,
                                         M_mcs_set:10/bytes>>);
 
 encode_element(#tp_ieee_802_11_encryption_capabilities{
                     radio_id = M_radio_id,
                     cipher_suites = M_cipher_suites}) ->
-    encode_vendor_element({18681,18}, <<M_radio_id:8,
+    encode_vendor_element({18681,18}, <<M_radio_id:8/integer,
                                         (<< <<X:32>> || X <- M_cipher_suites>>)/binary>>);
 
 encode_element(#tp_ieee_802_11_update_key{
@@ -2028,11 +2028,11 @@ encode_element(#tp_ieee_802_11_update_key{
                     key_status = M_key_status,
                     cipher_suite = M_cipher_suite,
                     key = M_key}) ->
-    encode_vendor_element({18681,19}, <<M_radio_id:8,
-                                        M_wlan_id:8,
-                                        M_key_index:8,
+    encode_vendor_element({18681,19}, <<M_radio_id:8/integer,
+                                        M_wlan_id:8/integer,
+                                        M_key_index:8/integer,
                                         (enum_key_status(M_key_status)):8/integer,
-                                        M_cipher_suite:32,
+                                        M_cipher_suite:32/integer,
                                         M_key/binary>>);
 
 encode_element({Tag = {Vendor, Type}, Value}) when is_integer(Vendor), is_integer(Type), is_binary(Value) ->

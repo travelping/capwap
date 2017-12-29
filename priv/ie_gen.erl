@@ -44,7 +44,7 @@ wlan_attr(Id, Name) ->
        {"Key Status", 8, {enum, [per_station, static_wep, begin_rekeying, completed_rekeying]}},
        {"Key", 16, length_binary},
        {"Group TSC", 6, bytes},
-       {"QoS", 8, {enum, [best_effort, video, voice, backgroung]}},
+       {"QoS", 8, {enum, [best_effort, video, voice, background]}},
        {"Auth Type", 8, {enum, [open_system, wep_shared_key]}},
        {"MAC Mode", 8, {enum, [local_mac, split_mac]}},
        {"Tunnel Mode", 8, {enum, [local_bridge, '802_3_tunnel', '802_11_tunnel']}},
@@ -589,12 +589,8 @@ gen_encoder_bin({Name, Len, length_binary}) ->
     [io_lib:format("(byte_size(M_~s)):~w/integer, M_~s/binary", [s2a(Name), Len, s2a(Name)])];
 gen_encoder_bin({Name, 0, Type}) ->
     [io_lib:format("M_~s/~w", [s2a(Name), Type])];
-gen_encoder_bin({Name, Size, bytes}) ->
-    [io_lib:format("M_~s:~w/bytes", [s2a(Name), Size])];
-gen_encoder_bin({Name, Size, bits}) ->
-    [io_lib:format("M_~s:~w/bits", [s2a(Name), Size])];
-gen_encoder_bin({Name, Size, _Type}) ->
-    [io_lib:format("M_~s:~w", [s2a(Name), Size])].
+gen_encoder_bin({Name, Size, Type}) ->
+    [io_lib:format("M_~s:~w/~s", [s2a(Name), Size, Type])].
 
 indent(Atom, Extra) when is_atom(Atom) ->
     indent(atom_to_list(Atom), Extra);
