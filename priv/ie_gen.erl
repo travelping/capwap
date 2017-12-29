@@ -17,22 +17,6 @@
 %% You should have received a copy of the GNU Affero General Public License
 %% along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
--define(COPYRIGHT,
-	"%% Copyright (C) 2013-2017, Travelping GmbH <info@travelping.com>\n"
-	"\n"
-	"%% This program is free software: you can redistribute it and/or modify\n"
-	"%% it under the terms of the GNU Affero General Public License as published by\n"
-	"%% the Free Software Foundation, either version 3 of the License, or\n"
-	"%% (at your option) any later version.\n"
-	"\n"
-	"%% This program is distributed in the hope that it will be useful,\n"
-	"%% but WITHOUT ANY WARRANTY; without even the implied warranty of\n"
-	"%% MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n"
-	"%% GNU Affero General Public License for more details.\n"
-	"\n"
-	"%% You should have received a copy of the GNU Affero General Public License\n"
-	"%% along with this program.  If not, see <http://www.gnu.org/licenses/>.\n\n").
-
 wlan_attr(Id, Name) ->
     {Id, Name,
       [{"Radio ID", 8, integer},
@@ -734,7 +718,7 @@ main(_) ->
     MTypes = string:join(FwdFuns ++ RevFuns ++ WildFun, ";\n") ++ ".\n",
 
     Records = string:join([write_record(X) || X <- ies() ++ vendor_ies(), element(1, X) /= 37], "\n"),
-    HrlRecs = io_lib:format(?COPYRIGHT "%% This file is auto-generated. DO NOT EDIT~n~n~s", [Records]),
+    HrlRecs = io_lib:format("%% -include(\"capwap_packet_gen.hrl\").~n~n~s", [Records]),
     Enums = write_enums(ies() ++ vendor_ies()),
 
     CatchAnyDecoder = "decode_element(Tag, Value) ->\n    {Tag, Value}",
@@ -749,8 +733,14 @@ main(_) ->
 			  [write_encoder("encode_vendor_element", X) || X <- vendor_ies()]
 			  ++ [CatchAnyVendorEncoder, CatchAnyEncoder] , ";\n\n"),
 
-    ErlDecls = io_lib:format(?COPYRIGHT
-			     "%% This file is auto-generated. DO NOT EDIT~n~n~s~n~s~n~s~n~s.~n~n~s.~n~n~s.~n",
+    ErlDecls = io_lib:format("%% -include(\"capwap_packet_gen.hrl\").~n~n~s~n~s~n~s~n~s.~n~n~s.~n~n~s.~n",
 			     [MsgDescription, MTypes, Enums, Funs, VendorFuns, EncFuns]),
-    file:write_file("include/capwap_packet_gen.hrl", HrlRecs),
-    file:write_file("src/capwap_packet_gen.hrl", ErlDecls).
+
+
+    {ok, HrlF0} = file:read_file("include/capwap_packet.hrl"),
+    [HrlHead, _] = binary:split(HrlF0, [<<"%% -include(\"capwap_packet_gen.hrl\").">>],[]),
+    file:write_file("include/capwap_packet.hrl", [HrlHead, HrlRecs]),
+
+    {ok, ErlF0} = file:read_file("src/capwap_packet.erl"),
+    [ErlHead, _] = binary:split(ErlF0, [<<"%% -include(\"capwap_packet_gen.hrl\").">>],[]),
+    file:write_file("src/capwap_packet.erl", [ErlHead, ErlDecls]).
