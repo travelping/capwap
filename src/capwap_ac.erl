@@ -21,21 +21,20 @@
 
 %% API
 -export([start_link/1, accept/3, get_data_channel_address/1, take_over/1, new_station/3,
-         station_detaching/1, gtk_rekey_done/1]).
+	 station_detaching/1, gtk_rekey_done/1]).
 
 %% Extern API
 -export([get_state/1,
 	 firmware_download/3,
-         set_ssid/4,
-         stop_radio/2]).
+	 set_ssid/4,
+	 stop_radio/2]).
 
 %% API for Station process
 -export([add_station/5, del_station/3, send_80211/3, ieee_802_11_ie/2,
 	 rsn_ie/2, rsn_ie/3, get_station_config/2]).
 
 %% gen_statem callbacks
--export([callback_mode/0, init/1,
-	 listen/3, idle/3, join/3, configure/3, data_check/3, run/3,
+-export([callback_mode/0, init/1, handle_event/4,
 	 terminate/3, code_change/4]).
 
 -export([handle_packet/2, handle_data/3]).
@@ -56,15 +55,16 @@
 -define(TRACE_LOCAL_DATA,    {{127,0,0,1}, 5247}).
 
 %% TODO: convert constants into configuration values
--define(IDLE_TIMEOUT, 30 * 1000).
 -define(SSL_ACCEPT_TIMEOUT, 30 * 1000).
+-define(WaitJoinTimeout, 60 * 1000).
 -define(ChangeStatePendingTimeout, 25 * 1000).
+-define(DataCheckTimeout, 30 * 1000).
 -define(RetransmitInterval, 3 * 1000).
 -define(MaxRetransmit, 5).
 
 %% -define(MgmtSuites, ['AES-CMAC', 'BIP-GMAC-128', 'BIP-GMAC-256', 'BIP-CMAC-256']).
 
--record(state, {
+-record(data, {
 	  id,
 	  session_id,
 	  ctrl_channel_address,
@@ -92,12 +92,15 @@
 	  echo_request_timer,
 	  echo_request_timeout,
 
+	  %% protocol timeouts
+	  wait_join_timeout,
 	  change_state_pending_timeout,
+	  data_check_timeout,
 
 	  seqno = 0,
 	  version,
-          station_count = 0,
-          wlans
+	  station_count = 0,
+	  wlans
 }).
 
 -define(IS_RUN_CONTROL_EVENT(E),
@@ -196,17 +199,17 @@ gtk_rekey_done({AC, WlanIdent}) ->
 %%%===================================================================
 with_cn(CN, Fun) ->
     case capwap_wtp_reg:lookup(CN) of
-        {ok, Pid} ->
+	{ok, Pid} ->
 	    Fun(Pid);
-        not_found ->
-            {error, not_found}
+	not_found ->
+	    {error, not_found}
     end.
 
 get_state(CN) ->
     case with_cn(CN, gen_statem:call(_, get_state)) of
-	{ok, State} ->
-	    Fields = record_info(fields, state),
-	    [_Tag| Values] = tuple_to_list(State),
+	{ok, Data} ->
+	    Fields = record_info(fields, data),
+	    [_Tag| Values] = tuple_to_list(Data),
 	    PMap = maps:from_list(lists:zip(Fields, Values)),
 	    {ok, PMap};
 	Other ->
@@ -228,8 +231,8 @@ stop_radio(CN, RadioId) ->
 %%% Station APIs
 %%%===================================================================
 
-add_station(AC, BSS, MAC, StaCaps, CryptoState) ->
-    gen_statem:call(AC, {add_station, BSS, MAC, StaCaps, CryptoState}).
+add_station(AC, BSS, MAC, StaCaps, CryptoData) ->
+    gen_statem:call(AC, {add_station, BSS, MAC, StaCaps, CryptoData}).
 
 del_station(AC, BSS, MAC) ->
     gen_statem:cast(AC, {del_station, BSS, MAC}).
@@ -244,7 +247,7 @@ get_station_config(AC, BSS) ->
 %%% gen_statem callbacks
 %%%===================================================================
 callback_mode() ->
-    [state_functions, state_enter].
+    [handle_event_function, state_enter].
 
 init([WTPControlChannelAddress]) ->
     process_flag(trap_exit, true),
@@ -252,110 +255,103 @@ init([WTPControlChannelAddress]) ->
     exometer:update([capwap, ac, wtp_count], 1),
     capwap_wtp_reg:register(WTPControlChannelAddress),
     MTU = capwap_config:get(ac, mtu, 1500),
-    {ok, listen, #state{ctrl_channel_address = WTPControlChannelAddress,
-			request_queue = queue:new(),
-			ctrl_stream = capwap_stream:init(MTU),
-			change_state_pending_timeout = ?ChangeStatePendingTimeout,
-                        wlans = []}, 5000}.
+    {ok, listen, #data{ctrl_channel_address = WTPControlChannelAddress,
+		       request_queue = queue:new(),
+		       ctrl_stream = capwap_stream:init(MTU),
+		       wait_join_timeout = ?WaitJoinTimeout,
+		       change_state_pending_timeout = ?ChangeStatePendingTimeout,
+		       data_check_timeout = ?DataCheckTimeout,
+		       wlans = []}}.
 
-listen(enter, _OldStateName, _State) ->
-    keep_state_and_data;
+%% Listen
 
-listen(timeout, _, State) ->
-    {stop, normal, State};
+handle_event(enter, _OldState, listen, _Data) ->
+    Actions = [{state_timeout, 5000, listen_timeout}],
+    {keep_state_and_data, Actions};
 
-listen({call, From}, Call, State) ->
-    handle_call(Call, From, listen, State);
+handle_event(state_timeout, _, listen, Data) ->
+    lager:info("Timeout in LISTEN -> stop"),
+    {stop, normal, Data};
 
-listen(cast, {accept, udp, Socket}, State0) ->
+handle_event(cast, {accept, udp, Socket}, listen, Data0) ->
     capwap_udp:setopts(Socket, [{active, true}, {mode, binary}]),
     lager:info("udp_accept: ~p", [Socket]),
-    {ok, Session} = start_session(Socket, State0),
+    {ok, Session} = start_session(Socket, Data0),
 
     {ok, WTPControlChannelAddress} = capwap_udp:peername(Socket),
     PeerName = iolist_to_binary(format_peer(WTPControlChannelAddress)),
 
     Opts = [{'Username', PeerName},
 	    {'Authentication-Method', {'TLS', 'Pre-Shared-Key'}},
-            {'WTP-Config', capwap_config:wtp_config(PeerName)}],
+	    {'WTP-Config', capwap_config:wtp_config(PeerName)}],
     case ergw_aaa_session:authenticate(Session, to_session(Opts)) of
 	success ->
 	    lager:info("AuthResult: success"),
 	    {ok, Config} = ergw_aaa_session:attr_get('WTP-Config', ergw_aaa_session:get(Session)),
-	    State1 = State0#state{session = Session,
-				  config = Config,
-				  socket = {udp, Socket},
-				  id = undefined},
+	    Data1 = Data0#data{session = Session,
+			       config = Config,
+			       socket = {udp, Socket},
+			       id = undefined},
 
-	    next_state(idle, State1);
+	    {next_state, join, Data1};
 
 	Other ->
 	    lager:info("AuthResult: ~p", [Other]),
-	    {stop, normal, State0#state{session=Session}}
+	    {stop, normal, Data0#data{session=Session}}
     end;
 
-listen(cast, {accept, dtls, Socket}, State) ->
-    {ok, Session} = start_session(Socket, State),
+handle_event(cast, {accept, dtls, Socket}, listen, Data) ->
+    {ok, Session} = start_session(Socket, Data),
     lager:info("ssl_accept on: ~p, Opts: ~p", [Socket, mk_ssl_opts(Session)]),
 
     case dtlsex:ssl_accept(Socket, mk_ssl_opts(Session), ?SSL_ACCEPT_TIMEOUT) of
-        {ok, SslSocket} ->
-            lager:info("ssl_accept: ~p", [SslSocket]),
-            {ok, WTPControlChannelAddress} = dtlsex:peername(SslSocket),
-            dtlsex:setopts(SslSocket, [{active, true}, {mode, binary}]),
+	{ok, SslSocket} ->
+	    lager:info("ssl_accept: ~p", [SslSocket]),
+	    {ok, WTPControlChannelAddress} = dtlsex:peername(SslSocket),
+	    dtlsex:setopts(SslSocket, [{active, true}, {mode, binary}]),
 
-            CommonName = common_name(SslSocket),
+	    CommonName = common_name(SslSocket),
 	    lager:md([{wtp, CommonName}]),
 	    lager:debug("ssl_cert: ~p", [CommonName]),
 
-            maybe_takeover(CommonName),
-            capwap_wtp_reg:register_args(CommonName, WTPControlChannelAddress),
+	    maybe_takeover(CommonName),
+	    capwap_wtp_reg:register_args(CommonName, WTPControlChannelAddress),
 
 	    {ok, Config} = ergw_aaa_session:attr_get('WTP-Config', ergw_aaa_session:get(Session)),
-            State1 = State#state{socket = {dtls, SslSocket}, session = Session,
-				 config = Config, id = CommonName},
-            %% TODO: find old connection instance, take over their StationState and stop them
-            next_state(idle, State1);
-        Other ->
-            lager:error("ssl_accept failed: ~p", [Other]),
-            {stop, normal, State#state{session=Session}}
+	    Data1 = Data#data{socket = {dtls, SslSocket}, session = Session,
+			      config = Config, id = CommonName},
+	    %% TODO: find old connection instance, take over their StationData and stop them
+	    {next_state, join, Data1};
+	Other ->
+	    lager:error("ssl_accept failed: ~p", [Other]),
+	    {stop, normal, Data#data{session=Session}}
     end;
 
-listen(cast, Event, State) ->
-    handle_event(Event, listen, State);
+%% Join
 
-listen(info, Info, State) ->
-    handle_info(Info, listen, State).
+handle_event(enter, _OldState, join, #data{wait_join_timeout = Timeout}) ->
+    Actions = [{state_timeout, Timeout, wait_join_timeout}],
+    {keep_state_and_data, Actions};
 
-idle(enter, _OldStateName, _State) ->
-    keep_state_and_data;
+handle_event(state_timeout, _, join, Data) ->
+    lager:info("WaitJoin timeout in JOIN -> stop"),
+    {stop, normal, Data};
 
-idle(timeout, _, State) ->
-    lager:info("timeout in IDLE -> stop"),
-    {stop, normal, State};
-
-idle({call, From}, Call, State) ->
-    handle_call(Call, From, idle, State);
-
-idle(cast, {keep_alive, _DataPath, _WTPDataChannelAddress, Header, PayLoad}, State) ->
-    lager:warning("in IDLE got unexpected keep_alive: ~p", [{Header, PayLoad}]),
-    next_state(idle, State);
-
-idle(cast, {discovery_request, Seq, Elements,
-	    #capwap_header{
-	       radio_id = RadioId, wb_id = WBID, flags = Flags}},
-     State) ->
+handle_event(cast, {discovery_request, Seq, Elements,
+		    #capwap_header{
+		       radio_id = RadioId, wb_id = WBID, flags = Flags}},
+	     join, Data) ->
     RespElements = ac_info(discover, Elements),
     Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
-    State1 = send_response(Header, discovery_response, Seq, RespElements, State),
-    next_state(idle, State1);
+    Data1 = send_response(Header, discovery_response, Seq, RespElements, Data),
+    {keep_state, Data1};
 
-idle(cast, {join_request, Seq, Elements,
-	    #capwap_header{
-	       radio_id = RadioId, wb_id = WBID, flags = Flags}},
-     State0 = #state{ctrl_channel_address = WTPControlChannelAddress,
-		     session = Session, id = CommonName,
-		     config = Config0}) ->
+handle_event(cast, {join_request, Seq, Elements,
+		    #capwap_header{
+		       radio_id = RadioId, wb_id = WBID, flags = Flags}},
+	     join, Data0 = #data{ctrl_channel_address = WTPControlChannelAddress,
+				 session = Session, id = CommonName,
+				 config = Config0}) ->
     {Address, _} = WTPControlChannelAddress,
     Version = get_wtp_version(Elements),
     SessionId = proplists:get_value(session_id, Elements),
@@ -367,7 +363,7 @@ idle(cast, {join_request, Seq, Elements,
     StartTime = erlang:system_time(milli_seconds),
     MacTypes = ie(wtp_mac_type, Elements),
     TunnelModes = ie(wtp_frame_tunnel_mode, Elements),
-    State1 = State0#state{config = Config,
+    Data1 = Data0#data{config = Config,
 			  session_id = SessionId, mac_types = MacTypes,
 			  tunnel_modes = TunnelModes, version = Version,
 			  location = ie(location_data, Elements),
@@ -382,7 +378,7 @@ idle(cast, {join_request, Seq, Elements,
 	    #local_ipv4_address{ip_address = <<127,0,0,1>>},
 	    #result_code{result_code = 0}],
     Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
-    State = send_response(Header, join_response, Seq, RespElements, State1),
+    Data = send_response(Header, join_response, Seq, RespElements, Data1),
     SessionOpts = wtp_accounting_infos(Elements, [{'CAPWAP-Radio-Id', RadioId}]),
     lager:info("WTP Session Start Opts: ~p", [SessionOpts]),
 
@@ -396,36 +392,12 @@ idle(cast, {join_request, Seq, Elements,
 			'Error-Fragment-Invalid', 'Error-Fragment-Too-Old']),
 
     ergw_aaa_session:start(Session, to_session(SessionOpts)),
-    next_state(join, State);
+    {next_state, join, Data};
 
-idle(cast, Event, State) when ?IS_RUN_CONTROL_EVENT(Event) ->
-    lager:debug("in IDLE got control event: ~p", [Event]),
-    next_state(idle, State);
-
-idle(cast, Event, State) ->
-    handle_event(Event, idle, State);
-
-idle(info, Info, State) ->
-    handle_info(Info, idle, State).
-
-join(enter, _OldStateName, _State) ->
-    keep_state_and_data;
-
-join(timeout, _, State) ->
-    lager:info("timeout in JOIN -> stop"),
-    {stop, normal, State};
-
-join({call, From}, Call, State) ->
-    handle_call(Call, From, join, State);
-
-join(cast, {keep_alive, _DataPath, _WTPDataChannelAddress, Header, PayLoad}, State) ->
-    lager:warning("in JOIN got unexpected keep_alive: ~p", [{Header, PayLoad}]),
-    next_state(join, State);
-
-join(cast, {configuration_status_request, Seq, Elements,
-	    #capwap_header{
-	       wb_id = WBID, flags = Flags}},
-     #state{config = Config0} = State0) ->
+handle_event(cast, {configuration_status_request, Seq, Elements,
+		    #capwap_header{
+		       wb_id = WBID, flags = Flags}},
+	     join, #data{config = Config0} = Data0) ->
 
     Config = update_radio_information(Elements, Config0),
     #wtp{
@@ -441,176 +413,135 @@ join(cast, {configuration_status_request, Seq, Elements,
       } = Config,
 
     AdminPwIE = if is_binary(AdminPW) ->
-                        [#wtp_administrator_password_settings{password = AdminPW}];
+			[#wtp_administrator_password_settings{password = AdminPW}];
 		   true ->
-                        []
-                end,
-    AdminWlans = get_admin_wifi_updates(State0, Elements),
-    RespElements0 = [#timers{discovery = DiscoveryInterval,
-			     echo_request = EchoRequestInterval},
-		     #tp_data_channel_dead_interval{data_channel_dead_interval = DataChannelDeadInterval},
-		     #tp_ac_join_timeout{ac_join_timeout = ACJoinTimeout},
-		     #idle_timeout{timeout = IdleTimeout},
-		     #wtp_fallback{mode = disabled},
-		     #power_save_mode{idle_timeout = PSMIdleTimeout,
-				      busy_timeout = PSMBusyTimeout}
-		    ]
+			[]
+		end,
+    AdminWlans = get_admin_wifi_updates(Data0, Elements),
+    RespElements0 =
+	[#timers{discovery = DiscoveryInterval,
+		 echo_request = EchoRequestInterval},
+	 #tp_data_channel_dead_interval{
+	    data_channel_dead_interval = DataChannelDeadInterval},
+	 #tp_ac_join_timeout{ac_join_timeout = ACJoinTimeout},
+	 #idle_timeout{timeout = IdleTimeout},
+	 #wtp_fallback{mode = disabled},
+	 #power_save_mode{idle_timeout = PSMIdleTimeout,
+			  busy_timeout = PSMBusyTimeout}
+	]
 	++ AdminPwIE
 	++ AdminWlans
 	++ ac_addresses(),
     RespElements = lists:foldl(fun radio_configuration/2, RespElements0, Radios),
 
     Header = #capwap_header{radio_id = 0, wb_id = WBID, flags = Flags},
-    State1 = send_response(Header, configuration_status_response, Seq, RespElements, State0),
-    State = State1#state{
+    Data1 = send_response(Header, configuration_status_response, Seq, RespElements, Data0),
+    Data = Data1#data{
 	      config = Config,
 	      echo_request_timeout = EchoRequestInterval * 2},
 
-    next_state(configure, State);
+    {next_state, configure, Data};
 
-join(cast, Event, State) when ?IS_RUN_CONTROL_EVENT(Event) ->
-    lager:debug("in JOIN got control event: ~p", [Event]),
-    next_state(join, State);
+%% Configure
 
-join(cast, Event, State) ->
-    handle_event(Event, join, State);
-
-join(info, Info, State) ->
-    handle_info(Info, join, State).
-
-configure(enter, _OldStateName, #state{change_state_pending_timeout = Timeout}) ->
+handle_event(enter, _OldState, configure, #data{change_state_pending_timeout = Timeout}) ->
     Actions = [{state_timeout, Timeout, change_state_pending_timeout}],
     {keep_state_and_data, Actions};
 
-configure(state_timeout, _, State) ->
-    lager:info("change state timeout in CONFIGURE -> stop"),
-    {stop, normal, State};
+handle_event(state_timeout, _, configure, Data) ->
+    lager:info("Change State Pending timeout in CONFIGURE -> stop"),
+    {stop, normal, Data};
 
-configure(timeout, _, State) ->
-    lager:info("timeout in CONFIGURE -> stop"),
-    {stop, normal, State};
-
-configure({call, From}, Call, State) ->
-    handle_call(Call, From, configure, State);
-
-configure(cast, {keep_alive, _DataPath, _WTPDataChannelAddress, Header, PayLoad}, State) ->
-    lager:warning("in CONFIGURE got unexpected keep_alive: ~p", [{Header, PayLoad}]),
-    next_state(configure, State);
-
-configure(cast, {change_state_event_request, Seq, _Elements,
-		 #capwap_header{
-		    radio_id = RadioId, wb_id = WBID, flags = Flags}},
-	  State) ->
+handle_event(cast, {change_state_event_request, Seq, _Elements,
+		    #capwap_header{
+		       radio_id = RadioId, wb_id = WBID, flags = Flags}},
+	     configure, Data) ->
     Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
-    State1 = send_response(Header, change_state_event_response, Seq, [], State),
-    next_state(data_check, State1);
+    Data1 = send_response(Header, change_state_event_response, Seq, [], Data),
+    {next_state, data_check, Data1};
 
-configure(cast, Event, State) when ?IS_RUN_CONTROL_EVENT(Event) ->
-    lager:debug("in CONFIGURE got control event: ~p", [Event]),
-    next_state(configure, State);
+%% Data Check
 
-configure(cast, Event, State) ->
-    handle_event(Event, configure, State);
+handle_event(enter, _OldState, data_check, #data{data_check_timeout = Timeout}) ->
+    Actions = [{state_timeout, Timeout, data_check_timeout}],
+    {keep_state_and_data, Actions};
 
-configure(info, Info, State) ->
-    handle_info(Info, configure, State).
+handle_event(state_timeout, _, data_check, Data) ->
+    lager:info("DataCheck timeout in DATA_CHECK -> stop"),
+    {stop, normal, Data};
 
-data_check(timeout, _, State) ->
-    lager:info("timeout in DATA_CHECK -> stop"),
-    {stop, normal, State};
-
-data_check(enter, _OldStateName, _State) ->
-    keep_state_and_data;
-
-data_check({call, From}, Call, State) ->
-    handle_call(Call, From, data_check, State);
-
-data_check(cast, {keep_alive, DataPath, WTPDataChannelAddress, Header, PayLoad},
-	   State0 = #state{ctrl_stream = CtrlStreamState}) ->
+handle_event(cast, {keep_alive, DataPath, WTPDataChannelAddress, Header, PayLoad},
+	     data_check, Data0 = #data{ctrl_stream = CtrlStreamData}) ->
     lager:md([{data_channel_address, WTPDataChannelAddress}]),
-    ?log_capwap_keep_alive(peer_log_str(WTPDataChannelAddress, State0), PayLoad, Header),
+    ?log_capwap_keep_alive(peer_log_str(WTPDataChannelAddress, Data0), PayLoad, Header),
 
     capwap_wtp_reg:register(WTPDataChannelAddress),
-    MTU = capwap_stream:get_mtu(CtrlStreamState),
+    MTU = capwap_stream:get_mtu(CtrlStreamData),
     capwap_dp:add_wtp(WTPDataChannelAddress, MTU),
-    State = State0#state{data_channel_address = WTPDataChannelAddress, data_path = DataPath},
+    Data = Data0#data{data_channel_address = WTPDataChannelAddress, data_path = DataPath},
 
-    gen_statem:cast(self(), configure),
+    sendto(Header, PayLoad, Data),
+    {next_state, run, Data, [{next_event, cast, configure}]};
 
-    sendto(Header, PayLoad, State),
-    next_state(run, State);
+%% Run
 
-data_check(cast, Event, State) when ?IS_RUN_CONTROL_EVENT(Event) ->
-    lager:debug("in DATA_CHECK got control event: ~p", [Event]),
-    next_state(data_check, State);
-
-data_check(cast, Event, State) ->
-    handle_event(Event, data_check, State);
-
-data_check(info, Info, State) ->
-    handle_info(Info, data_check, State).
-
-run(enter, _OldStateName, _State) ->
-    keep_state_and_data;
-
-run({call, From}, {new_station, BSS, SA}, State0) ->
+handle_event({call, From}, {new_station, BSS, SA}, run, Data0) ->
     lager:info("in RUN got new_station: ~p", [SA]),
 
     %% TODO: rework session context to handle this again
     %% {ok, MaxStations} = ergw_aaa_session:get(Session, 'CAPWAP-Max-WIFI-Clients'),
 
-    Wlan = get_wlan_by_bss(BSS, State0),
-    {Reply, State} = internal_new_station(Wlan, SA, BSS, State0),
-    reply(From, Reply, run, State);
+    Wlan = get_wlan_by_bss(BSS, Data0),
+    {Reply, Data} = internal_new_station(Wlan, SA, BSS, Data0),
+    {keep_state, Data, [{reply, From, Reply}]};
 
-run({call, From}, Event = {add_station, BSS, MAC, StaCaps, CryptoState}, State0) ->
+handle_event({call, From}, Event = {add_station, BSS, MAC, StaCaps, CryptoData}, run, Data0) ->
     lager:warning("in RUN got expexted: ~p", [Event]),
-    Wlan = get_wlan_by_bss(BSS, State0),
+    Wlan = get_wlan_by_bss(BSS, Data0),
     lager:warning("WLAN: ~p", [Wlan]),
-    State = internal_add_station(Wlan, MAC, StaCaps, CryptoState, response_fsm_reply(From), State0),
-    next_state(run, State);
+    Data = internal_add_station(Wlan, MAC, StaCaps, CryptoData,
+				response_fsm_reply(From), Data0),
+    {keep_state, Data};
 
-run({call, From}, {get_station_config, BSS}, State) ->
+handle_event({call, From}, {get_station_config, BSS}, run, Data) ->
     Reply =
-	case get_wlan_by_bss(BSS, State) of
+	case get_wlan_by_bss(BSS, Data) of
 	    Wlan = #wlan{state = running} ->
-		get_station_cfg(Wlan, BSS, State);
+		get_station_cfg(Wlan, BSS, Data);
 	    _ ->
 		{error, invalid}
 	end,
-    reply(From, Reply, run, State);
+    {keep_state, Data, [{reply, From, Reply}]};
 
-run({call, From}, Call, State) ->
-    handle_call(Call, From, run, State);
-
-run(cast, {keep_alive, _DataPath, WTPDataChannelAddress, Header, PayLoad}, State) ->
-    ?log_capwap_keep_alive(peer_log_str(WTPDataChannelAddress, State), PayLoad, Header),
-    sendto(Header, PayLoad, State),
-    next_state(run, State);
-
-run(info, echo_timeout, State) ->
+handle_event(info, echo_timeout, run, Data) ->
     lager:info("Echo Timeout in Run"),
-    {stop, normal, State};
+    {stop, normal, Data};
 
-run(cast, {echo_request, Seq, Elements,
-	   #capwap_header{
-	      radio_id = RadioId, wb_id = WBID, flags = Flags}},
-    State) ->
+handle_event(cast, {echo_request, Seq, Elements,
+		    #capwap_header{
+		       radio_id = RadioId, wb_id = WBID, flags = Flags}},
+	     run, Data) ->
     lager:debug("EchoReq in Run got: ~p", [{Seq, Elements}]),
     Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
-    State1 = send_response(Header, echo_response, Seq, Elements, State),
-    next_state(run, State1);
+    Data1 = send_response(Header, echo_response, Seq, Elements, Data),
+    {keep_state, Data1};
 
-run(cast, {ieee_802_11_wlan_configuration_response, _Seq, Elements, _Header},
-    #state{data_channel_address = WTPDataChannelAddress, id = CommonName,
-	   config = Config, wlans = Wlans} = State0) ->
-    State =
+handle_event(cast, {keep_alive, _DataPath, WTPDataChannelAddress, Header, PayLoad},
+	     run, Data) ->
+    ?log_capwap_keep_alive(peer_log_str(WTPDataChannelAddress, Data), PayLoad, Header),
+    sendto(Header, PayLoad, Data),
+    keep_state_and_data;
+
+handle_event(cast, {ieee_802_11_wlan_configuration_response, _Seq, Elements, _Header},
+	     run, #data{data_channel_address = WTPDataChannelAddress, id = CommonName,
+		       config = Config, wlans = Wlans} = Data0) ->
+    Data =
 	case proplists:get_value(result_code, Elements) of
 	    0 ->
 		lager:debug("IEEE 802.11 WLAN Configuration ok for ~p", [CommonName]),
 
 		BSSIdIEs = get_ies(ieee_802_11_assigned_wtp_bssid, Elements),
-		State1 = State0#state{config = Config#wtp{broken_add_wlan_workaround = (BSSIdIEs =:= [])}},
+		Data1 = Data0#data{config = Config#wtp{broken_add_wlan_workaround = (BSSIdIEs =:= [])}},
 
 		if (BSSIdIEs == [] andalso length(Wlans) /= 1) ->
 			%% no BSS Id and multiple Wlans, this can not work, error out
@@ -631,17 +562,16 @@ run(cast, {ieee_802_11_wlan_configuration_response, _Seq, Elements, _Header},
 										 RadioId, WlanId, BSS, VlanId),
 							      W#wlan{bss = BSS}
 						      end, S0)
-			    end, State1, BSSIdIEs);
+			    end, Data1, BSSIdIEs);
 
 	    Code ->
 		lager:warning("IEEE 802.11 WLAN Configuration failed for ~p with ~w", [CommonName, Code]),
 		%% TODO: handle Update failures
-		State0
+		Data0
 	end,
-    next_state(run, State);
+    {keep_state, Data};
 
-run(cast, {station_configuration_response, _Seq,
-	   Elements, _Header}, State) ->
+handle_event(cast, {station_configuration_response, _Seq, Elements, _Header}, run, _Data) ->
     %% TODO: timeout and Error handling, e.g. shut the station process down when the Add Station failed
     case proplists:get_value(result_code, Elements) of
 	0 ->
@@ -651,178 +581,182 @@ run(cast, {station_configuration_response, _Seq,
 	    lager:warning("Station Configuration failed with ~w", [Code]),
 	    ok
     end,
-    next_state(run, State);
+    keep_state_and_data;
 
-run(cast, {configuration_update_response, _Seq,
-	   Elements, _Header}, State) ->
+handle_event(cast, {configuration_update_response, _Seq, Elements, _Header}, run, _Data) ->
     %% TODO: Error handling
     case proplists:get_value(result_code, Elements) of
-    0 ->
-        lager:debug("Configuration Update ok"),
-        ok;
-    Code ->
-        lager:warning("Configuration Update failed with ~w", [Code]),
-        ok
+	0 ->
+	    lager:debug("Configuration Update ok"),
+	    ok;
+	Code ->
+	    lager:warning("Configuration Update failed with ~w", [Code]),
+	    ok
     end,
-    next_state(run, State);
+    keep_state_and_data;
 
-run(cast, {wtp_event_request, Seq, Elements, RequestHeader =
-	       #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags}}, State) ->
+handle_event(cast, {wtp_event_request, Seq, Elements, RequestHeader =
+			#capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags}},
+	     run, Data) ->
     ResponseHeader = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
-    State1 = send_response(ResponseHeader, wtp_event_response, Seq, [], State),
-    State2 = handle_wtp_event(Elements, RequestHeader, State1),
-    next_state(run, State2);
+    Data1 = send_response(ResponseHeader, wtp_event_response, Seq, [], Data),
+    Data2 = handle_wtp_event(Elements, RequestHeader, Data1),
+    {keep_state, Data2};
 
-run(cast, configure, State = #state{id = WtpId, config = #wtp{radios = Radios},
-				    session = Session}) ->
+handle_event(cast, configure, run,
+	     Data = #data{id = WtpId, config = #wtp{radios = Radios},
+			  session = Session}) ->
     lager:debug("configure WTP: ~p, Session: ~p, Radios: ~p", [WtpId, Session, Radios]),
 
-    State1 =
-	lists:foldl(fun(#wtp_radio{wlans = Wlans} = Radio, RState) ->
-			    lists:foldl(internal_add_wlan(Radio, _, undefined, _), RState, Wlans)
-		    end, State, Radios),
-    next_state(run, State1);
+    Data1 =
+	lists:foldl(fun(#wtp_radio{wlans = Wlans} = Radio, RData) ->
+			    lists:foldl(internal_add_wlan(Radio, _, undefined, _), RData, Wlans)
+		    end, Data, Radios),
+    {keep_state, Data1};
 
-run(cast, {del_station, BSS, MAC}, State0) ->
-    Wlan = get_wlan_by_bss(BSS, State0),
-    State = internal_del_station(Wlan, MAC, State0),
-    next_state(run, State);
+handle_event(cast, {del_station, BSS, MAC}, run, Data0) ->
+    Wlan = get_wlan_by_bss(BSS, Data0),
+    Data = internal_del_station(Wlan, MAC, Data0),
+    {keep_state, Data};
 
-run(cast, {send_80211, BSS, Data}, State) ->
-    Wlan = get_wlan_by_bss(BSS, State),
-    internal_send_80211_station(Wlan, Data, State),
-    next_state(run, State);
+handle_event(cast, {send_80211, BSS, PayLoad}, run, Data) ->
+    Wlan = get_wlan_by_bss(BSS, Data),
+    internal_send_80211_station(Wlan, PayLoad, Data),
+    keep_state_and_data;
 
-run(cast, {firmware_download, DownloadLink, Sha}, State) ->
+handle_event(cast, {firmware_download, DownloadLink, Sha}, run, Data) ->
     Flags = [{frame,'802.3'}],
     ReqElements = [#firmware_download_information{
-        sha256_image_hash = Sha,
-        download_uri = DownloadLink}],
+		      sha256_image_hash = Sha,
+		      download_uri = DownloadLink}],
     Header1 = #capwap_header{radio_id = 0, wb_id = 1, flags = Flags},
-    State1 = send_request(Header1, configuration_update_request, ReqElements, State),
-    next_state(run, State1);
+    Data1 = send_request(Header1, configuration_update_request, ReqElements, Data),
+    {keep_state, Data1};
 
-run(info, Event = {group_rekey, WlanIdent}, State0) ->
+handle_event(info, Event = {group_rekey, WlanIdent}, run, Data0) ->
     lager:warning("in RUN got GTK rekey: ~p", [Event]),
-    Wlan = get_wlan(WlanIdent, State0),
-    State = start_gtk_rekey(WlanIdent, Wlan, State0),
-    next_state(run, State);
+    Wlan = get_wlan(WlanIdent, Data0),
+    Data = start_gtk_rekey(WlanIdent, Wlan, Data0),
+    {keep_state, Data};
 
-run(cast, Event = {gtk_rekey_done, WlanIdent}, State0) ->
+handle_event(cast, Event = {gtk_rekey_done, WlanIdent}, run, Data0) ->
     lager:warning("in RUN got GTK rekey DONE: ~p", [Event]),
-    Wlan = get_wlan(WlanIdent, State0),
-    State = finish_gtk_rekey(WlanIdent, Wlan, State0),
-    next_state(run, State);
+    Wlan = get_wlan(WlanIdent, Data0),
+    Data = finish_gtk_rekey(WlanIdent, Wlan, Data0),
+    {keep_state, Data};
 
-run(cast, Event, State) ->
-    handle_event(Event, run, State);
+handle_event(enter, _OldState, _State, _Data) ->
+    keep_state_and_data;
 
-run(info, Info, State) ->
-    handle_info(Info, run, State).
+handle_event(cast, {keep_alive, _DataPath, _WTPDataChannelAddress, Header, PayLoad},
+	     State, _Data) ->
+    lager:warning("in ~p got unexpected keep_alive: ~p", [State, {Header, PayLoad}]),
+    keep_state_and_data;
 
-handle_event(station_detaching, StateName, State=#state{id = WtpId, station_count = SC}) ->
+handle_event(cast, Event, State, _Data)
+  when ?IS_RUN_CONTROL_EVENT(Event) ->
+    lager:debug("in ~p got control event: ~p", [State, Event]),
+    keep_state_and_data;
+
+handle_event(cast, station_detaching, _State, Data=#data{id = WtpId, station_count = SC}) ->
     if SC == 0 ->
-            lager:error("Station counter and stations got out of sync", []),
-            next_state(StateName, State);
+	    lager:error("Station counter and stations got out of sync", []),
+	    keep_state_and_data;
        true ->
 	    exometer:update([capwap, ac, station_count], -1),
 	    exometer:update([capwap, wtp, WtpId, station_count], SC - 1),
-            next_state(StateName, State#state{station_count = SC - 1})
+	    {keep_state, Data#data{station_count = SC - 1}}
     end;
 
-handle_event({Msg, Seq, Elements, Header}, StateName, State) ->
+handle_event(cast, {Msg, Seq, Elements, Header}, State, _Data) ->
     lager:warning("in ~s got unexpexted: ~p",
-		  [StateName, {Msg, Seq, Elements, Header}]),
-    next_state(StateName, State).
+		  [State, {Msg, Seq, Elements, Header}]),
+    keep_state_and_data;
 
-handle_call(get_state, From, StateName, State) ->
-    reply(From, {ok, State}, StateName, State);
+handle_event({call, From}, get_state, _State, Data) ->
+    {keep_state_and_data, [{reply, From, {ok, Data}}]};
 
-handle_call({set_ssid, {RadioId, WlanId} = WlanIdent, SSID, SuppressSSID},
-		  From, run, #state{config = Config0} = State0) ->
+handle_event({call, From}, {set_ssid, {RadioId, WlanId} = WlanIdent, SSID, SuppressSSID},
+	     run, #data{config = Config0} = Data0) ->
     Settings = [{ssid, SSID}, {suppress_ssid, SuppressSSID}],
     Config = capwap_config:update_wlan_config(RadioId, WlanId, Settings, Config0),
-    State1 = State0#state{config = Config},
+    Data1 = Data0#data{config = Config},
 
-    AddResponseFun = fun(Code, _, DState) ->
+    AddResponseFun = fun(Code, _, DData) ->
 			     lager:debug("AddResponseFun: ~w", [Code]),
 			     case Code of
 				 0 -> gen_statem:reply(From, ok);
 				 _ -> gen_statem:reply(From, {error, Code})
 			     end,
-			     DState
+			     DData
 		     end,
 
-    State =
-	case get_wlan(WlanIdent, State1) of
+    Data =
+	case get_wlan(WlanIdent, Data1) of
 	    false ->
-		internal_add_wlan(RadioId, WlanId, AddResponseFun, State1);
+		internal_add_wlan(RadioId, WlanId, AddResponseFun, Data1);
 
 	    #wlan{} ->
-		DelResponseFun = fun(0, _, DState) ->
+		DelResponseFun = fun(0, _, DData) ->
 					 lager:debug("DelResponseFun: success"),
-					 internal_add_wlan(RadioId, WlanId, AddResponseFun, DState);
-				    (Code, Arg, DState) ->
+					 internal_add_wlan(RadioId, WlanId, AddResponseFun, DData);
+				    (Code, Arg, DData) ->
 					 lager:debug("DelResponseFun: ~w", [Code]),
-					 AddResponseFun(Code, Arg, DState)
+					 AddResponseFun(Code, Arg, DData)
 				 end,
-		internal_del_wlan(WlanIdent, DelResponseFun, State1)
+		internal_del_wlan(WlanIdent, DelResponseFun, Data1)
 	end,
-    next_state(run, State);
+    {keep_state, Data};
 
-handle_call({stop_radio, RadioId}, From, run, State) ->
-    State1 =
+handle_event({call, From}, {stop_radio, RadioId}, run, Data) ->
+    Data1 =
 	lists:foldl(fun(WlanIdent = {RId, _}, S) when RId == RadioId->
 			    internal_del_wlan(WlanIdent, undefined, S);
 		       (_, S) ->
 			    S
-		    end, State, State#state.wlans),
-    reply(From, ok, run, State1);
+		    end, Data, Data#data.wlans),
+    {keep_state, Data1, [{reply, From, ok}]};
 
-handle_call({set_ssid, _SSID, _RadioId}, From, StateName, State)
-  when StateName =/= run ->
-    reply(From, {error, not_in_run_state}, StateName, State);
+handle_event({call, From}, {set_ssid, _SSID, _RadioId}, State, Data)
+  when State =/= run ->
+    {keep_state, Data, [{reply, From, {error, not_in_run_state}}]};
 
-handle_call(get_data_channel_address, From, run, State) ->
-    Reply = {ok, State#state.data_channel_address},
-    reply(From, Reply, run, State);
-handle_call(get_data_channel_address, From, StateName, State) ->
+handle_event({call, From}, get_data_channel_address, run, Data) ->
+    Reply = {ok, Data#data.data_channel_address},
+    {keep_state, Data, [{reply, From, Reply}]};
+handle_event({call, From}, get_data_channel_address, _State, Data) ->
     Reply = {error, not_connected},
-    reply(From, Reply, StateName, State);
-handle_call({take_over, NewWtp}, From, _StateName, State) ->
+    {keep_state, Data, [{reply, From, Reply}]};
+handle_event({call, From}, {take_over, NewWtp}, _State, Data) ->
     %% TODO: move Stations to new wtp
     lager:debug("take_over: old: ~p, new: ~p", [self(), NewWtp]),
     capwap_wtp_reg:unregister(),
-    Reply = ok,
-    {stop_and_reply, normal, {reply, From, Reply}, State};
-handle_call(_Event, From, StateName, State) ->
-    Reply = ok,
-    reply(From, Reply, StateName, State).
+    {stop_and_reply, normal, {reply, From, ok}, Data};
+handle_event({call, From}, _Event, _State, Data) ->
+    {keep_state, Data, [{reply, From, ok}]};
 
--define(SEQ_LE(S1, S2), (S1 < S2 andalso (S2-S1) < 128) orelse (S1>S2 andalso (S1-S2) > 128)).
+handle_event(info, {capwap_udp, Socket, Packet}, State, Data = #data{socket = {_, Socket}}) ->
+    lager:debug("in state ~p got UDP: ~p", [State, Packet]),
+    handle_capwap_packet(Packet, Data);
 
-handle_info({capwap_udp, Socket, Packet}, StateName, State = #state{socket = {_, Socket}}) ->
-    lager:debug("in State ~p got UDP: ~p", [StateName, Packet]),
-    handle_capwap_packet(Packet, StateName, State);
+handle_event(info, {ssl, Socket, Packet}, State, Data = #data{socket = {_, Socket}}) ->
+    lager:debug("in state ~p got DTLS: ~p", [State, Packet]),
+    handle_capwap_packet(Packet, Data);
 
-handle_info({ssl, Socket, Packet}, StateName, State = #state{socket = {_, Socket}}) ->
-    lager:debug("in State ~p got DTLS: ~p", [StateName, Packet]),
-    handle_capwap_packet(Packet, StateName, State);
+handle_event(info, {timeout, _, retransmit}, State, Data) ->
+    resend_request(State, Data);
+handle_event(info, {'EXIT', _Pid, normal}, _State, _Data) ->
+    keep_state_and_data;
+handle_event(info, Info, State, _Data) ->
+    lager:warning("in state ~p unexpected Info: ~p", [State, Info]),
+    keep_state_and_data.
 
-handle_info({timeout, _, retransmit}, StateName, State) ->
-    resend_request(StateName, State);
-handle_info({'EXIT', _Pid, normal}, StateName, State) ->
-    next_state(StateName, State);
-handle_info(Info, StateName, State) ->
-    lager:warning("in State ~p unexpected Info: ~p", [StateName, Info]),
-    next_state(StateName, State).
-
-terminate(Reason, StateName,
-	  State = #state{socket = Socket, session = Session,
+terminate(Reason, State,
+	  Data = #data{socket = Socket, session = Session,
 			 id = CommonName, station_count = StationCount}) ->
     error_logger:info_msg("AC session terminating in state ~p with state ~p with reason ~p~n",
-			  [StateName, State, Reason]),
-    AcctValues = stop_wtp(StateName, State),
+			  [State, Data, Reason]),
+    AcctValues = stop_wtp(State, Data),
     if Session /= undefined ->
 	    ergw_aaa_session:stop(Session, to_session(AcctValues)),
 
@@ -837,8 +771,8 @@ terminate(Reason, StateName,
     socket_close(Socket),
     ok.
 
-code_change(_OldVsn, StateName, State, _Extra) ->
-    {ok, StateName, State}.
+code_change(_OldVsn, State, Data, _Extra) ->
+    {ok, State, Data}.
 
 %%%===================================================================
 %%% Internal functions
@@ -867,25 +801,13 @@ format_peer({IP, Port}) ->
 format_peer(IP) ->
     io_lib:format("~p", [IP]).
 
-peer_log_str(State = #state{ctrl_channel_address = WTPControlChannelAddress}) ->
-    peer_log_str(WTPControlChannelAddress, State).
+peer_log_str(Data = #data{ctrl_channel_address = WTPControlChannelAddress}) ->
+    peer_log_str(WTPControlChannelAddress, Data).
 
-peer_log_str(Address, #state{id = undefined}) ->
+peer_log_str(Address, #data{id = undefined}) ->
     io_lib:format("~p", [Address]);
-peer_log_str(Address, #state{id = Id}) ->
+peer_log_str(Address, #data{id = Id}) ->
     io_lib:format("~s[~s]", [Id, format_peer(Address)]).
-
-next_state(NextStateName, State)
-  when NextStateName == idle; NextStateName == run ->
-    {next_state, NextStateName, State};
-next_state(NextStateName, State) ->
-    {next_state, NextStateName, State, ?IDLE_TIMEOUT}.
-
-reply(From, Reply, NextStateName, State)
-  when NextStateName == idle; NextStateName == run  ->
-    {next_state, NextStateName, State, [{reply, From, Reply}]};
-reply(From, Reply, NextStateName, State) ->
-    {next_state, NextStateName, State, [{reply, From, Reply}, ?IDLE_TIMEOUT]}.
 
 %% non-DTLS join-reqeust, check app config
 handle_plain_join(Peer, Seq, _Elements, #capwap_header{
@@ -939,70 +861,72 @@ handle_capwap_data(_DataPath, WTPDataChannelAddress,
 	    end
     end.
 
-handle_capwap_packet(Packet, StateName, State = #state{ctrl_channel_address = WTPControlChannelAddress,
-						       ctrl_stream = CtrlStreamState0}) ->
+handle_capwap_packet(Packet, Data = #data{ctrl_channel_address = WTPControlChannelAddress,
+					  ctrl_stream = CtrlStreamData0}) ->
     capwap_trace:trace(WTPControlChannelAddress, ?TRACE_LOCAL_CONTROL, Packet),
-    case capwap_stream:recv(control, Packet, CtrlStreamState0) of
-	{ok, {Header, Msg}, CtrlStreamState1} ->
-	    handle_capwap_message(Header, Msg, StateName, State#state{ctrl_stream = CtrlStreamState1});
+    case capwap_stream:recv(control, Packet, CtrlStreamData0) of
+	{ok, {Header, Msg}, CtrlStreamData1} ->
+	    handle_capwap_message(Header, Msg, Data#data{ctrl_stream = CtrlStreamData1});
 
-	{ok, more, CtrlStreamState1} ->
-	    next_state(StateName, State#state{ctrl_stream = CtrlStreamState1});
+	{ok, more, CtrlStreamData1} ->
+	    {keep_state, Data#data{ctrl_stream = CtrlStreamData1}};
 
 	{error, Error} ->
 	    lager:error([{capwap_packet, decode}, {error, Error}], "Decode error ~p", [Error]),
-	    next_state(StateName, State)
+	    keep_state_and_data
     end.
 
-handle_capwap_message(Header, {Msg, 1, Seq, Elements}, StateName,
-		      State0 = #state{last_response = LastResponse}) ->
+-define(SEQ_LE(S1, S2), (S1 < S2 andalso (S2-S1) < 128) orelse (S1>S2 andalso (S1-S2) > 128)).
+
+handle_capwap_message(Header, {Msg, 1, Seq, Elements},
+		      Data0 = #data{last_response = LastResponse}) ->
     %% Request
-    ?log_capwap_control(peer_log_str(State0), Msg, Seq, Elements, Header),
-    State = reset_echo_request_timer(State0),
+    ?log_capwap_control(peer_log_str(Data0), Msg, Seq, Elements, Header),
+    Data = reset_echo_request_timer(Data0),
     case LastResponse of
 	{Seq, _} ->
-	    NewState = resend_response(State),
-	    next_state(StateName, NewState);
+	    NewData = resend_response(Data),
+	    {keep_state, NewData};
 	{LastSeq, _} when ?SEQ_LE(Seq, LastSeq) ->
 	    %% old request, silently ignore
-	    next_state(StateName, State);
+	    {keep_state, Data};
 	_ ->
-	    {keep_state, State, {next_event, cast, {Msg, Seq, Elements, Header}}}
+	    {keep_state, Data, {next_event, cast, {Msg, Seq, Elements, Header}}}
     end;
 
-handle_capwap_message(Header, {Msg, 0, Seq, Elements}, StateName,
-		      State = #state{request_queue = Queue}) ->
+handle_capwap_message(Header, {Msg, 0, Seq, Elements},
+		      Data = #data{request_queue = Queue}) ->
     %% Response
-    ?log_capwap_control(peer_log_str(State), Msg, Seq, Elements, Header),
+    ?log_capwap_control(peer_log_str(Data), Msg, Seq, Elements, Header),
     case queue:peek(Queue) of
 	{value, {Seq, _, NotifyFun}} ->
-	    State1 = ack_request(State),
-	    State2 = response_notify(NotifyFun, proplists:get_value(result_code, Elements),
-				     {Msg, Elements, Header}, State1),
-	    {keep_state, State2, {next_event, cast, {Msg, Seq, Elements, Header}}};
+	    Data1 = ack_request(Data),
+	    Data2 = response_notify(NotifyFun, proplists:get_value(result_code, Elements),
+				     {Msg, Elements, Header}, Data1),
+	    {keep_state, Data2, {next_event, cast, {Msg, Seq, Elements, Header}}};
 	_ ->
 	    %% invalid Seq, out-of-order packet, silently ignore,
-	    next_state(StateName, State)
+	    keep_state_and_data
     end.
 
 maybe_takeover(CommonName) ->
     case capwap_wtp_reg:lookup(CommonName) of
-        {ok, OldPid} ->
-            lager:info("take_over: ~p", [OldPid]),
-            capwap_ac:take_over(OldPid);
-        _ ->
-            ok
+	{ok, OldPid} ->
+	    lager:info("take_over: ~p", [OldPid]),
+	    capwap_ac:take_over(OldPid);
+	_ ->
+	    ok
     end.
 
-handle_wtp_event(Elements, Header, State = #state{session = Session}) ->
+handle_wtp_event(Elements, Header, Data = #data{session = Session}) ->
     SessionOptsList = lists:foldl(fun(Ev, SOptsList) -> handle_wtp_stats_event(Ev, Header, SOptsList) end, [], Elements),
     if length(SessionOptsList) /= 0 ->
 	    ergw_aaa_session:interim_batch(Session, SessionOptsList);
        true -> ok
     end,
-    lists:foldl(fun(Ev, State0) -> handle_wtp_action_event(Ev, Header, State0) end, State, Elements).
+    lists:foldl(fun(Ev, Data0) -> handle_wtp_action_event(Ev, Header, Data0) end, Data, Elements).
 
-handle_wtp_action_event(#delete_station{radio_id = RadioId, mac = MAC}, _Header, State) ->
+handle_wtp_action_event(#delete_station{radio_id = RadioId, mac = MAC}, _Header, Data) ->
     case capwap_station_reg:lookup(self(), RadioId, MAC) of
 	{ok, Station} ->
 	    ieee80211_station:delete(Station);
@@ -1010,39 +934,39 @@ handle_wtp_action_event(#delete_station{radio_id = RadioId, mac = MAC}, _Header,
 	    lager:debug("station ~p not found: ~p", [MAC, Other]),
 	    ok
     end,
-    State;
-handle_wtp_action_event(_Action, _Header, State) ->
-    State.
+    Data;
+handle_wtp_action_event(_Action, _Header, Data) ->
+    Data.
 
 handle_wtp_stats_event(#gps_last_acquired_position{timestamp = _EventTimestamp,
-                                                   wwan_id = _WwanId,
-                                                   gpsatc = GpsString},
-                       _Header, SOptsList) ->
+						   wwan_id = _WwanId,
+						   gpsatc = GpsString},
+		       _Header, SOptsList) ->
     case [string:strip(V) || V <- string:tokens(binary_to_list(GpsString), ",:")] of
-        [_, GPSTime, Latitude, Longitude, Hdop, Altitude, _Fix, _Cog, _Spkm, _Spkn, GPSDate, _Nsat] ->
+	[_, GPSTime, Latitude, Longitude, Hdop, Altitude, _Fix, _Cog, _Spkm, _Spkn, GPSDate, _Nsat] ->
 	    GPSTimestamp = gpsutc_to_iso(GPSTime, GPSDate),
-            Opts = [{'CAPWAP-GPS-Timestamp', GPSTimestamp},
-                    {'CAPWAP-GPS-Latitude', Latitude},
-                    {'CAPWAP-GPS-Longitude', Longitude},
-                    {'CAPWAP-GPS-Altitude', Altitude},
-                    {'CAPWAP-GPS-Hdop', Hdop}
-                   ],
-            lager:debug("WTP Event Opts: ~p", [Opts]),
-            [to_session(Opts) | SOptsList];
-        _ ->
-            lager:error("Unable to parse GPSATC string from WTP! String: ~p", [GpsString]),
-            SOptsList
+	    Opts = [{'CAPWAP-GPS-Timestamp', GPSTimestamp},
+		    {'CAPWAP-GPS-Latitude', Latitude},
+		    {'CAPWAP-GPS-Longitude', Longitude},
+		    {'CAPWAP-GPS-Altitude', Altitude},
+		    {'CAPWAP-GPS-Hdop', Hdop}
+		   ],
+	    lager:debug("WTP Event Opts: ~p", [Opts]),
+	    [to_session(Opts) | SOptsList];
+	_ ->
+	    lager:error("Unable to parse GPSATC string from WTP! String: ~p", [GpsString]),
+	    SOptsList
     end;
 
 handle_wtp_stats_event(#tp_wtp_wwan_statistics_0_9{timestamp = Timestamp, wwan_id = WWanId, rat = RAT,
 					     rssi = RSSi, lac = LAC, cell_id = CellId},
 		 _Header, SOptsList) ->
     Opts = [{'CAPWAP-Timestamp', Timestamp},
-            {'CAPWAP-WWAN-Id',   WWanId},
-            {'CAPWAP-WWAN-RAT',       RAT},
-            {'CAPWAP-WWAN-RSSi',      RSSi},
-            {'CAPWAP-WWAN-LAC',       LAC},
-            {'CAPWAP-WWAN-Cell-Id',   CellId}],
+	    {'CAPWAP-WWAN-Id',   WWanId},
+	    {'CAPWAP-WWAN-RAT',       RAT},
+	    {'CAPWAP-WWAN-RSSi',      RSSi},
+	    {'CAPWAP-WWAN-LAC',       LAC},
+	    {'CAPWAP-WWAN-Cell-Id',   CellId}],
     lager:debug("WTP Event Opts: ~p", [Opts]),
     [to_session(Opts) | SOptsList];
 handle_wtp_stats_event(#tp_wtp_wwan_statistics{timestamp = Timestamp, wwan_id = WWanId, rat = RAT,
@@ -1050,15 +974,15 @@ handle_wtp_stats_event(#tp_wtp_wwan_statistics{timestamp = Timestamp, wwan_id = 
 					 mcc = MCC, mnc = MNC, cell_id = CellId},
 		 _Header, SOptsList) ->
     Opts = [{'CAPWAP-Timestamp', Timestamp},
-            {'CAPWAP-WWAN-Id',   WWanId},
-            {'CAPWAP-WWAN-RAT',       RAT},
-            {'CAPWAP-WWAN-RSSi',      RSSi},
-            {'CAPWAP-WWAN-CREG',      CREG},
-            {'CAPWAP-WWAN-LAC',       LAC},
-            {'CAPWAP-WWAN-Latency',   Latency},
-            {'CAPWAP-WWAN-MCC',       MCC},
-            {'CAPWAP-WWAN-MNC',       MNC},
-            {'CAPWAP-WWAN-Cell-Id',   CellId}],
+	    {'CAPWAP-WWAN-Id',   WWanId},
+	    {'CAPWAP-WWAN-RAT',       RAT},
+	    {'CAPWAP-WWAN-RSSi',      RSSi},
+	    {'CAPWAP-WWAN-CREG',      CREG},
+	    {'CAPWAP-WWAN-LAC',       LAC},
+	    {'CAPWAP-WWAN-Latency',   Latency},
+	    {'CAPWAP-WWAN-MCC',       MCC},
+	    {'CAPWAP-WWAN-MNC',       MNC},
+	    {'CAPWAP-WWAN-Cell-Id',   CellId}],
     lager:debug("WTP Event Opts: ~p", [Opts]),
     [to_session(Opts) | SOptsList];
 handle_wtp_stats_event(_Event, _Header, SOptsList) ->
@@ -1375,7 +1299,7 @@ radio_configuration(Radio, IEs) ->
 		ieee_802_11_rate_set],
     lists:foldl(radio_cfg(_, Radio, _), IEs, Settings).
 
-reset_echo_request_timer(State = #state{echo_request_timer = Timer,
+reset_echo_request_timer(Data = #data{echo_request_timer = Timer,
 					echo_request_timeout = Timeout}) ->
     if is_reference(Timer) ->
 	    cancel_timer(Timer);
@@ -1387,79 +1311,79 @@ reset_echo_request_timer(State = #state{echo_request_timer = Timer,
 	      true ->
 		   undefined
 	   end,
-    State#state{echo_request_timer = TRef}.
+    Data#data{echo_request_timer = TRef}.
 
 send_info_after(Time, Event) ->
     erlang:start_timer(Time, self(), Event).
 
-bump_seqno(State = #state{seqno = SeqNo}) ->
-    State#state{seqno = (SeqNo + 1) rem 256}.
+bump_seqno(Data = #data{seqno = SeqNo}) ->
+    Data#data{seqno = (SeqNo + 1) rem 256}.
 
-send_response(Header, MsgType, Seq, MsgElems, State) ->
-    ?log_capwap_control(peer_log_str(State), MsgType, Seq, MsgElems, Header),
+send_response(Header, MsgType, Seq, MsgElems, Data) ->
+    ?log_capwap_control(peer_log_str(Data), MsgType, Seq, MsgElems, Header),
     Msg = {Header, {MsgType, Seq, MsgElems}},
-    stream_send(Msg, State#state{last_response = {Seq, Msg}}).
+    stream_send(Msg, Data#data{last_response = {Seq, Msg}}).
 
-resend_response(State = #state{last_response = {SeqNo, Msg}}) ->
+resend_response(Data = #data{last_response = {SeqNo, Msg}}) ->
     lager:warning("resend capwap response ~w", [SeqNo]),
-    stream_send(Msg, State).
+    stream_send(Msg, Data).
 
-send_request(Header, MsgType, ReqElements, State) ->
-    send_request(Header, MsgType, ReqElements, undefined, State).
+send_request(Header, MsgType, ReqElements, Data) ->
+    send_request(Header, MsgType, ReqElements, undefined, Data).
 
 send_request(Header, MsgType, ReqElements, NotfiyFun,
-	     State0 = #state{request_queue = Queue, seqno = SeqNo}) ->
-    ?log_capwap_control(peer_log_str(State0), MsgType, SeqNo, ReqElements, Header),
+	     Data0 = #data{request_queue = Queue, seqno = SeqNo}) ->
+    ?log_capwap_control(peer_log_str(Data0), MsgType, SeqNo, ReqElements, Header),
     Msg = {Header, {MsgType, SeqNo, ReqElements}},
-    State1 = queue_request(State0, {SeqNo, Msg, NotfiyFun}),
-    State2 = bump_seqno(State1),
+    Data1 = queue_request(Data0, {SeqNo, Msg, NotfiyFun}),
+    Data2 = bump_seqno(Data1),
     case queue:is_empty(Queue) of
-        true ->
-            State3 = stream_send(Msg, State2),
-            init_retransmit(State3, ?MaxRetransmit);
-        false ->
-            State2
+	true ->
+	    Data3 = stream_send(Msg, Data2),
+	    init_retransmit(Data3, ?MaxRetransmit);
+	false ->
+	    Data2
     end.
 
-resend_request(StateName, State = #state{retransmit_counter = 0}) ->
-    lager:debug("Final Timeout in ~w, STOPPING", [StateName]),
-    {stop, normal, State};
-resend_request(StateName,
-	       State0 = #state{request_queue = Queue,
+resend_request(State, Data = #data{retransmit_counter = 0}) ->
+    lager:debug("Final Timeout in ~w, STOPPING", [State]),
+    {stop, normal, Data};
+resend_request(_State,
+	       Data0 = #data{request_queue = Queue,
 			       retransmit_counter = RetransmitCounter}) ->
     lager:warning("resend capwap request", []),
     {value, {_, Msg, _}} = queue:peek(Queue),
-    State1 = stream_send(Msg, State0),
-    State2 = init_retransmit(State1, RetransmitCounter - 1),
-    next_state(StateName, State2).
+    Data1 = stream_send(Msg, Data0),
+    Data2 = init_retransmit(Data1, RetransmitCounter - 1),
+    {keep_state, Data2}.
 
-init_retransmit(State, Counter) ->
-    State#state{retransmit_timer = send_info_after(?RetransmitInterval, retransmit),
-                retransmit_counter = Counter}.
+init_retransmit(Data, Counter) ->
+    Data#data{retransmit_timer = send_info_after(?RetransmitInterval, retransmit),
+	      retransmit_counter = Counter}.
 
 %% Stop Timer, clear LastRequest
-ack_request(State0) ->
-    State1 = cancel_retransmit(State0),
-    case dequeue_request_next(State1) of
-        {{value, {_, Msg, _}}, State2} ->
-	    State3 = stream_send(Msg, State2),
-            init_retransmit(State3, ?MaxRetransmit);
-        {empty, State2} ->
-            State2
+ack_request(Data0) ->
+    Data1 = cancel_retransmit(Data0),
+    case dequeue_request_next(Data1) of
+	{{value, {_, Msg, _}}, Data2} ->
+	    Data3 = stream_send(Msg, Data2),
+	    init_retransmit(Data3, ?MaxRetransmit);
+	{empty, Data2} ->
+	    Data2
     end.
 
-cancel_retransmit(State = #state{retransmit_timer = undefined}) ->
-    State;
-cancel_retransmit(State = #state{retransmit_timer = Timer}) ->
+cancel_retransmit(Data = #data{retransmit_timer = undefined}) ->
+    Data;
+cancel_retransmit(Data = #data{retransmit_timer = Timer}) ->
     cancel_timer(Timer),
-    State#state{retransmit_timer = undefined}.
+    Data#data{retransmit_timer = undefined}.
 
-queue_request(State = #state{request_queue = Queue}, Request) ->
-    State#state{request_queue = queue:in(Request, Queue)}.
+queue_request(Data = #data{request_queue = Queue}, Request) ->
+    Data#data{request_queue = queue:in(Request, Queue)}.
 
-dequeue_request_next(State = #state{request_queue = Queue0}) ->
+dequeue_request_next(Data = #data{request_queue = Queue0}) ->
     Queue1 = queue:drop(Queue0),
-    {queue:peek(Queue1), State#state{request_queue = Queue1}}.
+    {queue:peek(Queue1), Data#data{request_queue = Queue1}}.
 
 control_addresses() ->
     Addrs =
@@ -1537,15 +1461,15 @@ answer_discover(Peer, Seq, Elements, #capwap_header{
     ?log_capwap_control(Peer, discovery_response, Seq, RespElems, Header),
     hd(capwap_packet:encode(control, {Header, {discovery_response, Seq, RespElems}})).
 
-stream_send(Msg, State = #state{ctrl_channel_address = WTPControlChannelAddress,
-				ctrl_stream = CtrlStreamState0,
+stream_send(Msg, Data = #data{ctrl_channel_address = WTPControlChannelAddress,
+				ctrl_stream = CtrlStreamData0,
 				socket = Socket}) ->
-    {BinMsg, CtrlStreamState1} = capwap_stream:encode(control, Msg, CtrlStreamState0),
+    {BinMsg, CtrlStreamData1} = capwap_stream:encode(control, Msg, CtrlStreamData0),
     lists:foreach(fun(M) ->
 			  capwap_trace:trace(?TRACE_LOCAL_CONTROL, WTPControlChannelAddress, M),
 			  ok = socket_send(Socket, M)
 		  end, BinMsg),
-    State#state{ctrl_stream = CtrlStreamState1}.
+    Data#data{ctrl_stream = CtrlStreamData1}.
 
 socket_send({udp, Socket}, Data) ->
     capwap_udp:send(Socket, Data);
@@ -1567,14 +1491,14 @@ common_name(SslSocket) ->
     #'OTPCertificate'{
        tbsCertificate =
        #'OTPTBSCertificate'{
-          subject = {rdnSequence, SubjectList}
-         }} = public_key:pkix_decode_cert(Cert, otp),
+	  subject = {rdnSequence, SubjectList}
+	 }} = public_key:pkix_decode_cert(Cert, otp),
     Subject = [erlang:hd(S)|| S <- SubjectList],
     {value, #'AttributeTypeAndValue'{value = {utf8String, CommonName}}} =
-        lists:keysearch(?'id-at-commonName', #'AttributeTypeAndValue'.type, Subject),
+	lists:keysearch(?'id-at-commonName', #'AttributeTypeAndValue'.type, Subject),
     CommonName.
 
-user_lookup(srp, Username, _UserState) ->
+user_lookup(srp, Username, _UserData) ->
     lager:debug("srp: ~p", [Username]),
     Salt = dtlsex:random_bytes(16),
     UserPassHash = crypto:hash(sha, [Salt, crypto:hash(sha, [Username, <<$:>>, <<"secret">>])]),
@@ -1603,16 +1527,16 @@ user_lookup(psk, Username, Session) ->
 
 verify_cert(_,{bad_cert, _} = Reason, _) ->
     {fail, Reason};
-verify_cert(_,{extension, _}, UserState) ->
-    {unknown, UserState};
-verify_cert(_, valid, UserState) ->
-    {valid, UserState};
+verify_cert(_,{extension, _}, UserData) ->
+    {unknown, UserData};
+verify_cert(_, valid, UserData) ->
+    {valid, UserData};
 verify_cert(#'OTPCertificate'{
 	       tbsCertificate =
 		   #'OTPTBSCertificate'{
 		 subject = {rdnSequence, SubjectList},
 		 extensions = Extensions
-		}}, valid_peer, UserState) ->
+		}}, valid_peer, UserData) ->
     Subject = [erlang:hd(S)|| S <- SubjectList],
     {value, #'AttributeTypeAndValue'{value = {utf8String, CommonName}}} =
 	lists:keysearch(?'id-at-commonName', #'AttributeTypeAndValue'.type, Subject),
@@ -1620,7 +1544,7 @@ verify_cert(#'OTPCertificate'{
 	lists:keyfind(?'id-ce-extKeyUsage', #'Extension'.extnID, Extensions),
 
     case lists:member(?'id-kp-capwapWTP', ExtnValue) of
-	true -> verify_cert_auth_cn(CommonName, UserState);
+	true -> verify_cert_auth_cn(CommonName, UserData);
 	_    -> {fail, "not a valid WTP certificate"}
     end.
 
@@ -1630,15 +1554,15 @@ verify_cert_auth_cn(CommonName, Session) ->
 	    {'Authentication-Method', {'TLS', 'X509-Subject-CN'}},
 	    {'WTP-Config', capwap_config:wtp_config(CommonName)}],
     case ergw_aaa_session:authenticate(Session, to_session(Opts)) of
-        success ->
-            lager:info("AuthResult: success for ~p", [CommonName]),
+	success ->
+	    lager:info("AuthResult: success for ~p", [CommonName]),
 	    {valid, Session};
-        {fail, Reason} ->
-            lager:info("AuthResult: fail, ~p for ~p", [Reason, CommonName]),
-            {fail, Reason};
-        Other ->
-            lager:info("AuthResult: ~p for ~p", [Other, CommonName]),
-            {fail, Other}
+	{fail, Reason} ->
+	    lager:info("AuthResult: fail, ~p for ~p", [Reason, CommonName]),
+	    {fail, Reason};
+	Other ->
+	    lager:info("AuthResult: ~p for ~p", [Other, CommonName]),
+	    {fail, Other}
     end.
 
 mk_ssl_opts(Session) ->
@@ -1712,7 +1636,7 @@ accounting_update(WTP, SessionOpts) ->
 	    SessionOpts
     end.
 
-start_session(Socket, _State) ->
+start_session(Socket, _Data) ->
     {ok, {Address, _Port}} = capwap_udp:peername(Socket),
     SessionOpts = [{'Accouting-Update-Fun', fun accounting_update/2},
 		    {'Service-Type', 'TP-CAPWAP-WTP'},
@@ -1759,8 +1683,8 @@ select_tunnel_mode(Modes, _MAC) ->
 
 %% select_tunnel_mode(Modes, Local_mac) ->
 %%     case proplists:get_bool('802.3', Modes) of
-%% 	true -> '802_3_tunnel';
-%% 	_    -> '802_11_tunnel'
+%%	true -> '802_3_tunnel';
+%%	_    -> '802_11_tunnel'
 %%     end;
 %% select_tunnel_mode(_Modes, split_mac) ->
 %%     '802_11_tunnel'.
@@ -1800,10 +1724,10 @@ capwap_802_11_ie(#wtp_radio{radio_id = RadioId},
 	flags = Flags,
 	ie = IE}
      | IEs];
-capwap_802_11_ie(_Radio, _WlanState, _IE, IEs) ->
+capwap_802_11_ie(_Radio, _WlanData, _IE, IEs) ->
     IEs.
 
-init_wlan_information_elements(Radio, WlanState) ->
+init_wlan_information_elements(Radio, WlanData) ->
     ProbeResponseFlags = ['beacon','probe_response'],
     IEList = [
 	      {fun wlan_supported_rateset_ie/2, ProbeResponseFlags},
@@ -1820,7 +1744,7 @@ init_wlan_information_elements(Radio, WlanState) ->
 			    _ ->
 				WS
 			end
-		end, WlanState, IEList).
+		end, WlanData, IEList).
 
 wlan_supported_rateset_ie(_Radio, #wlan{mode = Mode, rate_set = RateSet}) ->
     {Rates, _} = lists:split(8, RateSet),
@@ -1836,20 +1760,20 @@ wlan_extended_supported_rateset_ie(_Radio, #wlan{mode = Mode, rate_set = RateSet
 			   << <<(capwap_packet:encode_rate(Mode, X)):8>> || X <- ExtRates>>)
     end.
 
-wlan_wmm_ie(_Radio, _WlanState) ->
+wlan_wmm_ie(_Radio, _WlanData) ->
     ieee_802_11_ie(?WLAN_EID_VENDOR_SPECIFIC,
 		   <<16#00, 16#50, 16#f2, 16#02, 16#01, 16#01, 16#00, 16#00,
 		     16#03, 16#a4, 16#00, 16#00, 16#27, 16#a4, 16#00, 16#00,
 		     16#42, 16#43, 16#5e, 16#00, 16#62, 16#32, 16#2f, 16#00>>).
 
-wlan_ht_cap_ie(_Radio, _WlanState) ->
+wlan_ht_cap_ie(_Radio, _WlanData) ->
     ieee_802_11_ie(?WLAN_EID_HT_CAP,
 		   <<16#0c, 16#00, 16#1b, 16#ff, 16#ff, 16#00, 16#00, 16#00,
 		     16#00, 16#00, 16#00, 16#00, 16#00, 16#00, 16#00, 16#01,
 		     16#00, 16#00, 16#00, 16#00, 16#00, 16#00, 16#00, 16#00,
 		     16#00, 16#00>>).
 
-wlan_ht_opmode_ie(#wtp_radio{channel = Channel}, _WlanState) ->
+wlan_ht_opmode_ie(#wtp_radio{channel = Channel}, _WlanData) ->
     ieee_802_11_ie(?WLAN_EID_HT_OPERATION,
 		   <<Channel:8, 16#00, 16#00, 16#00, 16#00, 16#00, 16#00, 16#00,
 		     16#00, 16#00, 16#00, 16#00, 16#00, 16#00, 16#00, 16#00,
@@ -1906,85 +1830,85 @@ wlan_cfg_tp_hold_time(#wtp_radio{radio_id = RadioId},
      | IEs ].
 
 internal_add_wlan(RadioId, WlanId, NotifyFun,
-		  #state{config = #wtp{radios = Radios}} = State)
+		  #data{config = #wtp{radios = Radios}} = Data)
   when is_integer(RadioId), is_integer(WlanId) ->
     Radio = lists:keyfind(RadioId, #wtp_radio.radio_id, Radios),
     WLAN = lists:keyfind(WlanId, #wtp_wlan_config.wlan_id, Radio#wtp_radio.wlans),
-    internal_add_wlan(Radio, WLAN, NotifyFun, State);
+    internal_add_wlan(Radio, WLAN, NotifyFun, Data);
 
 internal_add_wlan(#wtp_radio{radio_id = RadioId} = Radio,
 		  #wtp_wlan_config{wlan_id = WlanId,
 				   ssid = SSID,
 				   suppress_ssid = SuppressSSID} = WlanConfig,
 		  NotifyFun,
-		  #state{config = Config} = State0) ->
+		  #data{config = Config} = Data0) ->
     WBID = ?CAPWAP_BINDING_802_11,
     Flags = [{frame,'802.3'}],
     Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
 
-    WlanState = init_wlan_state(Radio, WlanId, WlanConfig, State0),
-    State = update_wlan_state({RadioId, WlanId}, fun(_W) -> WlanState end, State0),
+    WlanData = init_wlan_state(Radio, WlanId, WlanConfig, Data0),
+    Data = update_wlan_state({RadioId, WlanId}, fun(_W) -> WlanData end, Data0),
 
     AddWlan = #ieee_802_11_add_wlan{
 		 radio_id      = RadioId,
 		 wlan_id       = WlanId,
 		 capability    = [ess, short_slot_time],
 		 auth_type     = open_system,
-		 mac_mode      = WlanState#wlan.mac_mode,
-		 tunnel_mode   = WlanState#wlan.tunnel_mode,
+		 mac_mode      = WlanData#wlan.mac_mode,
+		 tunnel_mode   = WlanData#wlan.tunnel_mode,
 		 suppress_ssid = SuppressSSID,
 		 ssid          = SSID
 		},
-    ReqElements0 = [set_wlan_keys(WlanState, AddWlan)],
-    ReqElements1 = lists:foldl(capwap_802_11_ie(Radio, WlanState, _, _), ReqElements0,
-			       WlanState#wlan.information_elements),
-    ReqElements2 = wlan_cfg_tp_hold_time(Radio, WlanState, Config, ReqElements1),
-    ReqElements = add_wlan_keys(WlanState, ReqElements2),
+    ReqElements0 = [set_wlan_keys(WlanData, AddWlan)],
+    ReqElements1 = lists:foldl(capwap_802_11_ie(Radio, WlanData, _, _), ReqElements0,
+			       WlanData#wlan.information_elements),
+    ReqElements2 = wlan_cfg_tp_hold_time(Radio, WlanData, Config, ReqElements1),
+    ReqElements = add_wlan_keys(WlanData, ReqElements2),
     ResponseNotifyFun = internal_add_wlan_result({RadioId, WlanId}, NotifyFun, _, _, _),
-    send_request(Header, ieee_802_11_wlan_configuration_request, ReqElements, ResponseNotifyFun, State);
+    send_request(Header, ieee_802_11_wlan_configuration_request, ReqElements, ResponseNotifyFun, Data);
 
-internal_add_wlan(RadioId, WlanId, NotifyFun, State)
+internal_add_wlan(RadioId, WlanId, NotifyFun, Data)
   when RadioId == false orelse WlanId == false ->
     %% the requested Radio/WLan combination might not be configured,
     %% do nothing....
-    response_notify(NotifyFun, -1, unconfigured, State).
+    response_notify(NotifyFun, -1, unconfigured, Data).
 
-internal_add_wlan_result(WlanIdent, NotifyFun, Code, Arg, State0)
+internal_add_wlan_result(WlanIdent, NotifyFun, Code, Arg, Data0)
   when Code == 0 ->
-    State = update_wlan_state(WlanIdent,
+    Data = update_wlan_state(WlanIdent,
 			      fun(W0) ->
 				      W = W0#wlan{state = running},
 				      start_group_rekey_timer(W)
-			      end, State0),
-    response_notify(NotifyFun, Code, Arg, State);
+			      end, Data0),
+    response_notify(NotifyFun, Code, Arg, Data);
 
-internal_add_wlan_result(WlanIdent, NotifyFun, Code, Arg, State0) ->
-    State = update_wlan_state(WlanIdent,
-			      fun(W) -> W#wlan{state = unconfigured} end, State0),
-    response_notify(NotifyFun, Code, Arg, State).
+internal_add_wlan_result(WlanIdent, NotifyFun, Code, Arg, Data0) ->
+    Data = update_wlan_state(WlanIdent,
+			      fun(W) -> W#wlan{state = unconfigured} end, Data0),
+    response_notify(NotifyFun, Code, Arg, Data).
 
 internal_del_wlan(WlanIdent = {RadioId, WlanId}, NotifyFun,
-		  State = #state{data_channel_address = WTPDataChannelAddress}) ->
+		  Data = #data{data_channel_address = WTPDataChannelAddress}) ->
     capwap_dp:del_wlan(WTPDataChannelAddress, RadioId, WlanId),
     WBID = ?CAPWAP_BINDING_802_11,
     Flags = [{frame,'802.3'}],
     Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
     ReqElemDel = [#ieee_802_11_delete_wlan{
-                     radio_id = RadioId,
-                     wlan_id = WlanId}
-                 ],
-    State0 = send_request(Header, ieee_802_11_wlan_configuration_request, ReqElemDel, NotifyFun, State),
-    remove_wlan(WlanIdent, State0).
+		     radio_id = RadioId,
+		     wlan_id = WlanId}
+		 ],
+    Data0 = send_request(Header, ieee_802_11_wlan_configuration_request, ReqElemDel, NotifyFun, Data),
+    remove_wlan(WlanIdent, Data0).
 
-remove_wlan(WlanIdent, State = #state{wlans = Wlans}) ->
-    case get_wlan(WlanIdent, State) of
+remove_wlan(WlanIdent, Data = #data{wlans = Wlans}) ->
+    case get_wlan(WlanIdent, Data) of
 	Wlan = #wlan{} ->
 	    stop_group_rekey_timer(Wlan);
 	_ ->
 	    ok
     end,
     LessWlans = lists:keydelete(WlanIdent, #wlan.wlan_identifier, Wlans),
-    State#state{wlans = LessWlans}.
+    Data#data{wlans = LessWlans}.
 
 radio_rsn_cipher_capabilities(#wtp_radio{supported_cipher_suites = Suites},
 			      #wtp_wlan_config{
@@ -2026,7 +1950,7 @@ init_wlan_state(#wtp_radio{radio_id = RadioId} = Radio, WlanId,
 		   peer_rekey = PeerRekey,
 		   group_rekey = GroupRekey,
 		   strict_group_rekey = StrictGroupRekey} = WlanConfig,
-		#state{mac_types = MacTypes, tunnel_modes = TunnelModes}) ->
+		#data{mac_types = MacTypes, tunnel_modes = TunnelModes}) ->
 
     MacMode = select_mac_mode(WlanConfig, MacTypes),
     TunnelMode = select_tunnel_mode(TunnelModes, MacMode),
@@ -2118,15 +2042,15 @@ add_wlan_keys(_, IEs) ->
     IEs.
 
 maybe_fixup_wlan(RadioMAC, #wlan{wlan_identifier = WlanIdent, bss = undefined},
-		 #state{config = #wtp{broken_add_wlan_workaround = true}} = State) ->
-    update_wlan_state(WlanIdent, fun(W) -> W#wlan{bss = RadioMAC} end, State);
-maybe_fixup_wlan(_RadioMAC, _Wlan, State) ->
-    State.
+		 #data{config = #wtp{broken_add_wlan_workaround = true}} = Data) ->
+    update_wlan_state(WlanIdent, fun(W) -> W#wlan{bss = RadioMAC} end, Data);
+maybe_fixup_wlan(_RadioMAC, _Wlan, Data) ->
+    Data.
 
-get_wlan(WlanIdent, #state{wlans = Wlans}) ->
+get_wlan(WlanIdent, #data{wlans = Wlans}) ->
     lists:keyfind(WlanIdent, #wlan.wlan_identifier, Wlans).
 
-get_wlan_by_bss(BSS, #state{config = #wtp{broken_add_wlan_workaround = true},
+get_wlan_by_bss(BSS, #data{config = #wtp{broken_add_wlan_workaround = true},
 			    wlans = Wlans}) ->
     case lists:keyfind(BSS, #wlan.bss, Wlans) of
 	false when length(Wlans) == 1 ->
@@ -2134,26 +2058,26 @@ get_wlan_by_bss(BSS, #state{config = #wtp{broken_add_wlan_workaround = true},
 	Other ->
 	    Other
     end;
-get_wlan_by_bss(BSS, #state{wlans = Wlans}) ->
+get_wlan_by_bss(BSS, #data{wlans = Wlans}) ->
     lists:keyfind(BSS, #wlan.bss, Wlans).
 
-update_wlan_state(WlanIdent, Fun, State = #state{wlans = Wlans})
+update_wlan_state(WlanIdent, Fun, Data = #data{wlans = Wlans})
   when is_function(Fun, 1) ->
     Wlan =
-	case get_wlan(WlanIdent, State) of
+	case get_wlan(WlanIdent, Data) of
 	    false ->
 		#wlan{wlan_identifier = WlanIdent};
 	    Tuple ->
 		Tuple
 	end,
-    State#state{wlans =
+    Data#data{wlans =
 		    lists:keystore(WlanIdent, #wlan.wlan_identifier, Wlans, Fun(Wlan))}.
 
 get_station_cfg(#wlan{mac_mode = MacMode, tunnel_mode = TunnelMode,
 		      information_elements = IEs,
 		      wpa_config = WpaConfig, gtk = GTK, igtk = IGTK},
 		BSS,
-		#state{id = WtpId, session_id = SessionId,
+		#data{id = WtpId, session_id = SessionId,
 		       data_channel_address = WTPDataChannelAddress, data_path = DataPath}) ->
     #station_config{
        data_path = DataPath, wtp_data_channel_address = WTPDataChannelAddress,
@@ -2164,17 +2088,17 @@ get_station_cfg(#wlan{mac_mode = MacMode, tunnel_mode = TunnelMode,
       }.
 
 internal_new_station(#wlan{}, StationMAC, _BSS,
-		     State = #state{config = #wtp{max_stations = MaxStations},
+		     Data = #data{config = #wtp{max_stations = MaxStations},
 				    station_count  = StationCount})
   when StationCount + 1 > MaxStations ->
     lager:debug("Station ~p trying to associate, but wtp is full: ~p >= ~p",
 		[StationMAC, StationCount, MaxStations]),
-    {{error, too_many_clients}, State};
+    {{error, too_many_clients}, Data};
 
 internal_new_station(Wlan = #wlan{}, StationMAC, BSS,
-		     State0 = #state{id = WtpId, station_count = StationCount}) ->
+		     Data0 = #data{id = WtpId, station_count = StationCount}) ->
 
-    State = maybe_fixup_wlan(BSS, Wlan, State0),
+    Data = maybe_fixup_wlan(BSS, Wlan, Data0),
 
     %% we have to repeat the search again to avoid a race
     lager:debug("search for station ~p", [{self(), StationMAC}]),
@@ -2182,7 +2106,7 @@ internal_new_station(Wlan = #wlan{}, StationMAC, BSS,
 	not_found ->
 	    exometer:update([capwap, ac, station_count], 1),
 	    exometer:update([capwap, wtp, WtpId, station_count], StationCount + 1),
-	    StationCfg = get_station_cfg(Wlan, BSS, State),
+	    StationCfg = get_station_cfg(Wlan, BSS, Data),
 	    Reply =
 		case capwap_station_reg:lookup(StationMAC) of
 		    not_found ->
@@ -2192,19 +2116,19 @@ internal_new_station(Wlan = #wlan{}, StationMAC, BSS,
 			lager:debug("TAKE-OVER: station ~p found as ~p", [{self(), StationMAC}, Station0]),
 			ieee80211_station:take_over(Station0, self(), StationCfg)
 		end,
-	    {Reply, State#state{station_count = StationCount + 1}};
+	    {Reply, Data#data{station_count = StationCount + 1}};
 
 	Ok = {ok, Station0} ->
 	    lager:debug("station ~p found as ~p", [{self(), StationMAC}, Station0]),
-	    {Ok, State}
+	    {Ok, Data}
     end;
-internal_new_station(_, StationMAC, BSS, State) ->
+internal_new_station(_, StationMAC, BSS, Data) ->
     lager:debug("Station ~p trying to associate on invalid Wlan ~p", [StationMAC, BSS]),
-    {{error, invalid_bss}, State}.
+    {{error, invalid_bss}, Data}.
 
 internal_add_station(#wlan{wlan_identifier = {RadioId, WlanId}, vlan = VlanId, bss = BSS}, MAC, StaCaps,
-		     {_, Encryption, _} = CryptoState,
-		     NotifyFun, State = #state{data_channel_address = WTPDataChannelAddress}) ->
+		     {_, Encryption, _} = CryptoData,
+		     NotifyFun, Data = #data{data_channel_address = WTPDataChannelAddress}) ->
     Ret = capwap_dp:attach_station(WTPDataChannelAddress, MAC, VlanId, RadioId, BSS),
     lager:debug("attach_station(~p, ~p, ~p, ~p, ~p): ~p", [WTPDataChannelAddress, MAC, VlanId, RadioId, BSS, Ret]),
 
@@ -2237,15 +2161,15 @@ internal_add_station(#wlan{wlan_identifier = {RadioId, WlanId}, vlan = VlanId, b
 		      ampdubufsize = 0,
 		      htcsupp = 0,
 		      mcs_set = StaCaps#sta_cap.rx_mask}],
-    ReqElements = station_session_key(RadioId, WlanId, MAC, CryptoState, ReqElements0),
+    ReqElements = station_session_key(RadioId, WlanId, MAC, CryptoData, ReqElements0),
     Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
-    send_request(Header, station_configuration_request, ReqElements, NotifyFun, State);
+    send_request(Header, station_configuration_request, ReqElements, NotifyFun, Data);
 
-internal_add_station(_, _MAC, _StaCaps, _CryptoState, NotifyFun, State) ->
-    response_notify(NotifyFun, -1, [], State).
+internal_add_station(_, _MAC, _StaCaps, _CryptoData, NotifyFun, Data) ->
+    response_notify(NotifyFun, -1, [], Data).
 
-station_session_key(_RadioId, _WlanId, MAC, {AKMonly, false, CipherState}, IEs)
-  when is_record(CipherState, ccmp) ->
+station_session_key(_RadioId, _WlanId, MAC, {AKMonly, false, CipherData}, IEs)
+  when is_record(CipherData, ccmp) ->
     IE = #ieee_802_11_station_session_key{
 	    mac_address = MAC,
 	    flags = ['akm_only' || AKMonly],
@@ -2271,7 +2195,7 @@ station_session_key(RadioId, WlanId, MAC, {AKMonly, true, #ccmp{rsn = RSN,
 station_session_key(_, _, _, _, IEs) ->
     IEs.
 
-internal_del_station(#wlan{wlan_identifier = {RadioId, _WlanId}}, MAC, State) ->
+internal_del_station(#wlan{wlan_identifier = {RadioId, _WlanId}}, MAC, Data) ->
     Ret = capwap_dp:detach_station(MAC),
     lager:debug("detach_station(~p): ~p", [MAC, Ret]),
 
@@ -2282,33 +2206,33 @@ internal_del_station(#wlan{wlan_identifier = {RadioId, _WlanId}}, MAC, State) ->
 		      mac	= MAC
 		     }],
     Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
-    send_request(Header, station_configuration_request, ReqElements, State);
+    send_request(Header, station_configuration_request, ReqElements, Data);
 
-internal_del_station(_, MAC, State) ->
+internal_del_station(_, MAC, Data) ->
     Ret = capwap_dp:detach_station(MAC),
     lager:debug("detach_station(~p, ~p): ~p", [MAC, Ret]),
-    State.
+    Data.
 
-sendto(Header, Data, #state{data_channel_address = WTPDataChannelAddress}) ->
-    Packet = hd(capwap_packet:encode(data, {Header, Data})),
+sendto(Header, PayLoad, #data{data_channel_address = WTPDataChannelAddress}) ->
+    Packet = hd(capwap_packet:encode(data, {Header, PayLoad})),
     capwap_trace:trace(?TRACE_LOCAL_DATA, WTPDataChannelAddress, Packet),
     capwap_dp:sendto(WTPDataChannelAddress, Packet).
 
-internal_send_80211_station(#wlan{wlan_identifier = {RadioId, _WlanId}}, Data, State) ->
+internal_send_80211_station(#wlan{wlan_identifier = {RadioId, _WlanId}}, PayLoad, Data) ->
     WBID = ?CAPWAP_BINDING_802_11,
     Header = #capwap_header{
 		 radio_id = RadioId,
 		 wb_id = WBID,
 		 flags = [{frame, 'native'}]},
-    sendto(Header, Data, State);
+    sendto(Header, PayLoad, Data);
 
 internal_send_80211_station(_, _, _) ->
     ok.
 
-get_admin_wifi_updates(State, IEs) ->
+get_admin_wifi_updates(Data, IEs) ->
     StartedWlans = [X || X <- IEs, element(1, X) == ieee_802_11_tp_wlan],
     lager:debug("Found Admin Wlans started by the WTP: ~p", [StartedWlans]),
-    AdminSSIds = wtp_config_get(State#state.id, [{admin_ssids, admin_ssids, []}]),
+    AdminSSIds = wtp_config_get(Data#data.id, [{admin_ssids, admin_ssids, []}]),
     get_admin_wifi_update(StartedWlans, AdminSSIds).
 
 get_admin_wifi_update(Wlans, AdminSSIds) ->
@@ -2318,26 +2242,26 @@ get_admin_wifi_update([], _, Accu) ->
     Accu;
 
 get_admin_wifi_update([#ieee_802_11_tp_wlan{radio_id = RadioId,
-                                            wlan_id = WlanId,
-                                            ssid = RemoteConfSSId,
-                                            key = RemoteConfKey} = Wlan | RestWlan],
-                      AdminSSIds, Accu) ->
+					    wlan_id = WlanId,
+					    ssid = RemoteConfSSId,
+					    key = RemoteConfKey} = Wlan | RestWlan],
+		      AdminSSIds, Accu) ->
     {LocalConfSSId, LocalConfKey} =
-        case proplists:get_value({RadioId, WlanId}, AdminSSIds) of
-            {A, B} = V when is_binary(A), is_binary(B) ->
-                V;
-            A when is_binary(A) ->
-                {A, RemoteConfKey};
-            _ ->
-                {RemoteConfSSId, RemoteConfKey}
-        end,
+	case proplists:get_value({RadioId, WlanId}, AdminSSIds) of
+	    {A, B} = V when is_binary(A), is_binary(B) ->
+		V;
+	    A when is_binary(A) ->
+		{A, RemoteConfKey};
+	    _ ->
+		{RemoteConfSSId, RemoteConfKey}
+	end,
     if RemoteConfSSId == LocalConfSSId andalso RemoteConfKey == LocalConfKey ->
-            get_admin_wifi_update(RestWlan, AdminSSIds, Accu);
+	    get_admin_wifi_update(RestWlan, AdminSSIds, Accu);
        true ->
-            lager:debug("Sending ieee_802_11_tp_wlan to change a preconfigured Admin SSID: ~p->~p",
-                        [RemoteConfSSId, LocalConfSSId]),
-            UpdatedWlan = Wlan#ieee_802_11_tp_wlan{ssid = LocalConfSSId, key = LocalConfKey},
-            get_admin_wifi_update(RestWlan, AdminSSIds, [UpdatedWlan | Accu])
+	    lager:debug("Sending ieee_802_11_tp_wlan to change a preconfigured Admin SSID: ~p->~p",
+			[RemoteConfSSId, LocalConfSSId]),
+	    UpdatedWlan = Wlan#ieee_802_11_tp_wlan{ssid = LocalConfSSId, key = LocalConfKey},
+	    get_admin_wifi_update(RestWlan, AdminSSIds, [UpdatedWlan | Accu])
     end.
 
 start_group_rekey_timer(#wlan{wlan_identifier = WlanIdent,
@@ -2357,7 +2281,7 @@ stop_group_rekey_timer(Wlan) ->
 
 start_gtk_rekey(WlanIdent = {RadioId, WlanId},
 		Wlan0 = #wlan{bss = BSS, group_rekey_state = idle},
-		State0) ->
+		Data0) ->
     Wlan1 = stop_group_rekey_timer(Wlan0),
     Wlan2 = update_wlan_group_keys(Wlan1),
 
@@ -2390,32 +2314,32 @@ start_gtk_rekey(WlanIdent = {RadioId, WlanId},
 	    NotifyFun = start_gtk_rekey_result(WlanIdent, Stations, _, _, _)
     end,
 
-    State1 = update_wlan_state(WlanIdent, fun(_W) -> Wlan end, State0),
-    send_request(Header, ieee_802_11_wlan_configuration_request, ReqElements, NotifyFun, State1);
+    Data1 = update_wlan_state(WlanIdent, fun(_W) -> Wlan end, Data0),
+    send_request(Header, ieee_802_11_wlan_configuration_request, ReqElements, NotifyFun, Data1);
 
-start_gtk_rekey({RadioId, WlanId}, Wlan, State) ->
+start_gtk_rekey({RadioId, WlanId}, Wlan, Data) ->
     lager:warning("failed to start GTK rekey for ~w:~w (~p)", [RadioId, WlanId, lager:pr(Wlan, ?MODULE)]),
-    State.
+    Data.
 
 %% Note: failures will be handled the FSM event function
-start_gtk_rekey_result(WlanIdent, Stations, Code, _Arg, State)
+start_gtk_rekey_result(WlanIdent, Stations, Code, _Arg, Data)
   when Code == 0 ->
     update_wlan_state(WlanIdent,
 		      fun(W = #wlan{gtk = GTK, igtk = IGTK}) ->
 			      {ok, _Pid} = capwap_ac_gtk_rekey:start_link({self(), WlanIdent},
 									  GTK, IGTK, Stations),
 			      W#wlan{group_rekey_state = running}
-		      end, State);
+		      end, Data);
 
-start_gtk_rekey_result(WlanIdent, _Stations, _Code, _Arg, State) ->
-    update_wlan_state(WlanIdent, fun(W) -> W#wlan{group_rekey_state = failed} end, State).
+start_gtk_rekey_result(WlanIdent, _Stations, _Code, _Arg, Data) ->
+    update_wlan_state(WlanIdent, fun(W) -> W#wlan{group_rekey_state = failed} end, Data).
 
 
 
 
 finish_gtk_rekey(WlanIdent = {RadioId, WlanId},
 		 Wlan0 = #wlan{group_rekey_state = running},
-		 State0) ->
+		 Data0) ->
     WBID = ?CAPWAP_BINDING_802_11,
     Flags = [{frame,'802.3'}],
     Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
@@ -2431,23 +2355,23 @@ finish_gtk_rekey(WlanIdent = {RadioId, WlanId},
     UpdateWlan = UpdateWlan0#ieee_802_11_update_wlan{key_status = completed_rekeying},
     NotifyFun = finish_gtk_rekey_result(WlanIdent, _, _, _),
 
-    State1 = update_wlan_state(WlanIdent, fun(_W) -> Wlan end, State0),
+    Data1 = update_wlan_state(WlanIdent, fun(_W) -> Wlan end, Data0),
     ReqElements = [set_wlan_keys(Wlan, UpdateWlan)],
-    send_request(Header, ieee_802_11_wlan_configuration_request, ReqElements, NotifyFun, State1);
+    send_request(Header, ieee_802_11_wlan_configuration_request, ReqElements, NotifyFun, Data1);
 
-finish_gtk_rekey({RadioId, WlanId}, Wlan, State) ->
+finish_gtk_rekey({RadioId, WlanId}, Wlan, Data) ->
     lager:warning("failed to start GTK rekey for ~w:~w (~p)", [RadioId, WlanId, lager:pr(Wlan, ?MODULE)]),
-    State.
+    Data.
 
 %% Note: failures will be handled the FSM event function
-finish_gtk_rekey_result(WlanIdent, Code, _Arg, State) ->
-    ReKeyState = if Code == 0 -> idle;
-		    true      -> failed
+finish_gtk_rekey_result(WlanIdent, Code, _Arg, Data) ->
+    ReKeyData = if Code == 0 -> idle;
+		   true      -> failed
 		 end,
     update_wlan_state(WlanIdent, fun(W0) ->
-					 W = W0#wlan{group_rekey_state = ReKeyState},
+					 W = W0#wlan{group_rekey_state = ReKeyData},
 					 start_group_rekey_timer(W)
-				 end, State).
+				 end, Data).
 
 wtp_stats_to_accouting({RcvdPkts, SendPkts, RcvdBytes, SendBytes,
 			RcvdFragments, SendFragments,
@@ -2464,7 +2388,7 @@ wtp_stats_to_accouting({RcvdPkts, SendPkts, RcvdBytes, SendBytes,
 wtp_stats_to_accouting(_) ->
     [].
 
-stop_wtp(run, #state{data_channel_address = WTPDataChannelAddress}) ->
+stop_wtp(run, #data{data_channel_address = WTPDataChannelAddress}) ->
     lager:error("STOP_WTP in run"),
     case catch (capwap_dp:del_wtp(WTPDataChannelAddress)) of
 	{ok, {WTPDataChannelAddress, _Stations, _RefCnt, _MTU, Stats} = Values} ->
@@ -2474,28 +2398,28 @@ stop_wtp(run, #state{data_channel_address = WTPDataChannelAddress}) ->
 	    lager:debug("WTP del failed with: ~p", [Other]),
 	    []
     end;
-stop_wtp(StateName, State) ->
-    lager:error("STOP_WTP in ~p with ~p", [StateName, State]),
+stop_wtp(State, Data) ->
+    lager:error("STOP_WTP in ~p with ~p", [State, Data]),
     [].
 
-response_notify(NotifyFun, Code, Arg, State)
+response_notify(NotifyFun, Code, Arg, Data)
   when is_function(NotifyFun, 3) ->
     try
-	NotifyFun(Code, Arg, State)
+	NotifyFun(Code, Arg, Data)
     catch
 	Class:Cause ->
 	    lager:debug("notify failed with ~p:~p", [Class, Cause]),
-	    State
+	    Data
     end;
-response_notify(_, _, _, State) ->
-    State.
+response_notify(_, _, _, Data) ->
+    Data.
 
 response_fsm_reply(From) ->
     response_fsm_reply(From, _, _, _).
 
-response_fsm_reply(From, 0, _, State) ->
+response_fsm_reply(From, 0, _, Data) ->
     gen_statem:reply(From, ok),
-    State;
-response_fsm_reply(From, Code, _, State) ->
+    Data;
+response_fsm_reply(From, Code, _, Data) ->
     gen_statem:reply(From, {error, Code}),
-    State.
+    Data.
