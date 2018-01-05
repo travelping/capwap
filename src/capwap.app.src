@@ -15,6 +15,7 @@
 	exometer_core,
 	ergw_aaa,
 	cowboy,
+	pbkdf2,
 	jsx
     ]},
     {mod, { capwap_app, []}}
