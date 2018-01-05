@@ -769,7 +769,7 @@ decode_rsne(auth_key_management, <<Count:16/little, Data/binary>>, RSN) ->
     <<Suites:Length/bytes, Next/binary>> = Data,
     decode_rsne(rsn_capabilities, Next,
 		RSN#wtp_wlan_rsn{akm_suites =
-				     [ capwap_packet:decode_akm_suite(Id) || <<Id:4/bytes>> <= Suites ]});
+				     [ capwap_packet:decode_akm_suite(Id) || <<Id:32>> <= Suites ]});
 decode_rsne(rsn_capabilities, <<RSNCaps:16/little, Next/binary>>, RSN) ->
     decode_rsne(pmkid, Next, RSN#wtp_wlan_rsn{capabilities = RSNCaps});
 decode_rsne(pmkid, <<0:16/little, Next/binary>>, RSN) ->
