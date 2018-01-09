@@ -19,8 +19,9 @@
 -compile({parse_transform, exprecs}).
 -export_records([wtp, wtp_radio, wtp_wlan_config]).
 
--export([validate/0, get/2, get/3, wtp_config/1,
-	 wtp_set_radio_infos/3, update_wlan_config/4]).
+-export([validate/0, get/2, get/3,
+         wtp_config/1, wtp_static_config/1,
+         wtp_set_radio_infos/4, update_wlan_config/4]).
 
 -include("capwap_packet.hrl").
 -include("capwap_config.hrl").
@@ -69,30 +70,16 @@ get(Category, [Key|Keys], Val, Default)
 get(_Category, _Key, _Val, Default) ->
     Default.
 
-wtp_get(Path, Values)
-  when is_list(Values) ->
-    Settings = get(wtp, Path, []),
-    lager:debug("got Settings for ~p: ~p", [Path, Settings]),
-    lists:map(fun({K, V}) ->
-		      {K, proplists:get_value(K, Settings, V)}
-	      end, Values).
+wtp_static_config(CN) ->
+    WTP = capwap_config_wtp_provider:get_config(CN),
+    lager:debug("static config for WTP: ~p", [WTP]),
+    WTP.
 
-wtp_config(CN) ->
-    WTP0 = [{psm_idle_timeout,           30},
-	    {psm_busy_timeout,           300},
-	    {max_stations,               100},
-	    {echo_request_interval,      60},
-	    {discovery_interval,         20},
-	    {idle_timeout,               300},
-	    {data_channel_dead_interval, 70},
-	    {ac_join_timeout,            70},
-	    {admin_pw,                   undefined},
-	    {wlan_hold_time,             15},
-	    {broken_add_wlan_workaround, false}],
-    WTP1 = wtp_get([defaults], WTP0),
-    WTP2 = wtp_get([CN], WTP1),
-    lager:debug("WTP: ~p", [WTP2]),
-    '#new-wtp'(WTP2).
+wtp_config(StaticConfig) ->
+    DefaultEnv = capwap_config:get(wtp, [defaults], []),
+    DefaultCommon = merge(DefaultEnv, ?DEFAULT_COMMON),
+    WTP = merge(StaticConfig, DefaultCommon),
+    '#new-wtp'(WTP).
 
 bool_to_int(true) -> 1;
 bool_to_int(X) when is_integer(X) andalso X > 0 -> 1;
@@ -143,6 +130,8 @@ wtp_init_wlan_keymgmt(WLAN = #wtp_wlan_config{
 
 wtp_init_wlan(_CN, _Radio, {ssid, _}, WLAN) ->
     WLAN;
+wtp_init_wlan(_CN, _Radio, {wlan_id, Value}, WLAN) ->
+    WLAN#wtp_wlan_config{wlan_id = Value};
 wtp_init_wlan(_CN, _Radio, {suppress_ssid, Value}, WLAN) ->
     WLAN#wtp_wlan_config{suppress_ssid = bool_to_int(Value)};
 wtp_init_wlan(_CN, _Radio, {mac_mode, Value}, WLAN)
@@ -202,54 +191,35 @@ wtp_init_wlan_mf(CN, Radio, Settings, Count) ->
 		       WLAN0, Settings),
     {WLAN, Count + 1}.
 
-%% apply per RADIO type AC defaults
-wtp_init_radio_type_config(CN, RadioType, Radio) ->
-    wtp_get([CN, radio_settings, RadioType], Radio).
-
-wtp_init_radio_config(CN, #ieee_802_11_wtp_radio_information{
+wtp_init_radio_config(CN, Config, #ieee_802_11_wtp_radio_information{
 			     radio_id = RadioId,
-			     radio_type = RadioType}) ->
-    Radio0 = [{radio_id,		RadioId},
-	      {radio_type,		RadioType},
-	      {operation_mode,		'802.11g'},
-	      {channel,			undefined},
-	      {beacon_interval,		100},
-	      {dtim_period,		1},
-	      {short_preamble,		supported},
-	      {rts_threshold,		2347},
-	      {short_retry,		7},
-	      {long_retry,		4},
-	      {fragmentation_threshold,	2346},
-	      {tx_msdu_lifetime,	512},
-	      {rx_msdu_lifetime,	512},
-	      {tx_power,		100},
-	      {channel_assessment,	csonly},
-	      {energy_detect_threshold,	100},
-	      {band_support,		16#7F},
-	      {ti_threshold,		1000},
-	      {diversity,		disabled},
-	      {combiner,		omni},
-	      {antenna_selection,	[1]},
-	      {report_interval,         300},
-	      {wlans,			[]}],
+                 radio_type = RadioType}) ->
+    Radio0 = ?DEFAULT_RADIO(RadioId, RadioType),
 
     %% apply per Radio-Type AC defaults
     ConfTypes = [defaults | RadioType],
-    Radio1 = lists:foldl(wtp_init_radio_type_config(defaults, _, _), Radio0, ConfTypes),
-    Radio2 = lists:foldl(wtp_init_radio_type_config(CN, _, _), Radio1, ConfTypes),
+    Radio1 = lists:foldl(fun(Type, Acc) ->
+        DefEnv = capwap_config:get(wtp, [defaults, radio_settings, Type], []),
+        merge(DefEnv, Acc)
+    end, Radio0, ConfTypes),
 
-    %% apply per WTP and RadioId settings
-    Radio3 = wtp_get([CN, radio, RadioId], Radio2),
+    Radio2 = lists:foldl(fun(Type, Acc) ->
+        DefEnv = capwap_config:get(wtp, [CN, radio_settings, Type], []),
+        merge(DefEnv, Acc)
+    end, Radio1, ConfTypes),
+
+    RadiosFromProvider = proplists:get_value(radio, Config, []),
+    Radio3 = get_radio_by_id(RadioId, RadiosFromProvider),
 
     %% turn it into a record
-    RadioRec = '#new-wtp_radio'(Radio3),
+    RadioRec = '#new-wtp_radio'(merge(Radio3, Radio2)),
 
     %% convert the remaining WLAN tupple list into a record list
-    {Wlans, _} = lists:mapfoldl(wtp_init_wlan_mf(CN, RadioRec, _, _), 1, RadioRec#wtp_radio.wlans),
+    {Wlans, _} = lists:mapfoldl( wtp_init_wlan_mf(CN, RadioRec, _, _), 1, RadioRec#wtp_radio.wlans),
     RadioRec#wtp_radio{wlans = Wlans}.
 
-wtp_set_radio_infos(CN, RadioInfos, Config) ->
-    Radios = lists:map(wtp_init_radio_config(CN, _), RadioInfos),
+wtp_set_radio_infos(CN, RadioInfos, Config, StaticConfig) ->
+    Radios = lists:map(wtp_init_radio_config(CN, StaticConfig, _), RadioInfos),
     lager:debug("Radios: ~p", [Radios]),
     Config#wtp{radios = Radios}.
 
@@ -261,3 +231,15 @@ update_wlan_config(RadioId, WlanId, Settings, #wtp{radios = Radios} = Config) ->
 						    '#set-'(Settings, WLAN))},
     Config#wtp{radios = lists:keystore(RadioId, #wtp_radio.radio_id,
 				       Radios, Radio1)}.
+
+merge(Settings, DefValues) ->
+    lists:map(fun({K, V}) ->
+        {K, proplists:get_value(K, Settings, V)}
+    end, DefValues).
+
+get_radio_by_id(_, []) -> [];
+get_radio_by_id(RadioId, [Radio | Tail]) ->
+    case proplists:get_value(radio_id, Radio) of
+        RadioId -> Radio;
+        _ -> get_radio_by_id(RadioId, Tail)
+    end.

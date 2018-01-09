@@ -98,8 +98,8 @@
 
 	  seqno = 0,
 	  version,
-          station_count = 0,
-          wlans
+      station_count = 0,
+      wlans
 }).
 
 -define(IS_RUN_CONTROL_EVENT(E),
@@ -303,9 +303,12 @@ listen({accept, udp, Socket}, State0) ->
     {ok, WTPControlChannelAddress} = capwap_udp:peername(Socket),
     PeerName = iolist_to_binary(format_peer(WTPControlChannelAddress)),
 
+    lager:debug("Peer name ~p", [PeerName]),
+    WTPConfig = capwap_config_reg:common_config(PeerName),
     Opts = [{'Username', PeerName},
 	    {'Authentication-Method', {'TLS', 'Pre-Shared-Key'}},
-            {'WTP-Config', capwap_config:wtp_config(PeerName)}],
+            {'WTP-Config', WTPConfig}],
+
     case ergw_aaa_session:authenticate(Session, to_session(Opts)) of
 	success ->
 	    lager:info("AuthResult: success"),
@@ -324,9 +327,10 @@ listen({accept, udp, Socket}, State0) ->
 
 listen({accept, dtls, Socket}, State) ->
     {ok, Session} = start_session(Socket, State),
-    lager:info("ssl_accept on: ~p, Opts: ~p", [Socket, mk_ssl_opts(Session)]),
+    Opts = mk_ssl_opts(Session),
+    lager:info("ssl_accept on: ~p, Opts: ~p", [Socket, Opts]),
 
-    case dtlsex:ssl_accept(Socket, mk_ssl_opts(Session), ?SSL_ACCEPT_TIMEOUT) of
+    case dtlsex:ssl_accept(Socket, Opts, ?SSL_ACCEPT_TIMEOUT) of
         {ok, SslSocket} ->
             lager:info("ssl_accept: ~p", [SslSocket]),
             {ok, WTPControlChannelAddress} = dtlsex:peername(SslSocket),
@@ -338,10 +342,9 @@ listen({accept, dtls, Socket}, State) ->
 
             maybe_takeover(CommonName),
             capwap_wtp_reg:register_args(CommonName, WTPControlChannelAddress),
-
 	    {ok, Config} = ergw_aaa_session:attr_get('WTP-Config', ergw_aaa_session:get(Session)),
             State1 = State#state{socket = {dtls, SslSocket}, session = Session,
-				 config = Config, id = CommonName},
+                                 config = Config, id = CommonName},
             %% TODO: find old connection instance, take over their StationState and stop them
             next_state(idle, State1);
         Other ->
@@ -380,7 +383,7 @@ idle({join_request, Seq, Elements, #capwap_header{
     capwap_wtp_reg:register_sessionid(Address, SessionId),
 
     RadioInfos = get_ies(ieee_802_11_wtp_radio_information, Elements),
-    Config = capwap_config:wtp_set_radio_infos(CommonName, RadioInfos, Config0),
+    Config = capwap_config_reg:radio_config(CommonName, RadioInfos, Config0),
 
     StartTime = erlang:system_time(milli_seconds),
     MacTypes = ie(wtp_mac_type, Elements),
@@ -1633,9 +1636,10 @@ user_lookup(srp, Username, _UserState) ->
 
 user_lookup(psk, Username, Session) ->
     lager:debug("user_lookup: Username: ~p", [Username]),
+    WTPConfig = capwap_config_reg:common_config(Username),
     Opts = [{'Username', Username},
 	    {'Authentication-Method', {'TLS', 'Pre-Shared-Key'}},
-	    {'WTP-Config', capwap_config:wtp_config(Username)}],
+	    {'WTP-Config', WTPConfig}],
     case ergw_aaa_session:authenticate(Session, to_session(Opts)) of
 	success ->
 	    lager:info("AuthResult: success"),
@@ -1677,13 +1681,14 @@ verify_cert(#'OTPCertificate'{
 
 verify_cert_auth_cn(CommonName, Session) ->
     lager:info("AuthResult: attempt for ~p", [CommonName]),
+    WTPConfig = capwap_config_reg:common_config(CommonName),
     Opts = [{'Username', CommonName},
-	    {'Authentication-Method', {'TLS', 'X509-Subject-CN'}},
-	    {'WTP-Config', capwap_config:wtp_config(CommonName)}],
+            {'Authentication-Method', {'TLS', 'X509-Subject-CN'}},
+            {'WTP-Config', WTPConfig}],
     case ergw_aaa_session:authenticate(Session, to_session(Opts)) of
         success ->
             lager:info("AuthResult: success for ~p", [CommonName]),
-	    {valid, Session};
+            {valid, Session};
         {fail, Reason} ->
             lager:info("AuthResult: fail, ~p for ~p", [Reason, CommonName]),
             {fail, Reason};
