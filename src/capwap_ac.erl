@@ -39,6 +39,7 @@
 
 -export([handle_packet/2, handle_data/3]).
 
+-include_lib("kernel/include/inet.hrl").
 -include_lib("public_key/include/OTP-PUB-KEY.hrl").
 -include("capwap_debug.hrl").
 -include("capwap_packet.hrl").
@@ -1398,7 +1399,7 @@ control_addresses() ->
 			all_local_addresses()
 		end
 	end,
-    [control_address(A) || A <- Addrs].
+    [control_address(A) || A <- resolve_ips(Addrs)].
 
 get_wtp_count() ->
     case exometer:get_value([capwap, ac, wtp_count]) of
@@ -1408,6 +1409,21 @@ get_wtp_count() ->
 	_ -> 0
     end.
 
+resolve_ips(Addrs) ->
+    lists:reverse(
+      lists:foldl(
+	fun(Addr, Acc)
+	      when is_list(Addr); is_atom(Addr) ->
+		case inet:gethostbyname(Addr) of
+		    {ok, #hostent{h_addr_list = HAL}} ->
+			[hd(HAL) | Acc];
+		    _ ->
+			[Addr | Acc]
+		end;
+	   (Addr, Acc) ->
+		[Addr | Acc]
+	end, [], Addrs)).
+
 control_address({A,B,C,D}) ->
     #control_ipv4_address{ip_address = <<A,B,C,D>>,
 			  wtp_count = get_wtp_count()};
@@ -1416,13 +1432,14 @@ control_address({A,B,C,D,E,F,G,H}) ->
 			  wtp_count = get_wtp_count()}.
 
 ac_addresses() ->
-    Addrs =
+    Addrs0 =
 	case capwap_config:get(ac, server_ip) of
 	    {ok, IP} ->
 		[IP];
 	    _ ->
 		all_local_addresses()
 	end,
+    Addrs = resolve_ips(Addrs0),
     IE0 =
 	case [I || I = {_,_,_,_} <- Addrs] of
 	    [] -> [];
