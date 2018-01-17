@@ -112,10 +112,6 @@
     {broken_add_wlan_workaround, false}]
 ).
 
--define(DEFAULT_CONFIG,
-   ?DEFAULT_COMMON ++ [{radio, []}]
-).
-
 -define(DEFAULT_RADIO(RadioId, RadioType),
    [{radio_id,                RadioId},
     {radio_type,              RadioType},
