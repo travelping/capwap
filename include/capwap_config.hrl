@@ -98,20 +98,6 @@
 	  strict_group_rekey
 	 }).
 
--define(DEFAULT_COMMON,
-   [{psm_idle_timeout,           30},
-    {psm_busy_timeout,           300},
-    {max_stations,               100},
-    {echo_request_interval,      60},
-    {discovery_interval,         20},
-    {idle_timeout,               300},
-    {data_channel_dead_interval, 70},
-    {ac_join_timeout,            70},
-    {admin_pw,                   undefined},
-    {wlan_hold_time,             15},
-    {broken_add_wlan_workaround, false}]
-).
-
 -define(DEFAULT_RADIO(RadioId, RadioType),
    [{radio_id,                RadioId},
     {radio_type,              RadioType},
