@@ -21,7 +21,7 @@
 
 -export([validate/0, get/2, get/3,
          wtp_config/1, wtp_static_config/1,
-         wtp_set_radio_infos/4, update_wlan_config/4]).
+         wtp_set_radio_infos/4, update_wlan_config/4, merge/2]).
 
 -include("capwap_packet.hrl").
 -include("capwap_config.hrl").
@@ -75,23 +75,21 @@ wtp_static_config(CN) ->
     lager:debug("static config for WTP: ~p", [WTP]),
     WTP.
 
-wtp_config(StaticConfig) ->
-    DefaultEnv = capwap_config:get(wtp, [defaults], []),
-    Defaults = [
-        {psm_idle_timeout,           30},
-        {psm_busy_timeout,           300},
-        {max_stations,               100},
-        {echo_request_interval,      60},
-        {discovery_interval,         20},
-        {idle_timeout,               300},
-        {data_channel_dead_interval, 70},
-        {ac_join_timeout,            70},
-        {admin_pw,                   undefined},
-        {wlan_hold_time,             15},
-        {broken_add_wlan_workaround, false}],
-    DefaultCommon = merge(DefaultEnv, Defaults),
-    WTP = merge(StaticConfig, DefaultCommon),
-    '#new-wtp'(WTP).
+wtp_config(Config) ->
+    '#new-wtp'(lists:filter(fun wtp_config_filter/1, Config)).
+
+wtp_config_filter({psm_idle_timeout,           _}) -> true;
+wtp_config_filter({psm_busy_timeout,           _}) -> true;
+wtp_config_filter({max_stations,               _}) -> true;
+wtp_config_filter({echo_request_interval,      _}) -> true;
+wtp_config_filter({discovery_interval,         _}) -> true;
+wtp_config_filter({idle_timeout,               _}) -> true;
+wtp_config_filter({data_channel_dead_interval, _}) -> true;
+wtp_config_filter({ac_join_timeout,            _}) -> true;
+wtp_config_filter({admin_pw,                   _}) -> true;
+wtp_config_filter({wlan_hold_time,             _}) -> true;
+wtp_config_filter({broken_add_wlan_workaround, _}) -> true;
+wtp_config_filter(_) -> false.
 
 bool_to_int(true) -> 1;
 bool_to_int(X) when is_integer(X) andalso X > 0 -> 1;

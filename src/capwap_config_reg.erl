@@ -47,11 +47,9 @@ start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
 common_config(CN) ->
-    io:format("Get common config~n~n"),
     gen_server:call(?SERVER, {common_config, CN}).
 
 radio_config(CN, RadioId, RadioType) ->
-    io:format("Get radio config ~p~n~n", [RadioId]),
     gen_server:call(?SERVER, {radio_config, CN, RadioId, RadioType}).
 
 %%%===================================================================
@@ -67,7 +65,6 @@ handle_call({common_config, CN}, {From, _},
         error ->
             Ref = erlang:monitor(process, From),
             Config = capwap_config:wtp_static_config(CN),
-            io:format("Get config ~p~n", [Config]),
             ResConfig = capwap_config:wtp_config(Config),
             NewState = State#state{
                 configs = Configs#{CN => Config},

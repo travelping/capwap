@@ -22,10 +22,26 @@
 
 get_config(CN, _Opts) ->
     Settings = capwap_config:get(wtp, [CN], []),
-    {ok, lists:map(fun transform/1, Settings)}.
+    DefaultEnv = capwap_config:get(wtp, [defaults], []),
+    Defaults = [
+        {psm_idle_timeout,           30},
+        {psm_busy_timeout,           300},
+        {max_stations,               100},
+        {echo_request_interval,      60},
+        {discovery_interval,         20},
+        {idle_timeout,               300},
+        {data_channel_dead_interval, 70},
+        {ac_join_timeout,            70},
+        {admin_pw,                   undefined},
+        {wlan_hold_time,             15},
+        {broken_add_wlan_workaround, false},
+        {radio, []} ],
+    DefaultCommon = capwap_config:merge(DefaultEnv, Defaults),
+    Settings1 = lists:map(fun transform/1, Settings),
+    WTP = capwap_config:merge(Settings1, DefaultCommon),
+    {ok, WTP}.
 
 transform({radio, RList}) ->
     NewR = [ [{radio_id, RadioId} | Property] || {RadioId, Property} <- RList],
     {radio, NewR};
 transform(Other) -> Other.
-
