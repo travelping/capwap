@@ -140,8 +140,6 @@ wtp_init_wlan_keymgmt(WLAN = #wtp_wlan_config{
 
 wtp_init_wlan(_CN, _Radio, {ssid, _}, WLAN) ->
     WLAN;
-wtp_init_wlan(_CN, _Radio, {wlan_id, Value}, WLAN) ->
-    WLAN#wtp_wlan_config{wlan_id = Value};
 wtp_init_wlan(_CN, _Radio, {suppress_ssid, Value}, WLAN) ->
     WLAN#wtp_wlan_config{suppress_ssid = bool_to_int(Value)};
 wtp_init_wlan(_CN, _Radio, {mac_mode, Value}, WLAN)
