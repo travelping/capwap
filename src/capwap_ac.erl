@@ -526,7 +526,7 @@ handle_event({call, From}, Event = {add_station, BSS, MAC, StaCaps, CryptoData},
     Wlan = get_wlan_by_bss(BSS, Data0),
     lager:warning("WLAN: ~p", [Wlan]),
     Data = internal_add_station(Wlan, MAC, StaCaps, CryptoData,
-				response_fsm_reply(From), Data0),
+				internal_add_station_response_fun(From), Data0),
     {keep_state, Data};
 
 handle_event({call, From}, {get_station_config, BSS}, run, Data) ->
@@ -556,59 +556,6 @@ handle_event(cast, {keep_alive, _DataPath, WTPDataChannelAddress, Header, PayLoa
 	     run, Data) ->
     ?log_capwap_keep_alive(peer_log_str(WTPDataChannelAddress, Data), PayLoad, Header),
     sendto(Header, PayLoad, Data),
-    keep_state_and_data;
-
-handle_event(cast, {ieee_802_11_wlan_configuration_response, _Seq,
-		    #{result_code := #result_code{result_code = 0}} = Elements,
-		    _Header},
-	     run, #data{data_channel_address = WTPDataChannelAddress, id = CommonName,
-		       config = Config, wlans = Wlans} = Data0) ->
-    lager:debug("IEEE 802.11 WLAN Configuration ok for ~p", [CommonName]),
-
-    BSSIdIEs = get_ies(ieee_802_11_assigned_wtp_bssid, Elements),
-    Data1 = Data0#data{config = Config#wtp{broken_add_wlan_workaround = (BSSIdIEs =:= [])}},
-
-    if (BSSIdIEs == [] andalso length(Wlans) /= 1) ->
-	    %% no BSS Id and multiple Wlans, this can not work, error out
-	    lager:error("~p: WTP with broken Add WLAN Response and multiple WLAN is not working", [CommonName]);
-       BSSIdIEs == [] ->
-	    %% no BSS Ids means the WTP is broken, activate workaround
-	    lager:warning("~p: WTP with broken Add WLAN Response, upgrade as soon as possible", [CommonName]);
-       true ->
-	    ok
-    end,
-
-    Data = lists:foldl(
-	     fun(#ieee_802_11_assigned_wtp_bssid{
-		    radio_id = RadioId,
-		    wlan_id = WlanId,
-		    bssid = BSS}, S0) ->
-		     update_wlan_state({RadioId, WlanId},
-				       fun(W = #wlan{vlan = VlanId}) ->
-					       capwap_dp:add_wlan(WTPDataChannelAddress,
-								  RadioId, WlanId, BSS, VlanId),
-					       W#wlan{bss = BSS}
-				       end, S0)
-	     end, Data1, BSSIdIEs),
-    {keep_state, Data};
-
-handle_event(cast, {ieee_802_11_wlan_configuration_response, _Seq,
-		    #{result_code := #result_code{result_code = Code}},
-		    _Header},
-	     run, #data{id = CommonName}) ->
-    lager:warning("IEEE 802.11 WLAN Configuration failed for ~p with ~w", [CommonName, Code]),
-    %% TODO: handle Update failures
-    {keep_state_and_data};
-
-handle_event(cast, {station_configuration_response, _Seq,
-		    #{result_code := #result_code{result_code = 0}}, _Header}, run, _Data) ->
-    lager:debug("Station Configuration ok"),
-    keep_state_and_data;
-handle_event(cast, {station_configuration_response, _Seq,
-		    #{result_code := #result_code{result_code = Code}}, _Header}, run, _Data) ->
-    %% TODO: timeout and Error handling,
-    %% e.g. shut the station process down when the Add Station failed
-    lager:warning("Station Configuration failed with ~w", [Code]),
     keep_state_and_data;
 
 handle_event(cast, {configuration_update_response, _Seq,
@@ -703,19 +650,20 @@ handle_event({call, From}, get_state, _State, Data) ->
     {keep_state_and_data, [{reply, From, {ok, Data}}]};
 
 handle_event({call, From}, {set_ssid, {RadioId, WlanId} = WlanIdent, SSID, SuppressSSID},
-	     run, #data{config = Config0} = Data0) ->
+	     run, #data{id = CommonName, config = Config0} = Data0) ->
     Settings = [{ssid, SSID}, {suppress_ssid, SuppressSSID}],
     Config = update_wlan_config(RadioId, WlanId, Settings, Config0),
     Data1 = Data0#data{config = Config},
 
-    AddResponseFun = fun(Code, _, DData) ->
-			     lager:debug("AddResponseFun: ~w", [Code]),
-			     case Code of
-				 0 -> gen_statem:reply(From, ok);
-				 _ -> gen_statem:reply(From, {error, Code})
-			     end,
-			     DData
-		     end,
+    AddResponseFun =
+	fun(Code, _, DData) ->
+		lager:debug("Add WLAN response for ~p: ~p", [CommonName, Code]),
+		case Code of
+		    0 -> gen_statem:reply(From, ok);
+		    _ -> gen_statem:reply(From, {error, Code})
+		end,
+		DData
+	end,
 
     Data =
 	case get_wlan(WlanIdent, Data1) of
@@ -723,21 +671,35 @@ handle_event({call, From}, {set_ssid, {RadioId, WlanId} = WlanIdent, SSID, Suppr
 		internal_add_wlan(RadioId, WlanId, AddResponseFun, Data1);
 
 	    #wlan{} ->
-		DelResponseFun = fun(0, _, DData) ->
-					 lager:debug("DelResponseFun: success"),
-					 internal_add_wlan(RadioId, WlanId, AddResponseFun, DData);
-				    (Code, Arg, DData) ->
-					 lager:debug("DelResponseFun: ~w", [Code]),
-					 AddResponseFun(Code, Arg, DData)
-				 end,
+		DelResponseFun =
+		    fun(0, _, DData) ->
+			    lager:debug("Del WLAN ok for ~p", [CommonName]),
+			    lager:debug("DelResponseFun: success"),
+			    internal_add_wlan(RadioId, WlanId, AddResponseFun, DData);
+
+		       (Code, Arg, DData) ->
+			    lager:debug("Del WLAN failed for ~p with ~w", [CommonName, Code]),
+			    lager:debug("DelResponseFun: ~w", [Code]),
+			    AddResponseFun(Code, Arg, DData)
+		    end,
 		internal_del_wlan(WlanIdent, DelResponseFun, Data1)
 	end,
     {keep_state, Data};
 
-handle_event({call, From}, {stop_radio, RadioId}, run, Data) ->
+handle_event({call, From}, {stop_radio, RadioId}, run, #data{id = CommonName} = Data) ->
+    ResponseFun =
+	fun(0, _, RData) ->
+		lager:debug("Del WLAN ok for ~p", [CommonName]),
+		RData;
+
+	   (Code, _Arg, RData) ->
+		lager:debug("Del WLAN failed for ~p with ~w", [CommonName, Code]),
+		RData
+	end,
+
     Data1 =
 	lists:foldl(fun(WlanIdent = {RId, _}, S) when RId == RadioId->
-			    internal_del_wlan(WlanIdent, undefined, S);
+			    internal_del_wlan(WlanIdent, ResponseFun, S);
 		       (_, S) ->
 			    S
 		    end, Data, Data#data.wlans),
@@ -928,8 +890,12 @@ handle_capwap_message(Header, {Msg, 0, Seq,
     case queue:peek(Queue) of
 	{value, {Seq, _, NotifyFun}} ->
 	    Data1 = ack_request(Data),
-	    Data2 = response_notify(NotifyFun, Code, {Msg, Elements, Header}, Data1),
-	    {keep_state, Data2, {next_event, cast, {Msg, Seq, Elements, Header}}};
+	    if is_function(NotifyFun) ->
+		    Data2 = response_notify(NotifyFun, Code, {Msg, Elements, Header}, Data1),
+		    {keep_state, Data2};
+	       true ->
+		    {keep_state, Data1, {next_event, cast, {Msg, Seq, Elements, Header}}}
+	    end;
 	_ ->
 	    %% invalid Seq, out-of-order packet, silently ignore,
 	    keep_state_and_data
@@ -1929,16 +1895,44 @@ internal_add_wlan(RadioId, WlanId, NotifyFun, Data)
     %% do nothing....
     response_notify(NotifyFun, -1, unconfigured, Data).
 
-internal_add_wlan_result(WlanIdent, NotifyFun, Code, Arg, Data0)
+internal_add_wlan_result({RadioId, WlanId} = WlanIdent,
+			 NotifyFun, Code, {_, Elements, _} = Arg,
+			 #data{data_channel_address = WTPDataChannelAddress,
+			       id = CommonName, config = Config, wlans = Wlans} = Data0)
   when Code == 0 ->
-    Data = update_wlan_state(WlanIdent,
-			      fun(W0) ->
-				      W = W0#wlan{state = running},
-				      start_group_rekey_timer(W)
-			      end, Data0),
+    lager:debug("IEEE 802.11 WLAN Configuration ok for ~p", [CommonName]),
+    BSSIdIEs = get_ies(ieee_802_11_assigned_wtp_bssid, Elements),
+    Data1 = Data0#data{config = Config#wtp{broken_add_wlan_workaround = (BSSIdIEs =:= [])}},
+
+    if (BSSIdIEs == [] andalso length(Wlans) /= 1) ->
+	    %% no BSS Id and multiple Wlans, this can not work, error out
+	    lager:error("~p: WTP with broken Add WLAN Response and multiple "
+			"WLAN is not working", [CommonName]);
+       BSSIdIEs == [] ->
+	    %% no BSS Ids means the WTP is broken, activate workaround
+	    lager:warning("~p: WTP with broken Add WLAN Response, "
+			  "upgrade as soon as possible", [CommonName]);
+       true ->
+	    ok
+    end,
+
+    Data = update_wlan_state(
+	     WlanIdent,
+	     fun(W0 = #wlan{vlan = VlanId}) ->
+		     W = case BSSIdIEs of
+			     [#ieee_802_11_assigned_wtp_bssid{bssid = BSS}] ->
+				 capwap_dp:add_wlan(WTPDataChannelAddress,
+						    RadioId, WlanId, BSS, VlanId),
+				 W0#wlan{state = running, bss = BSS};
+			     _ ->
+				 W0#wlan{state = running}
+			  end,
+		     start_group_rekey_timer(W)
+	     end, Data1),
     response_notify(NotifyFun, Code, Arg, Data);
 
-internal_add_wlan_result(WlanIdent, NotifyFun, Code, Arg, Data0) ->
+internal_add_wlan_result(WlanIdent, NotifyFun, Code, Arg, #data{id = CommonName} = Data0) ->
+    lager:warning("IEEE 802.11 WLAN Configuration failed for ~p with ~w", [CommonName, Code]),
     Data = update_wlan_state(WlanIdent,
 			      fun(W) -> W#wlan{state = unconfigured} end, Data0),
     response_notify(NotifyFun, Code, Arg, Data).
@@ -2460,22 +2454,18 @@ stop_wtp(State, Data) ->
 
 response_notify(NotifyFun, Code, Arg, Data)
   when is_function(NotifyFun, 3) ->
-    try
-	NotifyFun(Code, Arg, Data)
-    catch
-	Class:Cause ->
-	    lager:debug("notify failed with ~p:~p", [Class, Cause]),
-	    Data
-    end;
-response_notify(_, _, _, Data) ->
+    NotifyFun(Code, Arg, Data);
+response_notify(undefined, _, _, Data) ->
     Data.
 
-response_fsm_reply(From) ->
-    response_fsm_reply(From, _, _, _).
+internal_add_station_response_fun(From) ->
+    internal_add_station_response(From, _, _, _).
 
-response_fsm_reply(From, 0, _, Data) ->
+internal_add_station_response(From, 0, _, Data) ->
+    lager:debug("Station Configuration ok"),
     gen_statem:reply(From, ok),
     Data;
-response_fsm_reply(From, Code, _, Data) ->
+internal_add_station_response(From, Code, _, Data) ->
+    lager:warning("Station Configuration failed with ~w", [Code]),
     gen_statem:reply(From, {error, Code}),
     Data.
