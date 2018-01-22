@@ -97,3 +97,29 @@
 	  group_rekey,
 	  strict_group_rekey
 	 }).
+
+-define(DEFAULT_RADIO(RadioId, RadioType),
+   [{radio_id,                RadioId},
+    {radio_type,              RadioType},
+    {operation_mode,          '802.11g'},
+    {channel,                 undefined},
+    {beacon_interval,         100},
+    {dtim_period,             1},
+    {short_preamble,          supported},
+    {rts_threshold,           2347},
+    {short_retry,             7},
+    {long_retry,              4},
+    {fragmentation_threshold, 2346},
+    {tx_msdu_lifetime,        512},
+    {rx_msdu_lifetime,        512},
+    {tx_power,                100},
+    {channel_assessment,      csonly},
+    {energy_detect_threshold, 100},
+    {band_support,            16#7F},
+    {ti_threshold,            1000},
+    {diversity,               disabled},
+    {combiner,                omni},
+    {antenna_selection,       [1]},
+    {report_interval,         300},
+    {wlans,                   []}]
+).

@@ -98,8 +98,9 @@
 
 	  seqno = 0,
 	  version,
-          station_count = 0,
-          wlans
+      station_count = 0,
+      wlans,
+      static_config
 }).
 
 -define(IS_RUN_CONTROL_EVENT(E),
@@ -303,15 +304,20 @@ listen({accept, udp, Socket}, State0) ->
     {ok, WTPControlChannelAddress} = capwap_udp:peername(Socket),
     PeerName = iolist_to_binary(format_peer(WTPControlChannelAddress)),
 
+    SConfig = capwap_config:wtp_static_config(PeerName),
+    WTPConfig = capwap_config:wtp_config(SConfig),
+
     Opts = [{'Username', PeerName},
 	    {'Authentication-Method', {'TLS', 'Pre-Shared-Key'}},
-            {'WTP-Config', capwap_config:wtp_config(PeerName)}],
+            {'WTP-Config', WTPConfig}],
+
     case ergw_aaa_session:authenticate(Session, to_session(Opts)) of
 	success ->
 	    lager:info("AuthResult: success"),
 	    {ok, Config} = ergw_aaa_session:attr_get('WTP-Config', ergw_aaa_session:get(Session)),
 	    State1 = State0#state{session = Session,
 				  config = Config,
+                                  static_config = SConfig,
 				  socket = {udp, Socket},
 				  id = undefined},
 
@@ -324,24 +330,32 @@ listen({accept, udp, Socket}, State0) ->
 
 listen({accept, dtls, Socket}, State) ->
     {ok, Session} = start_session(Socket, State),
-    lager:info("ssl_accept on: ~p, Opts: ~p", [Socket, mk_ssl_opts(Session)]),
-
-    case dtlsex:ssl_accept(Socket, mk_ssl_opts(Session), ?SSL_ACCEPT_TIMEOUT) of
+    Opts = mk_ssl_opts(Session),
+    case dtlsex:ssl_accept(Socket, Opts, ?SSL_ACCEPT_TIMEOUT) of
         {ok, SslSocket} ->
             lager:info("ssl_accept: ~p", [SslSocket]),
             {ok, WTPControlChannelAddress} = dtlsex:peername(SslSocket),
             dtlsex:setopts(SslSocket, [{active, true}, {mode, binary}]),
 
             CommonName = common_name(SslSocket),
+
+            SConfig = receive
+                {static_config, Config1} ->
+                    Config1
+            after
+                100 ->
+                    capwap_config:wtp_static_config(CommonName)
+            end,
+
 	    lager:md([{wtp, CommonName}]),
 	    lager:debug("ssl_cert: ~p", [CommonName]),
 
             maybe_takeover(CommonName),
             capwap_wtp_reg:register_args(CommonName, WTPControlChannelAddress),
-
 	    {ok, Config} = ergw_aaa_session:attr_get('WTP-Config', ergw_aaa_session:get(Session)),
             State1 = State#state{socket = {dtls, SslSocket}, session = Session,
-				 config = Config, id = CommonName},
+                                 config = Config, id = CommonName,
+                                 static_config = SConfig},
             %% TODO: find old connection instance, take over their StationState and stop them
             next_state(idle, State1);
         Other ->
@@ -373,14 +387,15 @@ idle({join_request, Seq, Elements, #capwap_header{
 			   radio_id = RadioId, wb_id = WBID, flags = Flags}},
      State0 = #state{ctrl_channel_address = WTPControlChannelAddress,
 		     session = Session, id = CommonName,
-		     config = Config0}) ->
+		     config = Config0, static_config = SConfig}) ->
     {Address, _} = WTPControlChannelAddress,
     Version = get_wtp_version(Elements),
     SessionId = proplists:get_value(session_id, Elements),
     capwap_wtp_reg:register_sessionid(Address, SessionId),
 
     RadioInfos = get_ies(ieee_802_11_wtp_radio_information, Elements),
-    Config = capwap_config:wtp_set_radio_infos(CommonName, RadioInfos, Config0),
+
+    Config = capwap_config:wtp_set_radio_infos(CommonName, RadioInfos, Config0, SConfig),
 
     StartTime = erlang:system_time(milli_seconds),
     MacTypes = ie(wtp_mac_type, Elements),
@@ -1631,17 +1646,20 @@ user_lookup(srp, Username, _UserState) ->
     UserPassHash = crypto:hash(sha, [Salt, crypto:hash(sha, [Username, <<$:>>, <<"secret">>])]),
     {ok, {srp_1024, Salt, UserPassHash}};
 
-user_lookup(psk, Username, Session) ->
+user_lookup(psk, Username, {Session, CapwapFSM}) ->
     lager:debug("user_lookup: Username: ~p", [Username]),
+    Config = capwap_config:wtp_static_config(Username),
+    WTPConfig = capwap_config:wtp_config(Config),
     Opts = [{'Username', Username},
 	    {'Authentication-Method', {'TLS', 'Pre-Shared-Key'}},
-	    {'WTP-Config', capwap_config:wtp_config(Username)}],
+	    {'WTP-Config', WTPConfig}],
     case ergw_aaa_session:authenticate(Session, to_session(Opts)) of
 	success ->
 	    lager:info("AuthResult: success"),
 	    case ergw_aaa_session:get(Session, 'TLS-Pre-Shared-Key') of
 		{ok, PSK} ->
 		    lager:info("AuthResult: PSK: ~p", [PSK]),
+                    CapwapFSM ! {static_config, Config},
 		    {ok, PSK};
 		_ ->
 		    lager:info("AuthResult: NO PSK"),
@@ -1675,15 +1693,18 @@ verify_cert(#'OTPCertificate'{
 	_    -> {fail, "not a valid WTP certificate"}
     end.
 
-verify_cert_auth_cn(CommonName, Session) ->
+verify_cert_auth_cn(CommonName, {Session, CapwapFSM}) ->
     lager:info("AuthResult: attempt for ~p", [CommonName]),
+    Config = capwap_config:wtp_static_config(CommonName),
+    WTPConfig = capwap_config:wtp_config(Config),
     Opts = [{'Username', CommonName},
-	    {'Authentication-Method', {'TLS', 'X509-Subject-CN'}},
-	    {'WTP-Config', capwap_config:wtp_config(CommonName)}],
+            {'Authentication-Method', {'TLS', 'X509-Subject-CN'}},
+            {'WTP-Config', WTPConfig}],
     case ergw_aaa_session:authenticate(Session, to_session(Opts)) of
         success ->
+            CapwapFSM ! {static_config, Config},
             lager:info("AuthResult: success for ~p", [CommonName]),
-	    {valid, Session};
+            {valid, {Session, CapwapFSM}};
         {fail, Reason} ->
             lager:info("AuthResult: fail, ~p for ~p", [Reason, CommonName]),
             {fail, Reason};
@@ -1723,11 +1744,11 @@ mk_ssl_opts(Session) ->
 	       {psk, aes_256_cbc,sha}]},
 
      {verify, verify_peer},
-     {verify_fun, {fun verify_cert/3, Session}},
+     {verify_fun, {fun verify_cert/3, {Session, self()}}},
      {fail_if_no_peer_cert, true},
 
      {psk_identity, "CAPWAP"},
-     {user_lookup_fun, {fun user_lookup/3, Session}},
+     {user_lookup_fun, {fun user_lookup/3, {Session, self()}}},
      %% {ciphers,[{srp_dss, aes_256_cbc, sha}]},
      %% {ciphers, [{srp_anon, aes_256_cbc, sha}]},
 
@@ -1823,6 +1844,7 @@ tuple_to_ip({A, B, C, D, E, F, G, H}) ->
 
 %% AttrNamesAndDefaults = [{LocalName, RemoteName, Default}, ...]
 wtp_config_get(CommonName, AttrNamesAndDefaults) when is_list(AttrNamesAndDefaults) ->
+
     App = capwap,
     Wtps = application:get_env(App, wtps, []),
     LocalCnf = proplists:get_value(CommonName, Wtps, []),
