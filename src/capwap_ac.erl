@@ -74,6 +74,7 @@
 	  socket,
 	  ctrl_stream,
 	  session,
+	  config_provider_state,
 	  config,
 	  mac_types,
 	  tunnel_modes,
@@ -284,12 +285,16 @@ handle_event(cast, {accept, udp, Socket}, listen, Data0) ->
 
     Opts = [{'Username', PeerName},
 	    {'Authentication-Method', {'TLS', 'Pre-Shared-Key'}},
-	    {'WTP-Config', capwap_config:wtp_config(PeerName)}],
+	    {'Config-Provider-State', capwap_config:wtp_init_config_provider(PeerName)}],
     case ergw_aaa_session:authenticate(Session, to_session(Opts)) of
 	success ->
 	    lager:info("AuthResult: success"),
-	    {ok, Config} = ergw_aaa_session:attr_get('WTP-Config', ergw_aaa_session:get(Session)),
+	    {ok, CfgProvState} =
+		ergw_aaa_session:attr_get('Config-Provider-State',
+					  ergw_aaa_session:get(Session)),
+	    Config = capwap_config:wtp_config(CfgProvState),
 	    Data1 = Data0#data{session = Session,
+			       config_provider_state = CfgProvState,
 			       config = Config,
 			       socket = {udp, Socket},
 			       id = undefined},
@@ -318,9 +323,15 @@ handle_event(cast, {accept, dtls, Socket}, listen, Data) ->
 	    maybe_takeover(CommonName),
 	    capwap_wtp_reg:register_args(CommonName, WTPControlChannelAddress),
 
-	    {ok, Config} = ergw_aaa_session:attr_get('WTP-Config', ergw_aaa_session:get(Session)),
-	    Data1 = Data#data{socket = {dtls, SslSocket}, session = Session,
-			      config = Config, id = CommonName},
+	    {ok, CfgProvState} =
+		ergw_aaa_session:attr_get('Config-Provider-State',
+					  ergw_aaa_session:get(Session)),
+	    Config = capwap_config:wtp_config(CfgProvState),
+	    Data1 = Data#data{socket = {dtls, SslSocket},
+			      session = Session,
+			      config_provider_state = CfgProvState,
+			      config = Config,
+			      id = CommonName},
 	    %% TODO: find old connection instance, take over their StationData and stop them
 	    {next_state, join, Data1};
 	Other ->
@@ -352,6 +363,7 @@ handle_event(cast, {join_request, Seq, Elements,
 		       radio_id = RId, wb_id = WBID, flags = Flags}},
 	     join, Data0 = #data{ctrl_channel_address = WTPControlChannelAddress,
 				 session = Session, id = CommonName,
+				 config_provider_state = CfgProvState,
 				 config = Config0}) ->
     {Address, _} = WTPControlChannelAddress,
     Version = get_wtp_version(Elements),
@@ -364,7 +376,7 @@ handle_event(cast, {join_request, Seq, Elements,
 	      lists:map(
 		fun(#ieee_802_11_wtp_radio_information{
 		       radio_id = RadioId, radio_type = RadioType}) ->
-			capwap_config:wtp_radio_config(CommonName, RadioId, RadioType)
+			capwap_config:wtp_radio_config(CfgProvState, RadioId, RadioType)
 		end, get_ies(ieee_802_11_wtp_radio_information, Elements))},
 
     StartTime = erlang:system_time(milli_seconds),
@@ -686,7 +698,7 @@ handle_event({call, From}, get_state, _State, Data) ->
 handle_event({call, From}, {set_ssid, {RadioId, WlanId} = WlanIdent, SSID, SuppressSSID},
 	     run, #data{config = Config0} = Data0) ->
     Settings = [{ssid, SSID}, {suppress_ssid, SuppressSSID}],
-    Config = capwap_config:update_wlan_config(RadioId, WlanId, Settings, Config0),
+    Config = update_wlan_config(RadioId, WlanId, Settings, Config0),
     Data1 = Data0#data{config = Config},
 
     AddResponseFun = fun(Code, _, DData) ->
@@ -1174,6 +1186,19 @@ update_radio_info(_, Config) ->
 update_radio_information(Elements, Config) ->
     lists:foldl(fun update_radio_info/2, Config, Elements).
 
+update_wlan_cfg(Fun, WlanId, #wtp_radio{wlans = WLANs} = Radio) ->
+    case lists:keyfind(WlanId, #wtp_wlan_config.wlan_id, WLANs) of
+	#wtp_wlan_config{} = WLAN ->
+	    Radio#wtp_radio{
+	      wlans = lists:keystore(WlanId, #wtp_wlan_config.wlan_id, WLANs, Fun(WLAN))};
+	_ ->
+	    Radio
+    end.
+
+update_wlan_config(RadioId, WlanId, Settings, Config) ->
+    update_radio_cfg(
+      update_wlan_cfg(capwap_config:'#set-'(Settings, _), WlanId, _), RadioId, Config).
+
 rateset('11b-only') ->
     [10, 20, 55, 110];
 rateset('11g-only') ->
@@ -1531,7 +1556,7 @@ user_lookup(psk, Username, Session) ->
     lager:debug("user_lookup: Username: ~p", [Username]),
     Opts = [{'Username', Username},
 	    {'Authentication-Method', {'TLS', 'Pre-Shared-Key'}},
-	    {'WTP-Config', capwap_config:wtp_config(Username)}],
+	    {'Config-Provider-State', capwap_config:wtp_init_config_provider(Username)}],
     case ergw_aaa_session:authenticate(Session, to_session(Opts)) of
 	success ->
 	    lager:info("AuthResult: success"),
@@ -1575,7 +1600,7 @@ verify_cert_auth_cn(CommonName, Session) ->
     lager:info("AuthResult: attempt for ~p", [CommonName]),
     Opts = [{'Username', CommonName},
 	    {'Authentication-Method', {'TLS', 'X509-Subject-CN'}},
-	    {'WTP-Config', capwap_config:wtp_config(CommonName)}],
+	    {'Config-Provider-State', capwap_config:wtp_init_config_provider(CommonName)}],
     case ergw_aaa_session:authenticate(Session, to_session(Opts)) of
 	success ->
 	    lager:info("AuthResult: success for ~p", [CommonName]),
