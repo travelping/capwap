@@ -349,7 +349,7 @@ handle_event(cast, {discovery_request, Seq, Elements,
 
 handle_event(cast, {join_request, Seq, Elements,
 		    #capwap_header{
-		       radio_id = RadioId, wb_id = WBID, flags = Flags}},
+		       radio_id = RId, wb_id = WBID, flags = Flags}},
 	     join, Data0 = #data{ctrl_channel_address = WTPControlChannelAddress,
 				 session = Session, id = CommonName,
 				 config = Config0}) ->
@@ -358,8 +358,14 @@ handle_event(cast, {join_request, Seq, Elements,
     SessionId = proplists:get_value(session_id, Elements),
     capwap_wtp_reg:register_sessionid(Address, SessionId),
 
-    RadioInfos = get_ies(ieee_802_11_wtp_radio_information, Elements),
-    Config = capwap_config:wtp_set_radio_infos(CommonName, RadioInfos, Config0),
+    Config =
+	Config0#wtp{
+	  radios =
+	      lists:map(
+		fun(#ieee_802_11_wtp_radio_information{
+		       radio_id = RadioId, radio_type = RadioType}) ->
+			capwap_config:wtp_radio_config(CommonName, RadioId, RadioType)
+		end, get_ies(ieee_802_11_wtp_radio_information, Elements))},
 
     StartTime = erlang:system_time(milli_seconds),
     MacTypes = ie(wtp_mac_type, Elements),
@@ -378,9 +384,9 @@ handle_event(cast, {join_request, Seq, Elements,
 	++ [#ecn_support{ecn_support = full},
 	    #local_ipv4_address{ip_address = <<127,0,0,1>>},
 	    #result_code{result_code = 0}],
-    Header = #capwap_header{radio_id = RadioId, wb_id = WBID, flags = Flags},
+    Header = #capwap_header{radio_id = RId, wb_id = WBID, flags = Flags},
     Data = send_response(Header, join_response, Seq, RespElements, Data1),
-    SessionOpts = wtp_accounting_infos(Elements, [{'CAPWAP-Radio-Id', RadioId}]),
+    SessionOpts = wtp_accounting_infos(Elements, [{'CAPWAP-Radio-Id', RId}]),
     lager:info("WTP Session Start Opts: ~p", [SessionOpts]),
 
     exometer:update_or_create([capwap, wtp, CommonName, start_time], StartTime, gauge, []),
