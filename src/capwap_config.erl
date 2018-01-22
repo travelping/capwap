@@ -20,7 +20,7 @@
 -export_records([wtp, wtp_radio, wtp_wlan_config]).
 
 -export([validate/0, get/2, get/3, wtp_config/1,
-	 wtp_set_radio_infos/3, update_wlan_config/4]).
+	 wtp_radio_config/3, update_wlan_config/4]).
 
 -include("capwap_packet.hrl").
 -include("capwap_config.hrl").
@@ -206,9 +206,7 @@ wtp_init_wlan_mf(CN, Radio, Settings, Count) ->
 wtp_init_radio_type_config(CN, RadioType, Radio) ->
     wtp_get([CN, radio_settings, RadioType], Radio).
 
-wtp_init_radio_config(CN, #ieee_802_11_wtp_radio_information{
-			     radio_id = RadioId,
-			     radio_type = RadioType}) ->
+wtp_radio_config(CN, RadioId, RadioType) ->
     Radio0 = [{radio_id,		RadioId},
 	      {radio_type,		RadioType},
 	      {operation_mode,		'802.11g'},
@@ -247,11 +245,6 @@ wtp_init_radio_config(CN, #ieee_802_11_wtp_radio_information{
     %% convert the remaining WLAN tupple list into a record list
     {Wlans, _} = lists:mapfoldl(wtp_init_wlan_mf(CN, RadioRec, _, _), 1, RadioRec#wtp_radio.wlans),
     RadioRec#wtp_radio{wlans = Wlans}.
-
-wtp_set_radio_infos(CN, RadioInfos, Config) ->
-    Radios = lists:map(wtp_init_radio_config(CN, _), RadioInfos),
-    lager:debug("Radios: ~p", [Radios]),
-    Config#wtp{radios = Radios}.
 
 update_wlan_config(RadioId, WlanId, Settings, #wtp{radios = Radios} = Config) ->
     Radio = lists:keyfind(RadioId, #wtp_radio.radio_id, Radios),
