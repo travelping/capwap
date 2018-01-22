@@ -1,0 +1,80 @@
+{
+   "type" : "wtp-common-config",
+   "version" : "1.0",
+   "config" : {
+      "idle_timeout" : 300,
+      "broken_add_wlan_workaround" : false,
+      "data_channel_dead_interval" : 70,
+      "ac_join_timeout" : 70,
+      "psm_idle_timeout" : 30,
+      "psm_busy_timeout" : 300,
+      "echo_request_interval" : 60,
+      "max_stations" : 100,
+      "discovery_interval" : 20,
+      "wlan_hold_time" : 15,
+      "radio" : [
+	 {
+	    "radio_id" : 1,
+	     "radio_type": ["802.11a"],
+	     "channel" : 36,
+	     "operation_mode": "802.11g",
+	     "beacon_interval": 100,
+	     "dtim_period": 1,
+	     "short_preamble": "supported",
+	     "rts_threshold": 2347,
+	     "short_retry": 7,
+	     "long_retry": 4,
+	     "fragmentation_threshold": 2346,
+	     "tx_msdu_lifetime": 512,
+	     "rx_msdu_lifetime": 512,
+	     "tx_power": 100,
+	     "channel_assessment": "csonly",
+	     "energy_detect_threshold": 100,
+	     "band_support": 127,
+	     "ti_threshold": 1000,
+	     "diversity": "disabled",
+	     "combiner": "omni",
+	     "antenna_selection": [1],
+	     "report_interval": 300,
+	     "wlans" : [
+	       {
+		   "wlan_id" : 1,
+		   "suppress_ssid" : 0,
+		   "ssid" : "test 1",
+		   "mac_mode": "local_mac",
+		   "secret": "12345678",
+		   "privacy": true,
+		   "keymgmt": "psk",
+		   "peer_rekey": 3600,
+		   "group_rekey": 3600,
+		   "strict_group_rekey": false,
+		   "fast_transition": false,
+		   "mobility_domain": 0,
+		   "management_frame_protection": "optional",
+		   "rsn": {
+		       "version": 1,
+		       "capabilities": "0x000C",
+		       "group_cipher_suite": "CCMP",
+		       "management_frame_protection": false,
+		       "group_mgmt_cipher_suite": "AES-CMAC",
+		       "cipher_suites": ["CCMP"],
+		       "akm_suites": ["psk", "ft-psk", "wpa", "ft-wpa"]
+		   }
+	       }
+	    ],
+	    "combiner" : "omni",
+	    "report_interval" : 300,
+	    "operation_mode" : "802.11g",
+	    "ti_threshold" : 1000,
+	    "antenna_selection" : [
+	       1
+	    ],
+	    "rx_msdu_lifetime" : 512,
+	    "long_retry" : 4,
+	    "channel_assessment" : "csonly",
+	    "short_preamble" : "supported",
+	     "diversity" : "disabled"
+	 }
+      ]
+   }
+}

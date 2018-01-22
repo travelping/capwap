@@ -16,6 +16,7 @@
 	ergw_aaa,
 	cowboy,
 	pbkdf2,
+	hackney,
 	jsx
     ]},
     {mod, { capwap_app, []}}

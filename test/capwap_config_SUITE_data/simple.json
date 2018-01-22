@@ -1,0 +1,50 @@
+{
+   "type" : "wtp-common-config",
+   "version" : "1.0",
+   "config" : {
+      "idle_timeout" : 300,
+      "broken_add_wlan_workaround" : false,
+      "data_channel_dead_interval" : 70,
+      "ac_join_timeout" : 70,
+      "psm_idle_timeout" : 30,
+      "psm_busy_timeout" : 300,
+      "echo_request_interval" : 60,
+      "max_stations" : 100,
+      "discovery_interval" : 20,
+      "wlan_hold_time" : 15,
+      "radio" : [
+	 {
+	    "short_retry" : 7,
+	    "beacon_interval" : 100,
+	    "tx_power" : 100,
+	    "energy_detect_threshold" : 100,
+	    "rts_threshold" : 2347,
+	    "fragmentation_threshold" : 2346,
+	    "dtim_period" : 1,
+	    "tx_msdu_lifetime" : 512,
+	    "band_support" : 127,
+	    "channel" : 36,
+	    "wlans" : [
+	       {
+		  "suppress_ssid" : 0,
+		  "ssid" : "test 1",
+		  "wlan_id" : 1
+	       }
+	    ],
+	    "combiner" : "omni",
+	    "report_interval" : 300,
+	    "operation_mode" : "802.11g",
+	    "ti_threshold" : 1000,
+	    "antenna_selection" : [
+	       1
+	    ],
+	    "rx_msdu_lifetime" : 512,
+	    "long_retry" : 4,
+	    "channel_assessment" : "csonly",
+	    "short_preamble" : "supported",
+	    "radio_id" : 1,
+	    "diversity" : "disabled"
+	 }
+      ]
+   }
+}
