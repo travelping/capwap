@@ -19,8 +19,9 @@
 -compile({parse_transform, exprecs}).
 -export_records([wtp, wtp_radio, wtp_wlan_config]).
 
--export([validate/0, get/2, get/3, wtp_config/1,
-	 wtp_radio_config/3, update_wlan_config/4]).
+-export([validate/0, get/2, get/3,
+	 wtp_init_config_provider/1, wtp_config/1,
+	 wtp_radio_config/3]).
 
 -include("capwap_packet.hrl").
 -include("capwap_config.hrl").
@@ -77,7 +78,7 @@ wtp_get(Path, Values)
 		      {K, proplists:get_value(K, Settings, V)}
 	      end, Values).
 
-wtp_config(CN) ->
+wtp_init_config_provider(CN) ->
     WTP0 = [{psm_idle_timeout,           30},
 	    {psm_busy_timeout,           300},
 	    {max_stations,               100},
@@ -92,7 +93,10 @@ wtp_config(CN) ->
     WTP1 = wtp_get([defaults], WTP0),
     WTP2 = wtp_get([CN], WTP1),
     lager:debug("WTP: ~p", [WTP2]),
-    '#new-wtp'(WTP2).
+    {CN, WTP2}.
+
+wtp_config({_CN, Cfg}) ->
+    '#new-wtp'(Cfg).
 
 bool_to_int(true) -> 1;
 bool_to_int(X) when is_integer(X) andalso X > 0 -> 1;
@@ -206,7 +210,7 @@ wtp_init_wlan_mf(CN, Radio, Settings, Count) ->
 wtp_init_radio_type_config(CN, RadioType, Radio) ->
     wtp_get([CN, radio_settings, RadioType], Radio).
 
-wtp_radio_config(CN, RadioId, RadioType) ->
+wtp_radio_config({CN, _}, RadioId, RadioType) ->
     Radio0 = [{radio_id,		RadioId},
 	      {radio_type,		RadioType},
 	      {operation_mode,		'802.11g'},
@@ -245,12 +249,3 @@ wtp_radio_config(CN, RadioId, RadioType) ->
     %% convert the remaining WLAN tupple list into a record list
     {Wlans, _} = lists:mapfoldl(wtp_init_wlan_mf(CN, RadioRec, _, _), 1, RadioRec#wtp_radio.wlans),
     RadioRec#wtp_radio{wlans = Wlans}.
-
-update_wlan_config(RadioId, WlanId, Settings, #wtp{radios = Radios} = Config) ->
-    Radio = lists:keyfind(RadioId, #wtp_radio.radio_id, Radios),
-    WLAN = lists:keyfind(WlanId, #wtp_wlan_config.wlan_id, Radio#wtp_radio.wlans),
-    Radio1 = Radio#wtp_radio{wlans = lists:keystore(WlanId, #wtp_wlan_config.wlan_id,
-						    Radio#wtp_radio.wlans,
-						    '#set-'(Settings, WLAN))},
-    Config#wtp{radios = lists:keystore(RadioId, #wtp_radio.radio_id,
-				       Radios, Radio1)}.
