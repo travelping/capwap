@@ -283,9 +283,10 @@ handle_event(cast, {accept, udp, Socket}, listen, Data0) ->
     {ok, WTPControlChannelAddress} = capwap_udp:peername(Socket),
     PeerName = iolist_to_binary(format_peer(WTPControlChannelAddress)),
 
+    {ok, CfgProvStateInit} = capwap_config:wtp_init_config_provider(PeerName),
     Opts = [{'Username', PeerName},
 	    {'Authentication-Method', {'TLS', 'Pre-Shared-Key'}},
-	    {'Config-Provider-State', capwap_config:wtp_init_config_provider(PeerName)}],
+	    {'Config-Provider-State', CfgProvStateInit}],
     case ergw_aaa_session:authenticate(Session, to_session(Opts)) of
 	success ->
 	    lager:info("AuthResult: success"),
@@ -1554,9 +1555,10 @@ user_lookup(srp, Username, _UserData) ->
 
 user_lookup(psk, Username, Session) ->
     lager:debug("user_lookup: Username: ~p", [Username]),
+    {ok, CfgProvStateInit} = capwap_config:wtp_init_config_provider(Username),
     Opts = [{'Username', Username},
 	    {'Authentication-Method', {'TLS', 'Pre-Shared-Key'}},
-	    {'Config-Provider-State', capwap_config:wtp_init_config_provider(Username)}],
+	    {'Config-Provider-State', CfgProvStateInit}],
     case ergw_aaa_session:authenticate(Session, to_session(Opts)) of
 	success ->
 	    lager:info("AuthResult: success"),
@@ -1598,9 +1600,10 @@ verify_cert(#'OTPCertificate'{
 
 verify_cert_auth_cn(CommonName, Session) ->
     lager:info("AuthResult: attempt for ~p", [CommonName]),
+    {ok, CfgProvStateInit} = capwap_config:wtp_init_config_provider(CommonName),
     Opts = [{'Username', CommonName},
 	    {'Authentication-Method', {'TLS', 'X509-Subject-CN'}},
-	    {'Config-Provider-State', capwap_config:wtp_init_config_provider(CommonName)}],
+	    {'Config-Provider-State', CfgProvStateInit}],
     case ergw_aaa_session:authenticate(Session, to_session(Opts)) of
 	success ->
 	    lager:info("AuthResult: success for ~p", [CommonName]),
