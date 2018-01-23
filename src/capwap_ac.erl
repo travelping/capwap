@@ -522,7 +522,7 @@ handle_event({call, From}, {new_station, BSS, SA}, run, Data0) ->
     {keep_state, Data, [{reply, From, Reply}]};
 
 handle_event({call, From}, Event = {add_station, BSS, MAC, StaCaps, CryptoData}, run, Data0) ->
-    lager:warning("in RUN got expexted: ~p", [Event]),
+    lager:warning("in RUN got expected: ~p", [Event]),
     Wlan = get_wlan_by_bss(BSS, Data0),
     lager:warning("WLAN: ~p", [Wlan]),
     Data = internal_add_station(Wlan, MAC, StaCaps, CryptoData,
@@ -695,7 +695,7 @@ handle_event(cast, station_detaching, _State, Data=#data{id = WtpId, station_cou
     end;
 
 handle_event(cast, {Msg, Seq, Elements, Header}, State, _Data) ->
-    lager:warning("in ~s got unexpexted: ~p",
+    lager:warning("in ~s got unexpected: ~p",
 		  [State, {Msg, Seq, Elements, Header}]),
     keep_state_and_data;
 
