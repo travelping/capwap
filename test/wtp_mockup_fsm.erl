@@ -500,10 +500,10 @@ handle_incoming(Response = {#capwap_header{},
     {next_state, join, remove_rp(Data), {reply, From, {ok, Response}}};
 
 handle_incoming(Response = {#capwap_header{},
-			    {configuration_status_response, _, _RemoteSeq, IEs}},
+			    {configuration_status_response, _, _RemoteSeq,
+			     #{timers := #timers{echo_request = EchoTimer}} = IEs}},
 		join, control,
 		Data = #data{request_pending={configuration_status_response, From}}) ->
-    #timers{echo_request = EchoTimer} = lists:keyfind(timers, 1, IEs),
     {next_state, configure, remove_rp(Data#data{echo_request_timeout = EchoTimer}),
      {reply, From, {ok, Response}}};
 
@@ -531,7 +531,7 @@ handle_incoming(Request = {#capwap_header{},
 		      async, {resp, RemoteSeq}, undefined),
     {keep_state, DataNew, [{reply, From, {ok, Request}} | Actions]};
 
-handle_incoming(Response = {_Header, {change_state_event_response, _, _, []}},
+handle_incoming(Response = {_Header, {change_state_event_response, _, _, #{}}},
 		configure, control,
 		Data = #data{capwap_wtp_session_id = CapwapWtpSessionId,
 			    request_pending = {change_state_event_response, From},

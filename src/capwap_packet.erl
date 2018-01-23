@@ -19,7 +19,9 @@
 -export([decode_rate/1, encode_rate/2,
 	 decode_cipher_suite/1, encode_cipher_suite/1,
 	 decode_akm_suite/1, encode_akm_suite/1]).
--compile(export_all).
+-ifdef(TEST).
+-compile([export_all, nowarn_export_all]).
+-endif.
 
 -include("capwap_packet.hrl").
 
@@ -71,10 +73,10 @@ decode_packet(data, true, Header, PayLoad) ->
     PayLoadLength = byte_size(PayLoad),
     case PayLoad of
 	<<PayLoadLength:16, ME/binary>> ->
-	    {Header, decode_elements(ME, [])};
+	    {Header, decode_elements(ME, #{})};
 	_ ->
 	    %% FIXME: workarround for broken OpenCAPWAP encoding
-	    {Header, decode_elements(PayLoad, [])}
+	    {Header, decode_elements(PayLoad, #{})}
     end.
 
 %%%-------------------------------------------------------------------
@@ -98,7 +100,7 @@ encode(control, {#capwap_header{radio_id = RID,
     {M, RadioMACbin} = encode_header(RadioMAC),
     K = encode_flag('keep-alive', Flags),
     {Vendor, MType} = message_type(MsgType),
-    MsgElements = << <<(encode_element(X))/binary>> || X <- IEs>>,
+    MsgElements = encode_elements(IEs, <<>>),
     PayLoad = <<Vendor:24, MType:8, SeqNum:8, (byte_size(MsgElements) + 3):16, 0:8, MsgElements/binary>>,
     HeaderLen = (8 + byte_size(RadioMACbin) + byte_size(WirelessSpecInfoBin)),
     HLen = HeaderLen div 4,
@@ -167,17 +169,24 @@ encode_partbin(Header, F, L, FragmentId, FragmentOffset, PayLoad) ->
 %%% decoder
 %%%-------------------------------------------------------------------
 
+put_ie(IE, IEs) ->
+    Key = element(1, IE),
+    UpdateFun = fun(V) when is_list(V) -> V ++ [IE];
+		   (V)                 -> [V, IE]
+		end,
+    maps:update_with(Key, UpdateFun, IE, IEs).
+
 decode_control_msg(<<Vendor:24/integer, MsgType:8/integer, SeqNum:8/integer,
 	      Length:16/integer, 0:8, IEs/binary>>)
   when size(IEs) == (Length - 3)->
-    DecIEs = decode_elements(IEs, []),
+    DecIEs = decode_elements(IEs, #{}),
     {message_type({Vendor, MsgType}), MsgType band 1, SeqNum, DecIEs}.
 
-decode_elements(<<>>, Acc) ->
-    lists:reverse(Acc);
-decode_elements(<<Type:16/integer, Len:16/integer, Value:Len/bytes, Next/binary>>, Acc) ->
+decode_elements(<<>>, IEs) ->
+    IEs;
+decode_elements(<<Type:16/integer, Len:16/integer, Value:Len/bytes, Next/binary>>, IEs) ->
     IE = decode_element(Type, Value),
-    decode_elements(Next, [IE|Acc]).
+    decode_elements(Next, put_ie(IE, IEs)).
 
 decode_mac_list(<<_Num:8/integer, Len:8/integer, MACs/binary>>) ->
     [X || <<X:Len/bytes>> <= MACs].
@@ -321,6 +330,21 @@ encode_vendor_subelement(Vendor, Type, Value) ->
 encode_vendor_subelements(IEs) ->
     << <<(encode_vendor_subelement(Vendor, Type, Value))/binary>> || {{Vendor, Type}, Value} <- IEs >>.
 
+encode_ie(V, Acc) when is_list(V) ->
+    encode_elements(V, Acc);
+encode_ie(V, Acc) ->
+    <<Acc/binary, (encode_element(V))/binary>>.
+
+encode_ie(_K, V, Acc) ->
+    encode_ie(V, Acc).
+
+encode_elements(IEs, Acc) when is_binary(IEs) ->
+    <<Acc/binary, IEs/binary>>;
+encode_elements(IEs, Acc) when is_list(IEs) ->
+    lists:foldl(fun encode_ie/2, Acc, IEs);
+encode_elements(IEs, Acc) when is_map(IEs) ->
+    maps:fold(fun encode_ie/3, Acc, IEs).
+
 encode_element(Type, Value) ->
     <<Type:16, (byte_size(Value)):16, Value/binary>>.
 
@@ -332,7 +356,7 @@ encode_data_keep_alive(#capwap_header{}, IEs, FragId, MTU) ->
     %%   the CAPWAP Header, except the HLEN field and the 'K' bit, are set to
     %%   zero upon transmission.
     Header = {2, 0, 0, 0, 0, 0, 1, <<>>},
-    MsgElements = << <<(encode_element(X))/binary>> || X <- IEs>>,
+    MsgElements = encode_elements(IEs, <<>>),
     PayLoad = <<(byte_size(MsgElements) + 2):16, MsgElements/binary>>,
     encode_part(Header, FragId, 0, PayLoad, MTU - 8).
 
