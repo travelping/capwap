@@ -2447,7 +2447,7 @@ wtp_stats_to_accouting(_) ->
 stop_wtp(run, #data{data_channel_address = WTPDataChannelAddress}) ->
     lager:error("STOP_WTP in run"),
     case catch (capwap_dp:del_wtp(WTPDataChannelAddress)) of
-	{ok, {WTPDataChannelAddress, _Stations, _RefCnt, _MTU, Stats} = Values} ->
+	{ok, {WTPDataChannelAddress, _WLANs, _Stations, _RefCnt, _MTU, Stats} = Values} ->
 	    lager:debug("Delete WTP: ~p, ~p", [WTPDataChannelAddress, Values]),
 	    wtp_stats_to_accouting(Stats);
 	Other ->
