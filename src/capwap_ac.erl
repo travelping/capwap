@@ -118,7 +118,7 @@
 -define(log_capwap_control(Id, MsgType, SeqNo, Elements, Header),
 	try
 	    #capwap_header{radio_id = RadioId, wb_id = WBID} = Header,
-	    lager:info("~s: ~s(Seq: ~w, R-Id: ~w, WB-Id: ~w): ~p", [Id, capwap_packet:msg_description(MsgType), SeqNo, RadioId, WBID, [lager:pr(E, ?MODULE) || E <- Elements]])
+	    lager:info("~s: ~s(Seq: ~w, R-Id: ~w, WB-Id: ~w): ~p", [Id, capwap_packet:msg_description(MsgType), SeqNo, RadioId, WBID, [lager:pr(E, ?MODULE) || E <- maps:values(Elements)]])
 	catch
 	    _:_ -> ok
 	end).
@@ -359,7 +359,16 @@ handle_event(cast, {discovery_request, Seq, Elements,
     Data1 = send_response(Header, discovery_response, Seq, RespElements, Data),
     {keep_state, Data1};
 
-handle_event(cast, {join_request, Seq, Elements,
+handle_event(cast, {join_request, Seq,
+		    #{session_id := #session_id{session_id = SessionId},
+		      wtp_mac_type := #wtp_mac_type{mac_type = MacTypes},
+		      wtp_frame_tunnel_mode :=
+			  #wtp_frame_tunnel_mode{mode = TunnelModes},
+		      location_data := #location_data{location = Location},
+		      wtp_board_data := BoardData,
+		      wtp_descriptor := Descriptor,
+		      wtp_name := #wtp_name{wtp_name = Name}
+		     } = Elements,
 		    #capwap_header{
 		       radio_id = RId, wb_id = WBID, flags = Flags}},
 	     join, Data0 = #data{ctrl_channel_address = WTPControlChannelAddress,
@@ -368,7 +377,6 @@ handle_event(cast, {join_request, Seq, Elements,
 				 config = Config0}) ->
     {Address, _} = WTPControlChannelAddress,
     Version = get_wtp_version(Elements),
-    SessionId = proplists:get_value(session_id, Elements),
     capwap_wtp_reg:register_sessionid(Address, SessionId),
 
     Config =
@@ -381,15 +389,13 @@ handle_event(cast, {join_request, Seq, Elements,
 		end, get_ies(ieee_802_11_wtp_radio_information, Elements))},
 
     StartTime = erlang:system_time(milli_seconds),
-    MacTypes = ie(wtp_mac_type, Elements),
-    TunnelModes = ie(wtp_frame_tunnel_mode, Elements),
     Data1 = Data0#data{config = Config,
 			  session_id = SessionId, mac_types = MacTypes,
 			  tunnel_modes = TunnelModes, version = Version,
-			  location = ie(location_data, Elements),
-			  board_data = get_ie(wtp_board_data, Elements),
-			  descriptor = get_ie(wtp_descriptor, Elements),
-			  name = ie(wtp_name, Elements),
+			  location = Location,
+			  board_data = BoardData,
+			  descriptor = Descriptor,
+			  name = Name,
 			  start_time = StartTime
 			 },
 
@@ -399,7 +405,7 @@ handle_event(cast, {join_request, Seq, Elements,
 	    #result_code{result_code = 0}],
     Header = #capwap_header{radio_id = RId, wb_id = WBID, flags = Flags},
     Data = send_response(Header, join_response, Seq, RespElements, Data1),
-    SessionOpts = wtp_accounting_infos(Elements, [{'CAPWAP-Radio-Id', RId}]),
+    SessionOpts = wtp_accounting_infos(maps:values(Elements), [{'CAPWAP-Radio-Id', RId}]),
     lager:info("WTP Session Start Opts: ~p", [SessionOpts]),
 
     exometer:update_or_create([capwap, wtp, CommonName, start_time], StartTime, gauge, []),
@@ -552,67 +558,67 @@ handle_event(cast, {keep_alive, _DataPath, WTPDataChannelAddress, Header, PayLoa
     sendto(Header, PayLoad, Data),
     keep_state_and_data;
 
-handle_event(cast, {ieee_802_11_wlan_configuration_response, _Seq, Elements, _Header},
+handle_event(cast, {ieee_802_11_wlan_configuration_response, _Seq,
+		    #{result_code := #result_code{result_code = 0}} = Elements,
+		    _Header},
 	     run, #data{data_channel_address = WTPDataChannelAddress, id = CommonName,
 		       config = Config, wlans = Wlans} = Data0) ->
-    Data =
-	case proplists:get_value(result_code, Elements) of
-	    0 ->
-		lager:debug("IEEE 802.11 WLAN Configuration ok for ~p", [CommonName]),
+    lager:debug("IEEE 802.11 WLAN Configuration ok for ~p", [CommonName]),
 
-		BSSIdIEs = get_ies(ieee_802_11_assigned_wtp_bssid, Elements),
-		Data1 = Data0#data{config = Config#wtp{broken_add_wlan_workaround = (BSSIdIEs =:= [])}},
+    BSSIdIEs = get_ies(ieee_802_11_assigned_wtp_bssid, Elements),
+    Data1 = Data0#data{config = Config#wtp{broken_add_wlan_workaround = (BSSIdIEs =:= [])}},
 
-		if (BSSIdIEs == [] andalso length(Wlans) /= 1) ->
-			%% no BSS Id and multiple Wlans, this can not work, error out
-			lager:error("~p: WTP with broken Add WLAN Response and multiple WLAN is not working", [CommonName]);
-		   BSSIdIEs == [] ->
-			%% no BSS Ids means the WTP is broken, activate workaround
-			lager:warning("~p: WTP with broken Add WLAN Response, upgrade as soon as possible", [CommonName]);
-		   true ->
-			ok
-		end,
+    if (BSSIdIEs == [] andalso length(Wlans) /= 1) ->
+	    %% no BSS Id and multiple Wlans, this can not work, error out
+	    lager:error("~p: WTP with broken Add WLAN Response and multiple WLAN is not working", [CommonName]);
+       BSSIdIEs == [] ->
+	    %% no BSS Ids means the WTP is broken, activate workaround
+	    lager:warning("~p: WTP with broken Add WLAN Response, upgrade as soon as possible", [CommonName]);
+       true ->
+	    ok
+    end,
 
-		lists:foldl(fun(#ieee_802_11_assigned_wtp_bssid{radio_id = RadioId,
-								wlan_id = WlanId,
-								bssid = BSS}, S0) ->
-				    update_wlan_state({RadioId, WlanId},
-						      fun(W = #wlan{vlan = VlanId}) ->
-							      capwap_dp:add_wlan(WTPDataChannelAddress,
-										 RadioId, WlanId, BSS, VlanId),
-							      W#wlan{bss = BSS}
-						      end, S0)
-			    end, Data1, BSSIdIEs);
-
-	    Code ->
-		lager:warning("IEEE 802.11 WLAN Configuration failed for ~p with ~w", [CommonName, Code]),
-		%% TODO: handle Update failures
-		Data0
-	end,
+    Data = lists:foldl(
+	     fun(#ieee_802_11_assigned_wtp_bssid{
+		    radio_id = RadioId,
+		    wlan_id = WlanId,
+		    bssid = BSS}, S0) ->
+		     update_wlan_state({RadioId, WlanId},
+				       fun(W = #wlan{vlan = VlanId}) ->
+					       capwap_dp:add_wlan(WTPDataChannelAddress,
+								  RadioId, WlanId, BSS, VlanId),
+					       W#wlan{bss = BSS}
+				       end, S0)
+	     end, Data1, BSSIdIEs),
     {keep_state, Data};
 
-handle_event(cast, {station_configuration_response, _Seq, Elements, _Header}, run, _Data) ->
-    %% TODO: timeout and Error handling, e.g. shut the station process down when the Add Station failed
-    case proplists:get_value(result_code, Elements) of
-	0 ->
-	    lager:debug("Station Configuration ok"),
-	    ok;
-	Code ->
-	    lager:warning("Station Configuration failed with ~w", [Code]),
-	    ok
-    end,
+handle_event(cast, {ieee_802_11_wlan_configuration_response, _Seq,
+		    #{result_code := #result_code{result_code = Code}},
+		    _Header},
+	     run, #data{id = CommonName}) ->
+    lager:warning("IEEE 802.11 WLAN Configuration failed for ~p with ~w", [CommonName, Code]),
+    %% TODO: handle Update failures
+    {keep_state_and_data};
+
+handle_event(cast, {station_configuration_response, _Seq,
+		    #{result_code := #result_code{result_code = 0}}, _Header}, run, _Data) ->
+    lager:debug("Station Configuration ok"),
+    keep_state_and_data;
+handle_event(cast, {station_configuration_response, _Seq,
+		    #{result_code := #result_code{result_code = Code}}, _Header}, run, _Data) ->
+    %% TODO: timeout and Error handling,
+    %% e.g. shut the station process down when the Add Station failed
+    lager:warning("Station Configuration failed with ~w", [Code]),
     keep_state_and_data;
 
-handle_event(cast, {configuration_update_response, _Seq, Elements, _Header}, run, _Data) ->
+handle_event(cast, {configuration_update_response, _Seq,
+		    #{result_code := #result_code{result_code = 0}}, _Header}, run, _Data) ->
+    lager:debug("Configuration Update ok"),
+    keep_state_and_data;
+handle_event(cast, {configuration_update_response, _Seq,
+		    #{result_code := #result_code{result_code = Code}}, _Header}, run, _Data) ->
     %% TODO: Error handling
-    case proplists:get_value(result_code, Elements) of
-	0 ->
-	    lager:debug("Configuration Update ok"),
-	    ok;
-	Code ->
-	    lager:warning("Configuration Update failed with ~w", [Code]),
-	    ok
-    end,
+    lager:warning("Configuration Update failed with ~w", [Code]),
     keep_state_and_data;
 
 handle_event(cast, {wtp_event_request, Seq, Elements, RequestHeader =
@@ -845,11 +851,11 @@ handle_plain_join(Peer, Seq, _Elements, #capwap_header{
 	    {reply, Answer}
     end.
 
-handle_capwap_data(DataPath, WTPDataChannelAddress, Header, true, PayLoad) ->
+handle_capwap_data(DataPath, WTPDataChannelAddress, Header, true,
+		   #{session_id := #session_id{session_id = SessionId}} = PayLoad) ->
     lager:debug("CAPWAP Data KeepAlive: ~p", [PayLoad]),
 
     {Address, _Port} = WTPDataChannelAddress,
-    SessionId = proplists:get_value(session_id, PayLoad),
     case capwap_wtp_reg:lookup_sessionid(Address, SessionId) of
 	not_found ->
 	    lager:warning("CAPWAP data from unknown WTP ~s", [format_peer(WTPDataChannelAddress)]),
@@ -914,15 +920,15 @@ handle_capwap_message(Header, {Msg, 1, Seq, Elements},
 	    {keep_state, Data, {next_event, cast, {Msg, Seq, Elements, Header}}}
     end;
 
-handle_capwap_message(Header, {Msg, 0, Seq, Elements},
+handle_capwap_message(Header, {Msg, 0, Seq,
+			       #{result_code := #result_code{result_code = Code}} = Elements},
 		      Data = #data{request_queue = Queue}) ->
     %% Response
     ?log_capwap_control(peer_log_str(Data), Msg, Seq, Elements, Header),
     case queue:peek(Queue) of
 	{value, {Seq, _, NotifyFun}} ->
 	    Data1 = ack_request(Data),
-	    Data2 = response_notify(NotifyFun, proplists:get_value(result_code, Elements),
-				     {Msg, Elements, Header}, Data1),
+	    Data2 = response_notify(NotifyFun, Code, {Msg, Elements, Header}, Data1),
 	    {keep_state, Data2, {next_event, cast, {Msg, Seq, Elements, Header}}};
 	_ ->
 	    %% invalid Seq, out-of-order packet, silently ignore,
@@ -939,13 +945,17 @@ maybe_takeover(CommonName) ->
     end.
 
 handle_wtp_event(Elements, Header, Data = #data{session = Session}) ->
-    SessionOptsList = lists:foldl(fun(Ev, SOptsList) -> handle_wtp_stats_event(Ev, Header, SOptsList) end, [], Elements),
+    IEs = maps:values(Elements),
+    SessionOptsList = handle_wtp_stats_event(IEs, Header, []),
     if length(SessionOptsList) /= 0 ->
 	    ergw_aaa_session:interim_batch(Session, SessionOptsList);
        true -> ok
     end,
-    lists:foldl(fun(Ev, Data0) -> handle_wtp_action_event(Ev, Header, Data0) end, Data, Elements).
+    handle_wtp_action_event(IEs, Header, Data).
 
+handle_wtp_action_event(IEs, Header, Data)
+  when is_list(IEs) ->
+    lists:foldl(handle_wtp_action_event(_, Header, _), Data, IEs);
 handle_wtp_action_event(#delete_station{radio_id = RadioId, mac = MAC}, _Header, Data) ->
     case capwap_station_reg:lookup(self(), RadioId, MAC) of
 	{ok, Station} ->
@@ -958,6 +968,9 @@ handle_wtp_action_event(#delete_station{radio_id = RadioId, mac = MAC}, _Header,
 handle_wtp_action_event(_Action, _Header, Data) ->
     Data.
 
+handle_wtp_stats_event(IEs, Header, SOptsList)
+  when is_list(IEs) ->
+    lists:foldl(handle_wtp_stats_event(_, Header, _), SOptsList, IEs);
 handle_wtp_stats_event(#gps_last_acquired_position{timestamp = _EventTimestamp,
 						   wwan_id = _WwanId,
 						   gpsatc = GpsString},
@@ -1039,27 +1052,25 @@ s2i(V) ->
 split_version(Value) ->
     [s2i(V) || V <- string:tokens(binary_to_list(Value), ".-")].
 
-get_wtp_version(Elements) ->
-    case lists:keyfind(wtp_descriptor, 1, Elements) of
-	#wtp_descriptor{sub_elements=SubElements} ->
-	    case lists:keyfind({18681,0}, 1, SubElements) of
-		{_, <<123456:64/integer>>} ->
-		    %% old, broken version encoding
-		    {16#010103, []};
-		{_, Value} ->
-		    case split_version(Value) of
-			[Major, Minor, Patch|AddOn]
-			  when is_integer(Major), is_integer(Minor), is_integer(Patch) ->
-			    {Major * 65536 + Minor * 256 + Patch, AddOn};
-			_ ->
-			    {0, undefined}
-		    end;
+get_wtp_version(#{wtp_descriptor :=
+		      #wtp_descriptor{sub_elements=SubElements}}) ->
+    case lists:keyfind({18681,0}, 1, SubElements) of
+	{_, <<123456:64/integer>>} ->
+	    %% old, broken version encoding
+	    {16#010103, []};
+	{_, Value} ->
+	    case split_version(Value) of
+		[Major, Minor, Patch|AddOn]
+		  when is_integer(Major), is_integer(Minor), is_integer(Patch) ->
+		    {Major * 65536 + Minor * 256 + Patch, AddOn};
 		_ ->
 		    {0, undefined}
 	    end;
 	_ ->
 	    {0, undefined}
-    end.
+    end;
+get_wtp_version(_) ->
+    {0, undefined}.
 
 wtp_accounting_infos([], Acc) ->
     Acc;
@@ -1169,23 +1180,24 @@ update_radio_cfg(Fun, RadioId, #wtp{radios = Radios} = Config) ->
 	    Config
     end.
 
-update_radio_info(#ieee_802_11_supported_rates{
-			   radio_id = RadioId,
-			   supported_rates = SRates}, Config) ->
+update_radio_info(K, V, Config) when is_list(V) ->
+    lists:foldl(update_radio_info(K, _, _), Config, V);
+update_radio_info(_, #ieee_802_11_supported_rates{
+			radio_id = RadioId,
+			supported_rates = SRates}, Config) ->
     update_radio_cfg(update_radio_sup_rates(SRates, _), RadioId, Config);
-update_radio_info(#ieee_802_11n_wlan_radio_configuration{
-			   radio_id = RadioId} = Cfg, Config) ->
+update_radio_info(_, #ieee_802_11n_wlan_radio_configuration{
+			radio_id = RadioId} = Cfg, Config) ->
     update_radio_cfg(update_radio_80211n_cfg(Cfg, _), RadioId, Config);
-update_radio_info(#tp_ieee_802_11_encryption_capabilities{
-		     radio_id = RadioId,
-		     cipher_suites = CipherSuites}, Config) ->
+update_radio_info(_, #tp_ieee_802_11_encryption_capabilities{
+			radio_id = RadioId,
+			cipher_suites = CipherSuites}, Config) ->
     update_radio_cfg(update_radio_cipher_suites(CipherSuites, _), RadioId, Config);
-
-update_radio_info(_, Config) ->
+update_radio_info(_, _, Config) ->
     Config.
 
 update_radio_information(Elements, Config) ->
-    lists:foldl(fun update_radio_info/2, Config, Elements).
+    maps:fold(fun update_radio_info/3, Config, Elements).
 
 update_wlan_cfg(Fun, WlanId, #wtp_radio{wlans = WLANs} = Radio) ->
     case lists:keyfind(WlanId, #wtp_wlan_config.wlan_id, WLANs) of
@@ -1698,20 +1710,13 @@ start_session(Socket, _Data) ->
 		    {'Tunnel-Client-Endpoint', ip2str(Address)}],
     ergw_aaa_session_sup:new_session(self(), to_session(SessionOpts)).
 
-ie(Key, Elements) ->
-    proplists:get_value(Key, Elements).
-
-get_ie(Key, Elements) ->
-    get_ie(Key, Elements, undefined).
-
-get_ie(Key, Elements, Default) ->
-    case lists:keyfind(Key, 1, Elements) of
-	false -> Default;
-	Value -> Value
-    end.
-
 get_ies(Key, Elements) ->
-    [E || E <- Elements, element(1, E) == Key].
+    case maps:get(Key, Elements, []) of
+	IEs when is_list(IEs) ->
+	    IEs;
+	IE when is_tuple(IE) ->
+	    [IE]
+    end.
 
 select_mac_mode(#wtp_wlan_config{mac_mode = local_mac}, local) ->
     local_mac;
@@ -2281,7 +2286,7 @@ internal_send_80211_station(_, _, _) ->
     ok.
 
 get_admin_wifi_updates(Data, IEs) ->
-    StartedWlans = [X || X <- IEs, element(1, X) == ieee_802_11_tp_wlan],
+    StartedWlans = get_ies(ieee_802_11_tp_wlan, IEs),
     lager:debug("Found Admin Wlans started by the WTP: ~p", [StartedWlans]),
     AdminSSIds = wtp_config_get(Data#data.id, [{admin_ssids, admin_ssids, []}]),
     get_admin_wifi_update(StartedWlans, AdminSSIds).

@@ -69,6 +69,8 @@ enc_dec_prop(Config) ->
 		     begin
 			 ct:pal("Msg: ~p", [Msg]),
 			 [Enc] = capwap_packet:encode(control, Msg),
+			 Dec = capwap_packet:decode(control, Enc),
+			 ct:pal("Dec: ~p", [Dec]),
 			 ?equal([Enc], capwap_packet:encode(control,
 							  capwap_packet:decode(control, Enc)))
 		     end)).
@@ -316,7 +318,22 @@ simple_ie() ->
        gen_tp_ieee_802_11_update_key()]).
 
 ie() ->
-      ?LET(I, integer(1,10), vector(I, simple_ie())).
+    ie_map(
+      ?LET(I, integer(1,10), vector(I, simple_ie()))).
+
+put_ie(IE, IEs) ->
+    Key = element(1, IE),
+    UpdateFun = fun(V) when is_list(V) -> V ++ [IE];
+		   (undefined)         -> IE;
+		   (V)                 -> [V, IE]
+		end,
+    maps:update_with(Key, UpdateFun, IE, IEs).
+
+list2map(List) ->
+    lists:foldl(fun put_ie/2, #{}, List).
+
+ie_map(IEs) ->
+    ?LET(L, IEs, list2map(L)).
 
 sub_element() ->
     ?LET(I, integer(1,10), vector(I, {uint16(), binary()})).

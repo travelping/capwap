@@ -188,101 +188,81 @@ mkint(C) when $a =< C, C =< $f ->
 suite() ->
 	[{timetrap,{seconds,30}}].
 
+do_test_dec_enc_dec(Msg0) ->
+    Dec0 = capwap_packet:decode(control, Msg0),
+    ct:pal("Msg: ~p~n", [Dec0]),
+    [Msg1] = capwap_packet:encode(control, Dec0),
+    ?equal(byte_size(Msg0), byte_size(Msg1)),
+    Dec1 = capwap_packet:decode(control, Msg1),
+    ?equal(Dec0, Dec1).
+
 test_discovery_request(_Config) ->
     Msg = capwap_discovery_request(),
-    R = capwap_packet:decode(control, Msg),
-    ct:pal("R: ~p~n", [R]),
-    ?equal([Msg], capwap_packet:encode(control, R)),
+    do_test_dec_enc_dec(Msg),
     ok.
 
 test_discovery_reponse(_Config) ->
     Msg = capwap_discovery_response(),
-    R = capwap_packet:decode(control, Msg),
-    ct:pal("R: ~p~n", [R]),
-    ?equal([Msg], capwap_packet:encode(control, R)),
+    do_test_dec_enc_dec(Msg),
     ok.
 
 test_join_request(_Config) ->
     Msg = capwap_join_request(),
-    R = capwap_packet:decode(control, Msg),
-    ct:pal("R: ~p~n", [R]),
-    ?equal([Msg], capwap_packet:encode(control, R)),
+    do_test_dec_enc_dec(Msg),
     ok.
 
 test_join_response(_Config) ->
     Msg = capwap_join_response(),
-    R = capwap_packet:decode(control, Msg),
-    ct:pal("R: ~p~n", [R]),
-    ?equal([Msg], capwap_packet:encode(control, R)),
+    do_test_dec_enc_dec(Msg),
     ok.
 
 test_configuration_status_request(_Config) ->
     Msg = capwap_configuration_status_request(),
-    R = capwap_packet:decode(control, Msg),
-    ct:pal("R: ~p~n", [R]),
-    ?equal([Msg], capwap_packet:encode(control, R)),
+    do_test_dec_enc_dec(Msg),
     ok.
 
 test_configuration_status_response(_Config) ->
     Msg = capwap_configuration_status_response(),
-    R = capwap_packet:decode(control, Msg),
-    ct:pal("R: ~p~n", [R]),
-    ?equal([Msg], capwap_packet:encode(control, R)),
+    do_test_dec_enc_dec(Msg),
     ok.
 
 test_change_state_request(_Config) ->
     Msg = capwap_change_state_request(),
-    R = capwap_packet:decode(control, Msg),
-    ct:pal("R: ~p~n", [R]),
-    ?equal([Msg], capwap_packet:encode(control, R)),
+    do_test_dec_enc_dec(Msg),
     ok.
 
 test_change_state_response(_Config) ->
     Msg = capwap_change_state_response(),
-    R = capwap_packet:decode(control, Msg),
-    ct:pal("R: ~p~n", [R]),
-    ?equal([Msg], capwap_packet:encode(control, R)),
+    do_test_dec_enc_dec(Msg),
     ok.
 
 test_wlan_configuration_request(_Config) ->
     Msg = capwap_wlan_configuration_request(),
-    R = capwap_packet:decode(control, Msg),
-    ct:pal("R: ~p~n", [R]),
-    ?equal([Msg], capwap_packet:encode(control, R)),
+    do_test_dec_enc_dec(Msg),
     ok.
 
 test_wlan_configuration_response(_Config) ->
     Msg = capwap_wlan_configuration_response(),
-    R = capwap_packet:decode(control, Msg),
-    ct:pal("R: ~p~n", [R]),
-    ?equal([Msg], capwap_packet:encode(control, R)),
+    do_test_dec_enc_dec(Msg),
     ok.
 
 test_station_configuration_request(_Config) ->
     Msg = capwap_station_configuration_request(),
-    R = capwap_packet:decode(control, Msg),
-    ct:pal("R: ~p~n", [R]),
-    ?equal([Msg], capwap_packet:encode(control, R)),
+    do_test_dec_enc_dec(Msg),
     ok.
 
 test_station_configuration_response(_Config) ->
     Msg = capwap_station_configuration_response(),
-    R = capwap_packet:decode(control, Msg),
-    ct:pal("R: ~p~n", [R]),
-    ?equal([Msg], capwap_packet:encode(control, R)),
+    do_test_dec_enc_dec(Msg),
     ok.
 
 test_echo_request(_Config) ->
     Msg = capwap_echo_request(),
-    R = capwap_packet:decode(control, Msg),
-    ct:pal("R: ~p~n", [R]),
-    ?equal([Msg], capwap_packet:encode(control, R)),
+    do_test_dec_enc_dec(Msg),
     ok.
 test_echo_response(_Config) ->
     Msg = capwap_echo_response(),
-    R = capwap_packet:decode(control, Msg),
-    ct:pal("R: ~p~n", [R]),
-    ?equal([Msg], capwap_packet:encode(control, R)),
+    do_test_dec_enc_dec(Msg),
     ok.
 
 test_wwan_stats_long(_Config) ->
