@@ -1,5 +1,5 @@
 {
-   "type" : "wtp-common-config",
+   "type" : "wtp-config",
    "version" : "1.0",
    "config" : {
       "idle_timeout" : 300,

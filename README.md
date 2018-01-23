@@ -10,6 +10,8 @@ Erlang CAPWAP AC implementation.
 
 [http api](docs/http_api.md)
 
+[configuration providers for WTPs](docs/wtp_config_providers.md)
+
 BUILDING
 --------
 
