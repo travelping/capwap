@@ -185,10 +185,10 @@ init_auth(cast, Event = {'Authentication', DA, SA, BSS, 0, 0, Frame},
 	    {keep_state_and_data, [?IDLE_TIMEOUT]}
     end;
 
-init_auth({call, From}, Event, State)
+init_auth({call, _} = EventType, Event, State)
   when element(1, Event) == take_over ->
     lager:debug("in INIT_AUTH got TAKE-OVER: ~p", [Event]),
-    handle_take_over(Event, From, State);
+    handle_take_over(EventType, Event, State);
 
 init_auth({call, From}, Event, _State) when Event == detach; Event == delete ->
     {keep_state_and_data, [{reply, From, {error, not_attached}}, ?IDLE_TIMEOUT]};
@@ -291,10 +291,10 @@ init_assoc(cast, Event = {FrameType, DA, SA, BSS, 0, 0, ReqFrame},
 
     {next_state, connected, State, ?IDLE_TIMEOUT};
 
-init_assoc({call, From}, Event, State)
+init_assoc({call, _} = EventType, Event, State)
   when element(1, Event) == take_over ->
     lager:debug("in INIT_ASSOC got TAKE-OVER: ~p", [Event]),
-    handle_take_over(Event, From, State);
+    handle_take_over(EventType, Event, State);
 
 init_assoc({call, From}, Event, _State) when Event == detach; Event == delete ->
     {keep_state_and_data, [{reply, From, {error, not_attached}}, ?IDLE_TIMEOUT]};
@@ -333,10 +333,10 @@ init_start(cast, Event = {'Null', _DA, _SA, BSS, 0, 1, <<>>},
     State = wtp_add_station(State0),
     {next_state, connected, State, ?IDLE_TIMEOUT};
 
-init_start({call, From}, Event, State)
+init_start({call, _} = EventType, Event, State)
   when element(1, Event) == take_over ->
     lager:debug("in INIT_START got TAKE-OVER: ~p", [Event]),
-    handle_take_over({call, From}, Event, State);
+    handle_take_over(EventType, Event, State);
 
 init_start({call, From}, Event, _State) when Event == detach; Event == delete ->
     {keep_state_and_data, [{reply, From, {error, not_attached}}, ?IDLE_TIMEOUT]};
@@ -453,11 +453,11 @@ connected(cast, Event = {start_gtk_rekey, RekeyCtl, GTKnew, IGTKnew},
     State = rekey_start(gtk, State0#state{gtk = GTKnew, igtk = IGTKnew, rekey_control = RekeyCtl}),
     {keep_state, State, [?IDLE_TIMEOUT]};
 
-connected({call, From}, Event, State)
+connected({call, _} = EventType, Event, State)
   when element(1, Event) == take_over ->
     lager:debug("in CONNECTED got TAKE-OVER: ~p", [Event]),
     aaa_disassociation(State),
-    handle_take_over(Event, From, State);
+    handle_take_over(EventType, Event, State);
 
 connected({call, From}, delete, State = #state{mac_mode = MacMode}) ->
     wtp_del_station(State),
@@ -645,10 +645,10 @@ ieee80211_request(_AC, FrameType, DA, SA, BSS, FromDS, ToDS, Frame) ->
     lager:warning("unhandled IEEE 802.11 Frame: ~p", [{FrameType, DA, SA, BSS, FromDS, ToDS, Frame}]),
     {error, unhandled}.
 
-handle_take_over({take_over, AC, StationCfg = #station_config{
+handle_take_over({call, From},
+		 {take_over, AC, StationCfg = #station_config{
 						 bss = RadioMAC,
 						 mac_mode = MacMode}},
-		 _From,
 		 State0 = #state{ac = OldAC, ac_monitor = OldACMonitor,
 				 data_path = _OldDataPath,
 				 radio_mac = OldRadioMAC, mac = ClientMAC}) ->
@@ -664,7 +664,7 @@ handle_take_over({take_over, AC, StationCfg = #station_config{
     ACMonitor = erlang:monitor(process, AC),
 
     State = update_state_from_cfg(StationCfg, State0#state{ac = AC, ac_monitor = ACMonitor}),
-    {next_state, initial_state(MacMode), State, [{reply, {ok, self}}, ?IDLE_TIMEOUT]}.
+    {next_state, initial_state(MacMode), State, [{reply, From, {ok, self()}}, ?IDLE_TIMEOUT]}.
 
 %% partially en/decode Authentication Frames
 decode_auth_frame(<<Algo:16/little-integer, SeqNo:16/little-integer,
