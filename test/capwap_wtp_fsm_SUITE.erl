@@ -254,13 +254,33 @@ setup_applications() ->
 			       ]}
 			     ]}
 		     ]},
-	    {ergw_aaa, [{ergw_aaa_provider, {ergw_aaa_mock, [{shared_secret, <<"MySecret">>}]}}]}
+	    {ergw_aaa, [
+                {applications, [
+                    {default,
+                        {provider, ergw_aaa_mock,
+                            [{shared_secret, <<"MySecret">>}]
+                        }
+                    },
+                    {capwap_wtp,
+                        {provider, ergw_aaa_mock,
+                            [{shared_secret, <<"MySecret">>}]
+                        }
+                    },
+                    {capwap_station,
+                        {provider, ergw_aaa_mock,
+                            [{shared_secret, <<"MySecret">>}]
+                        }
+                    }
+                ]}
+            ]}
 	   ],
     [application:load(Name) || {Name, _} <- Apps],
     meck_init(),
     [setup_application(A) || A <- Apps].
 
 setup_application({Name, Env}) ->
+    application:stop(Name),
+    application:unload(Name),
     [application:set_env(Name, Key, Val) || {Key, Val} <- Env],
     application:ensure_all_started(Name);
 setup_application(Name) ->
