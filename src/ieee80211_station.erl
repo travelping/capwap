@@ -860,6 +860,7 @@ aaa_association(State = #state{mac = MAC, data_channel_address = WTPDataChannelA
 				wtp_id = WtpId, wtp_session_id = WtpSessionId}) ->
     MACStr = format_mac(MAC),
     SessionData0 = [{'Accouting-Update-Fun', fun accounting_update/2},
+                    {'AAA-Application-Id', capwap_station},
 		    {'Service-Type', 'TP-CAPWAP-STA'},
 		    {'Framed-Protocol', 'TP-CAPWAP'},
 		    {'MAC', MAC},
