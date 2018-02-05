@@ -1668,6 +1668,7 @@ accounting_update(WTP, SessionOpts) ->
 start_session(Socket, _Data) ->
     {ok, {Address, _Port}} = capwap_udp:peername(Socket),
     SessionOpts = [{'Accouting-Update-Fun', fun accounting_update/2},
+                   {'AAA-Application-Id', capwap_wtp},
 		    {'Service-Type', 'TP-CAPWAP-WTP'},
 		    {'Framed-Protocol', 'TP-CAPWAP'},
 		    {'Calling-Station', ip2str(Address)},
