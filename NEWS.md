@@ -3,6 +3,17 @@ capwap
 
 Erlang CAPWAP AC implementation.
 
+Version 2.0.0 - 06 Feb 2018
+---------------------------
+
+* Add id for handle AAA operation per WTP and per STATION with different config
+* Add HTTP config providers for dynamic WTPs configuration
+* Add HTTP REST API for capwap
+* drop tetrapak support
+* convert AC FSM and Station FSM to gen\_statem
+* tests: convert WTP mockup FSM to gen\_statem
+* tests: property based test for the packet en/decoder
+
 Version 1.9.1 - 21 Dec 2017
 ---------------------------
 
