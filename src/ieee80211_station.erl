@@ -698,27 +698,30 @@ update_sta_from_mgmt_frame(FrameType, Frame, State)
 update_sta_from_mgmt_frame(_FrameType, _Frame, State) ->
     State.
 
-update_sta_from_mgmt_frame_ies(IEs, #state{aid = AID, capabilities = Cap0} = State) ->
+update_sta_from_mgmt_frame_ies(IEs, #state{aid = AID, capabilities = Cap0} = State0) ->
+    State1 = State0#state{capabilities = Cap0#sta_cap{aid = AID}},
     ListIE = [ {Id, Data} || <<Id:8, Len:8, Data:Len/bytes>> <= IEs ],
-    Cap = lists:foldl(fun update_sta_cap_from_mgmt_frame_ie/2, Cap0#sta_cap{aid = AID}, ListIE),
-    lager:debug("New Station Caps: ~p", [lager:pr(Cap, ?MODULE)]),
-    case Cap of
-        #sta_cap{rsn = #wtp_wlan_rsn{} = RSN} ->
-            lager:info("STA: ~p, Ciphers: Group ~p, PairWise: ~p, AKM: ~p, Caps: ~w, Mgmt: ~p",
-                       [flower_tools:format_mac(State#state.mac),
-                        RSN#wtp_wlan_rsn.group_cipher_suite, RSN#wtp_wlan_rsn.cipher_suites,
-                        RSN#wtp_wlan_rsn.akm_suites, RSN#wtp_wlan_rsn.capabilities,
-                        RSN#wtp_wlan_rsn.group_mgmt_cipher_suite]);
-        _ -> nothing
+    State = lists:foldl(fun update_sta_from_mgmt_frame_ie/2, State1, ListIE),
+
+    lager:debug("New Station Caps: ~p", [lager:pr(State#state.capabilities, ?MODULE)]),
+    case State#state.capabilities of
+	#sta_cap{rsn = #wtp_wlan_rsn{} = RSN} ->
+	    lager:info("STA: ~p, Ciphers: Group ~p, PairWise: ~p, AKM: ~p, Caps: ~w, Mgmt: ~p",
+		       [flower_tools:format_mac(State#state.mac),
+			RSN#wtp_wlan_rsn.group_cipher_suite, RSN#wtp_wlan_rsn.cipher_suites,
+			RSN#wtp_wlan_rsn.akm_suites, RSN#wtp_wlan_rsn.capabilities,
+			RSN#wtp_wlan_rsn.group_mgmt_cipher_suite]);
+	_ -> nothing
     end,
-    State#state{capabilities = Cap}.
+    State.
 
 smps2atom(0) -> static;
 smps2atom(1) -> dynamic;
 smps2atom(2) -> reserved;
 smps2atom(3) -> disabled.
 
-update_sta_cap_from_mgmt_frame_ie(IE = {?WLAN_EID_HT_CAP, HtCap}, Cap) ->
+update_sta_from_mgmt_frame_ie(IE = {?WLAN_EID_HT_CAP, HtCap},
+				  #state{capabilities = Cap} = State) ->
     lager:debug("Mgmt IE HT CAP: ~p", [IE]),
     <<CapInfo:2/bytes, AMPDU_ParamsInfo:8/bits, MCSinfo:16/bytes,
       ExtHtCapInfo:2/bytes, TxBFinfo:4/bytes, ASelCap:8/bits>> = HtCap,
@@ -730,30 +733,38 @@ update_sta_cap_from_mgmt_frame_ie(IE = {?WLAN_EID_HT_CAP, HtCap}, Cap) ->
     <<_:3, AMPDU_Density:3, AMPDU_Factor:2>> = AMPDU_ParamsInfo,
     <<RxMask:10/bytes, RxHighest:16/integer-little, _TxParms:8, _:3/bytes>> = MCSinfo,
 
-    Cap#sta_cap{sgi_20mhz = (SGI20Mhz == 1), sgi_40mhz = (SGI40Mhz == 1),
-		smps = smps2atom(SMPS), back_delay = (BAckDelay == 1),
-		ampdu_density = AMPDU_Density, ampdu_factor = AMPDU_Factor,
-		rx_mask = RxMask, rx_highest = RxHighest
-	       };
+    State#state{
+      capabilities =
+	  Cap#sta_cap{sgi_20mhz = (SGI20Mhz == 1), sgi_40mhz = (SGI40Mhz == 1),
+		      smps = smps2atom(SMPS), back_delay = (BAckDelay == 1),
+		      ampdu_density = AMPDU_Density, ampdu_factor = AMPDU_Factor,
+		      rx_mask = RxMask, rx_highest = RxHighest
+		     }};
 
 %% Vendor Specific:
 %%  OUI:  00-50-F2 - Microsoft
 %%  Type: 2        - WMM/WME
 %%  WME Subtype: 0 - IE
 %%  WME Version: 1
-update_sta_cap_from_mgmt_frame_ie(IE = {?WLAN_EID_VENDOR_SPECIFIC,
-				    <<16#00, 16#50, 16#F2, 2, 0, 1, _/binary>>}, Cap) ->
+update_sta_from_mgmt_frame_ie(IE = {?WLAN_EID_VENDOR_SPECIFIC,
+				    <<16#00, 16#50, 16#F2, 2, 0, 1, _/binary>>},
+				  #state{capabilities = Cap} = State) ->
     lager:debug("Mgmt IE WMM: ~p", [IE]),
-    Cap#sta_cap{wmm = true};
+    State#state{
+      capabilities =
+	  Cap#sta_cap{wmm = true}};
 
-update_sta_cap_from_mgmt_frame_ie(IE = {?WLAN_EID_RSN, <<RSNVersion:16/little, RSNData/binary>> = RSNE}, Cap) ->
+update_sta_from_mgmt_frame_ie(IE = {?WLAN_EID_RSN, <<RSNVersion:16/little, RSNData/binary>> = RSNE},
+			      #state{capabilities = Cap} = State) ->
     lager:debug("Mgmt IE RSN: ~p", [IE]),
     RSN = decode_rsne(group_cipher_suite, RSNData, #wtp_wlan_rsn{version = RSNVersion}),
-    Cap#sta_cap{last_rsne = RSNE, rsn = RSN};
+    State#state{
+      capabilities =
+	  Cap#sta_cap{last_rsne = RSNE, rsn = RSN}};
 
-update_sta_cap_from_mgmt_frame_ie(IE = {_Id, _Value}, Cap) ->
+update_sta_from_mgmt_frame_ie(IE = {_Id, _Value}, State) ->
     lager:debug("Mgmt IE: ~p", [IE]),
-    Cap.
+    State.
 
 decode_rsne(_, <<>>, RSN) ->
     RSN;
