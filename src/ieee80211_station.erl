@@ -63,6 +63,7 @@
           data_channel_address,
 	  wtp_id,
 	  wtp_session_id,
+	  ssid,
           mac,
           mac_mode,
           tunnel_mode,
@@ -762,6 +763,11 @@ update_sta_from_mgmt_frame_ie(IE = {?WLAN_EID_RSN, <<RSNVersion:16/little, RSNDa
       capabilities =
 	  Cap#sta_cap{last_rsne = RSNE, rsn = RSN}};
 
+update_sta_from_mgmt_frame_ie(IE = {?WLAN_EID_SSID, SSID},
+			      #state{} = State) ->
+    State#state{ssid = SSID };
+
+
 update_sta_from_mgmt_frame_ie(IE = {_Id, _Value}, State) ->
     lager:debug("Mgmt IE: ~p", [IE]),
     State.
@@ -868,8 +874,10 @@ accounting_update(STA, SessionOpts) ->
     end.
 
 aaa_association(State = #state{mac = MAC, data_channel_address = WTPDataChannelAddress,
-				wtp_id = WtpId, wtp_session_id = WtpSessionId}) ->
+				wtp_id = WtpId, wtp_session_id = WtpSessionId,
+				radio_mac = BSSID, ssid = SSID}) ->
     MACStr = format_mac(MAC),
+    BSSIDStr = format_mac(BSSID),
     SessionData0 = [{'Accouting-Update-Fun', fun accounting_update/2},
                     {'AAA-Application-Id', capwap_station},
 		    {'Service-Type', 'TP-CAPWAP-STA'},
@@ -878,6 +886,8 @@ aaa_association(State = #state{mac = MAC, data_channel_address = WTPDataChannelA
 		    {'Username', MACStr},
 		    {'Calling-Station', MACStr},
 		    {'Location-Id', WtpId},
+		    {'BSSID', BSSIDStr},
+		    {'SSID', SSID},
 		    {'CAPWAP-Session-Id', <<WtpSessionId:128>>}],
     SessionData1 = add_tunnel_info(WTPDataChannelAddress, SessionData0),
     {ok, Session} = ergw_aaa_session_sup:new_session(self(), to_session(SessionData1)),
