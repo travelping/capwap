@@ -23,7 +23,7 @@
 -export([start_link/3, handle_ieee80211_frame/2, handle_ieee802_3_frame/3,
          take_over/3, detach/1, delete/1, start_gtk_rekey/4]).
 %% Helpers
--export([format_mac/1]).
+-export([format_mac/1, format_eui/1]).
 
 %% For testing
 -export([frame_type/1, frame_type/2]).
@@ -494,7 +494,7 @@ terminate(_Reason, StateName, State = #state{ac = AC, mac = MAC}) ->
 	    ok
     end,
     capwap_ac:station_detaching(AC),
-    lager:warning("Station ~s terminated in State ~w", [format_mac(MAC), StateName]),
+    lager:warning("Station ~s terminated in State ~w", [format_eui(MAC), StateName]),
     ok.
 
 code_change(_OldVsn, StateName, State, _Extra) ->
@@ -708,7 +708,7 @@ update_sta_from_mgmt_frame_ies(IEs, #state{aid = AID, capabilities = Cap0} = Sta
     case State#state.capabilities of
 	#sta_cap{rsn = #wtp_wlan_rsn{} = RSN} ->
 	    lager:info("STA: ~p, Ciphers: Group ~p, PairWise: ~p, AKM: ~p, Caps: ~w, Mgmt: ~p",
-		       [flower_tools:format_mac(State#state.mac),
+		       [format_eui(State#state.mac),
 			RSN#wtp_wlan_rsn.group_cipher_suite, RSN#wtp_wlan_rsn.cipher_suites,
 			RSN#wtp_wlan_rsn.akm_suites, RSN#wtp_wlan_rsn.capabilities,
 			RSN#wtp_wlan_rsn.group_mgmt_cipher_suite]);
@@ -763,7 +763,7 @@ update_sta_from_mgmt_frame_ie(IE = {?WLAN_EID_RSN, <<RSNVersion:16/little, RSNDa
       capabilities =
 	  Cap#sta_cap{last_rsne = RSNE, rsn = RSN}};
 
-update_sta_from_mgmt_frame_ie(IE = {?WLAN_EID_SSID, SSID},
+update_sta_from_mgmt_frame_ie(_IE = {?WLAN_EID_SSID, SSID},
 			      #state{} = State) ->
     State#state{ssid = SSID };
 
@@ -876,8 +876,8 @@ accounting_update(STA, SessionOpts) ->
 aaa_association(State = #state{mac = MAC, data_channel_address = WTPDataChannelAddress,
 				wtp_id = WtpId, wtp_session_id = WtpSessionId,
 				radio_mac = BSSID, ssid = SSID}) ->
-    MACStr = format_mac(MAC),
-    BSSIDStr = format_mac(BSSID),
+    MACStr = format_eui(MAC),
+    BSSIDStr = format_eui(BSSID),
     SessionData0 = [{'Accouting-Update-Fun', fun accounting_update/2},
                     {'AAA-Application-Id', capwap_station},
 		    {'Service-Type', 'TP-CAPWAP-STA'},
@@ -1023,6 +1023,12 @@ format_mac(<<A:8, B:8, C:8, D:8, E:8, F:8>>) ->
     flat_format("~2.16.0b:~2.16.0b:~2.16.0b:~2.16.0b:~2.16.0b:~2.16.0b", [A, B, C, D, E, F]);
 format_mac(MAC) ->
     flat_format("~w", MAC).
+
+format_eui(<<A:8, B:8, C:8, D:8, E:8, F:8>>) ->
+    flat_format("~2.16.0B-~2.16.0B-~2.16.0B-~2.16.0B-~2.16.0B-~2.16.0B", [A, B, C, D, E, F]);
+format_eui(MAC) ->
+    flat_format("~w", MAC).
+
 
 flat_format(Format, Data) ->
     lists:flatten(io_lib:format(Format, Data)).
