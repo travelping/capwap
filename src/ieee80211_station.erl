@@ -884,7 +884,7 @@ aaa_association(State = #state{mac = MAC, data_channel_address = WTPDataChannelA
 		    {'Framed-Protocol', 'TP-CAPWAP'},
 		    {'MAC', MAC},
 		    {'Username', MACStr},
-		    {'Calling-Station', MACStr},
+		    {'Calling-Station-Id', MACStr},
 		    {'Location-Id', WtpId},
 		    {'BSSID', BSSIDStr},
 		    {'SSID', SSID},
