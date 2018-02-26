@@ -231,10 +231,10 @@ fmt_dp_wtp_stats(true, {RcvdPkts, SendPkts, RcvdBytes, SendBytes,
 fmt_dp_wtp_stats(_, _, Acc) -> Acc.
 
 fmt_dp_wtp_stas(false, {MAC, _RadioId, _BSS, _Stats}) ->
-    [{mac, ieee80211_station:format_mac(MAC)}];
+    [{mac, ieee80211_station:format_eui(MAC)}];
 fmt_dp_wtp_stas(true, {MAC, _RadioId, _BSS, Stats}) ->
     {RcvdPkts, SendPkts, RcvdBytes, SendBytes} = Stats,
-    [{mac, ieee80211_station:format_mac(MAC)},
+    [{mac, ieee80211_station:format_eui(MAC)},
      {input, [{bytes, RcvdBytes},
               {packets, RcvdPkts}]},
      {output, [{bytes, SendBytes},
@@ -291,7 +291,7 @@ fmt_wtp_board_data_sub_element({3, Value}) ->
     {board_revision, Value};
 fmt_wtp_board_data_sub_element({4, Value})
   when is_binary(Value), size(Value) == 6 ->
-    {base_mac, fmt_mac(Value)};
+    {base_mac, ieee80211_station:format_eui(Value)};
 fmt_wtp_board_data_sub_element({4, Value}) ->
     {base_mac, Value};
 fmt_wtp_board_data_sub_element({Id, Value}) ->
@@ -300,10 +300,6 @@ fmt_wtp_board_data_sub_element({Id, Value}) ->
 vendor_id_str(18681) -> <<"Travelping GmbH">>;
 vendor_id_str(31496) -> <<"NetModule AG">>;
 vendor_id_str(Id) -> Id.
-
-fmt_mac(<<A:8, B:8, C:8, D:8, E:8, F:8>>) ->
-    bin_fmt("~2.16.0b:~2.16.0b:~2.16.0b:~2.16.0b:~2.16.0b:~2.16.0b",
-            [A, B, C, D, E, F]).
 
 fmt_endpoint({IP, Port}) ->
     [{ip, fmt_ip(IP)}, {port, Port}].
@@ -345,4 +341,4 @@ bin_fmt(FmtStr, Args) ->
     erlang:list_to_binary(io_lib:format(FmtStr, Args)).
 
 fmt_station_mac(Station) ->
-    bin_fmt("~s", [ieee80211_station:format_mac(Station)]).
+    bin_fmt("~s", [ieee80211_station:format_eui(Station)]).

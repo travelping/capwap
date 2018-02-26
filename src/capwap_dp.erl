@@ -148,11 +148,11 @@ handle_info({packet_in, tap, VlanId, Packet}, State) ->
 	    ok;
 
 	<<_:7, 1:1, _/binary>> ->
-	    lager:warning("need to handle multicast on VLAN ~w to ~s", [VlanId, flower_tools:format_mac(MAC)]),
+	    lager:warning("need to handle multicast on VLAN ~w to ~s", [VlanId, ieee80211_station:format_eui(MAC)]),
 	    ok;
 
 	_ ->
-	    lager:warning("packet for invalid STA ~s on VLAN ~w", [flower_tools:format_mac(MAC), VlanId]),
+	    lager:warning("packet for invalid STA ~s on VLAN ~w", [ieee80211_station:format_eui(MAC), VlanId]),
 	    ok
     end,
     {noreply, State};
