@@ -3,6 +3,13 @@ capwap
 
 Erlang CAPWAP AC implementation.
 
+Version 2.1.0 - 26 Feb 2018
+---------------------------
+
+* Format MAC addresses as EUI-48
+* Add BSSID, SSID to AAA session
+* Fix: Use `Calling-Station-Id` in AAA session
+
 Version 2.0.0 - 06 Feb 2018
 ---------------------------
 
