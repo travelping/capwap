@@ -148,11 +148,11 @@ handle_info({packet_in, tap, VlanId, Packet}, State) ->
 	    ok;
 
 	<<_:7, 1:1, _/binary>> ->
-	    lager:warning("need to handle multicast on VLAN ~w to ~s", [VlanId, ieee80211_station:format_eui(MAC)]),
+	    lager:warning("need to handle multicast on VLAN ~w to ~s", [VlanId, capwap_tools:format_eui(MAC)]),
 	    ok;
 
 	_ ->
-	    lager:warning("packet for invalid STA ~s on VLAN ~w", [ieee80211_station:format_eui(MAC), VlanId]),
+	    lager:warning("packet for invalid STA ~s on VLAN ~w", [capwap_tools:format_eui(MAC), VlanId]),
 	    ok
     end,
     {noreply, State};
@@ -321,7 +321,7 @@ run_loop(WTP) ->
 	{packet_in, tap, Packet} ->
 	    io:format("Packet-In: ~p~n", [Packet]),
 	    <<MAC:6/bytes, _/binary>> = Packet,
-	    case {flower_mac_learning:eth_addr_is_reserved(MAC), flower_mac_learning:may_learn(MAC)} of
+        case {capwap_tools:eth_addr_is_reserved(MAC), capwap_tools:may_learn(MAC)} of
 		{false, true} ->
 		    io:format("install STA: ~p~n", [MAC]),
 		    RadioId = 1,

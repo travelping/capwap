@@ -89,14 +89,14 @@ make_udp(NwSrc, NwDst, TpSrc, TpDst, PayLoad) ->
     Proto = gen_socket:protocol(udp),
 
     UDPLength = 8 + size(PayLoad),
-    UDPCSum = flower_tools:ip_csum(<<NwSrc:4/bytes-unit:8, NwDst:4/bytes-unit:8,
+    UDPCSum = capwap_tools:ip_csum(<<NwSrc:4/bytes-unit:8, NwDst:4/bytes-unit:8,
 				     0:8, Proto:8, UDPLength:16,
 				     TpSrc:16, TpDst:16, UDPLength:16, 0:16,
 				     PayLoad/binary>>),
     UDP = <<TpSrc:16, TpDst:16, UDPLength:16, UDPCSum:16, PayLoad/binary>>,
 
     TotLen = 20 + size(UDP),
-    HdrCSum = flower_tools:ip_csum(<<4:4, 5:4, 0:8, TotLen:16,
+    HdrCSum = capwap_tools:ip_csum(<<4:4, 5:4, 0:8, TotLen:16,
 				     Id:16, 0:16, 64:8, Proto:8,
 				     0:16/integer, NwSrc:4/bytes-unit:8, NwDst:4/bytes-unit:8>>),
     IP = <<4:4, 5:4, 0:8, TotLen:16,

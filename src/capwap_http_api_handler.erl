@@ -259,10 +259,10 @@ fmt_dp_wtp_stats(true, {RcvdPkts, SendPkts, RcvdBytes, SendBytes,
 fmt_dp_wtp_stats(_, _, Acc) -> Acc.
 
 fmt_dp_wtp_stas(false, {MAC, _RadioId, _BSS, _Stats}) ->
-    [{mac, ieee80211_station:format_eui(MAC)}];
+    [{mac, capwap_tools:format_eui(MAC)}];
 fmt_dp_wtp_stas(true, {MAC, _RadioId, _BSS, Stats}) ->
     {RcvdPkts, SendPkts, RcvdBytes, SendBytes} = Stats,
-    [{mac, ieee80211_station:format_eui(MAC)},
+    [{mac, capwap_tools:format_eui(MAC)},
      {input, [{bytes, RcvdBytes},
               {packets, RcvdPkts}]},
      {output, [{bytes, SendBytes},
@@ -319,7 +319,7 @@ fmt_wtp_board_data_sub_element({3, Value}) ->
     {board_revision, Value};
 fmt_wtp_board_data_sub_element({4, Value})
   when is_binary(Value), size(Value) == 6 ->
-    {base_mac, ieee80211_station:format_eui(Value)};
+    {base_mac, capwap_tools:format_eui(Value)};
 fmt_wtp_board_data_sub_element({4, Value}) ->
     {base_mac, Value};
 fmt_wtp_board_data_sub_element({Id, Value}) ->
@@ -369,7 +369,7 @@ bin_fmt(FmtStr, Args) ->
     erlang:list_to_binary(io_lib:format(FmtStr, Args)).
 
 fmt_station_mac(Station) ->
-    bin_fmt("~s", [ieee80211_station:format_eui(Station)]).
+    bin_fmt("~s", [capwap_tools:format_eui(Station)]).
 
 prometheus_encode(Metrics) ->
     lists:foldl(fun prometheus_encode/2, [], Metrics).
