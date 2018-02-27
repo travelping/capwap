@@ -45,7 +45,7 @@
 -define(ECLOSED, {error, closed}).
 -define(ENOTCONN, {error, enotconn}).
 
--define(DEBUG_OPTS,[{install, {fun lager_sys_debug:lager_gen_fsm_trace/3, ?MODULE}}]).
+-define(DEBUG_OPTS,[]).
 
 %%===================================================================
 %% API

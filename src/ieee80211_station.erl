@@ -22,8 +22,6 @@
 %% API
 -export([start_link/3, handle_ieee80211_frame/2, handle_ieee802_3_frame/3,
          take_over/3, detach/1, delete/1, start_gtk_rekey/4]).
-%% Helpers
--export([format_mac/1, format_eui/1]).
 
 %% For testing
 -export([frame_type/1, frame_type/2]).
@@ -91,7 +89,7 @@
 
 -record(auth_frame, {algo, seq_no, status, params}).
 
--define(DEBUG_OPTS,[{install, {fun lager_sys_debug:lager_gen_fsm_trace/3, ?MODULE}}]).
+-define(DEBUG_OPTS,[]).
 
 -define(GTK_KDE,  1).
 -define(IGTK_KDE, 9).
@@ -114,7 +112,7 @@ handle_ieee80211_frame(AC, <<FrameControl:2/bytes,
     ieee80211_request(AC, FrameType, DA, SA, BSS, FromDS, ToDS, Frame);
 
 handle_ieee80211_frame(_, Frame) ->
-    lager:warning("unhandled IEEE802.11 Frame:~n~s", [flower_tools:hexdump(Frame)]),
+    lager:warning("unhandled IEEE802.11 Frame:~n~s", [capwap_tools:hexdump(Frame)]),
     {error, unhandled}.
 
 handle_ieee802_3_frame(AC, RadioMAC, <<_EthDst:6/bytes, EthSrc:6/bytes, _/binary>> = Frame) ->
@@ -357,7 +355,7 @@ connected(timeout, _, _State) ->
     {keep_state_and_data, [?IDLE_TIMEOUT]};
 
 connected(cast, {'802.3', Data}, _State) ->
-    lager:error("in CONNECTED got 802.3 Data:~n~s", [flower_tools:hexdump(Data)]),
+    lager:error("in CONNECTED got 802.3 Data:~n~s", [capwap_tools:hexdump(Data)]),
     {keep_state_and_data, [?IDLE_TIMEOUT]};
 
 connected(cast, Event = {FrameType, _DA, _SA, BSS, 0, 0, Frame},
@@ -494,7 +492,7 @@ terminate(_Reason, StateName, State = #state{ac = AC, mac = MAC}) ->
 	    ok
     end,
     capwap_ac:station_detaching(AC),
-    lager:warning("Station ~s terminated in State ~w", [format_eui(MAC), StateName]),
+    lager:warning("Station ~s terminated in State ~w", [capwap_tools:format_eui(MAC), StateName]),
     ok.
 
 code_change(_OldVsn, StateName, State, _Extra) ->
@@ -708,7 +706,7 @@ update_sta_from_mgmt_frame_ies(IEs, #state{aid = AID, capabilities = Cap0} = Sta
     case State#state.capabilities of
 	#sta_cap{rsn = #wtp_wlan_rsn{} = RSN} ->
 	    lager:info("STA: ~p, Ciphers: Group ~p, PairWise: ~p, AKM: ~p, Caps: ~w, Mgmt: ~p",
-		       [format_eui(State#state.mac),
+		       [capwap_tools:format_eui(State#state.mac),
 			RSN#wtp_wlan_rsn.group_cipher_suite, RSN#wtp_wlan_rsn.cipher_suites,
 			RSN#wtp_wlan_rsn.akm_suites, RSN#wtp_wlan_rsn.capabilities,
 			RSN#wtp_wlan_rsn.group_mgmt_cipher_suite]);
@@ -876,8 +874,8 @@ accounting_update(STA, SessionOpts) ->
 aaa_association(State = #state{mac = MAC, data_channel_address = WTPDataChannelAddress,
 				wtp_id = WtpId, wtp_session_id = WtpSessionId,
 				radio_mac = BSSID, ssid = SSID}) ->
-    MACStr = format_eui(MAC),
-    BSSIDStr = format_eui(BSSID),
+    MACStr = capwap_tools:format_eui(MAC),
+    BSSIDStr = capwap_tools:format_eui(BSSID),
     SessionData0 = [{'Accouting-Update-Fun', fun accounting_update/2},
                     {'AAA-Application-Id', capwap_station},
 		    {'Service-Type', 'TP-CAPWAP-STA'},
@@ -1019,20 +1017,6 @@ cancel_timer(Ref) ->
 	    RemainingTime
     end.
 
-format_mac(<<A:8, B:8, C:8, D:8, E:8, F:8>>) ->
-    flat_format("~2.16.0b:~2.16.0b:~2.16.0b:~2.16.0b:~2.16.0b:~2.16.0b", [A, B, C, D, E, F]);
-format_mac(MAC) ->
-    flat_format("~w", MAC).
-
-format_eui(<<A:8, B:8, C:8, D:8, E:8, F:8>>) ->
-    flat_format("~2.16.0B-~2.16.0B-~2.16.0B-~2.16.0B-~2.16.0B-~2.16.0B", [A, B, C, D, E, F]);
-format_eui(MAC) ->
-    flat_format("~w", MAC).
-
-
-flat_format(Format, Data) ->
-    lists:flatten(io_lib:format(Format, Data)).
-
 initial_state(local_mac) ->
     init_assoc;
 initial_state(split_mac) ->
@@ -1140,7 +1124,7 @@ eap_handshake_next({authenticate, Opts}, #state{aaa_session = Session} = State) 
 
 	    MSK = << (ergw_aaa_session:attr_get('MS-MPPE-Recv-Key', SessionOpts, <<>>))/binary,
 		     (ergw_aaa_session:attr_get('MS-MPPE-Send-Key', SessionOpts, <<>>))/binary>>,
-	    lager:debug("MSK: ~s", [flower_tools:hexdump(MSK)]),
+	    lager:debug("MSK: ~s", [capwap_tools:hexdump(MSK)]),
 	    rsna_4way_handshake({init, MSK}, State);
 
 	challenge ->

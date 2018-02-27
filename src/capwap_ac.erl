@@ -113,7 +113,7 @@
 			    element(1, E) == delete_station orelse
 			    element(1, E) == firmware_download))).
 
--define(DEBUG_OPTS,[{install, {fun lager_sys_debug:lager_gen_fsm_trace/3, ?MODULE}}]).
+-define(DEBUG_OPTS,[]).
 
 -define(log_capwap_control(Id, MsgType, SeqNo, Elements, Header),
 	try
@@ -141,7 +141,7 @@ start_link(WTPControlChannelAddress) ->
 handle_packet(WTPControlChannelAddress, Packet) ->
     try
 	capwap_trace:trace(WTPControlChannelAddress, ?TRACE_LOCAL_CONTROL, Packet),
-	Peer = format_peer(WTPControlChannelAddress),
+	Peer = capwap_tools:format_peer(WTPControlChannelAddress),
 	case capwap_packet:decode(control, Packet) of
 	    {Header, {discovery_request, 1, Seq, Elements}} ->
 		?log_capwap_control(Peer, discovery_request, Seq, Elements, Header),
@@ -169,7 +169,7 @@ handle_data(DataPath, WTPDataChannelAddress, Packet) ->
 		KeepAlive = proplists:get_bool('keep-alive', Header#capwap_header.flags),
 		handle_capwap_data(DataPath, WTPDataChannelAddress, Header, KeepAlive, PayLoad);
 	    _ ->
-		lager:warning("invalid CAPWAP data from ~s", [format_peer(WTPDataChannelAddress)]),
+		lager:warning("invalid CAPWAP data from ~s", [capwap_tools:format_peer(WTPDataChannelAddress)]),
 		{error, not_capwap}
 	end
     catch
@@ -281,7 +281,7 @@ handle_event(cast, {accept, udp, Socket}, listen, Data0) ->
     {ok, Session} = start_session(Socket, Data0),
 
     {ok, WTPControlChannelAddress} = capwap_udp:peername(Socket),
-    PeerName = iolist_to_binary(format_peer(WTPControlChannelAddress)),
+    PeerName = iolist_to_binary(capwap_tools:format_peer(WTPControlChannelAddress)),
 
     {ok, CfgProvStateInit} = capwap_config:wtp_init_config_provider(PeerName),
     Opts = [{'Username', PeerName},
@@ -788,18 +788,13 @@ gpsutc_to_iso(GPSTime, GPSDate) ->
 	_:_ -> "2000-01-01T00:00:00Z"
     end.
 
-format_peer({IP, Port}) ->
-    io_lib:format("~s:~w", [inet_parse:ntoa(IP), Port]);
-format_peer(IP) ->
-    io_lib:format("~p", [IP]).
-
 peer_log_str(Data = #data{ctrl_channel_address = WTPControlChannelAddress}) ->
     peer_log_str(WTPControlChannelAddress, Data).
 
 peer_log_str(Address, #data{id = undefined}) ->
     io_lib:format("~p", [Address]);
 peer_log_str(Address, #data{id = Id}) ->
-    io_lib:format("~s[~s]", [Id, format_peer(Address)]).
+    io_lib:format("~s[~s]", [Id, capwap_tools:format_peer(Address)]).
 
 %% non-DTLS join-reqeust, check app config
 handle_plain_join(Peer, Seq, _Elements, #capwap_header{
@@ -824,7 +819,7 @@ handle_capwap_data(DataPath, WTPDataChannelAddress, Header, true,
     {Address, _Port} = WTPDataChannelAddress,
     case capwap_wtp_reg:lookup_sessionid(Address, SessionId) of
 	not_found ->
-	    lager:warning("CAPWAP data from unknown WTP ~s", [format_peer(WTPDataChannelAddress)]),
+	    lager:warning("CAPWAP data from unknown WTP ~s", [capwap_tools:format_peer(WTPDataChannelAddress)]),
 	    ok;
 	{ok, AC} ->
 	    gen_statem:cast(AC, {keep_alive, DataPath, WTPDataChannelAddress, Header, PayLoad})
