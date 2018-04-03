@@ -29,6 +29,7 @@ start_link() ->
     AcceptorsNum = proplists:get_value(acceptors_num, HttpConfig, ?ACCEPTORS_NUM),
     Dispatch = cowboy_router:compile([
 		{'_', [
+            {"/metrics",        capwap_http_api_handler, []},
 			{"/api/v1/version", capwap_http_api_handler, []},
 
             {"/api/v1/wtp",                           capwap_http_api_handler, []},
@@ -37,7 +38,7 @@ start_link() ->
             {"/api/v1/wtp/:id/set-ssid/:ssid[/:rid]", capwap_http_api_handler, []},
             {"/api/v1/wtp/:id/stop-radio/:rid",       capwap_http_api_handler, []},
 
-            {"/api/v1/station",       capwap_http_api_handler, []},
+            {"/api/v1/station",     capwap_http_api_handler, []},
             {"/api/v1/station/:id", capwap_http_api_handler, []},
 
             {"/api/v1/dp/wtp-list", capwap_http_api_handler, []},
