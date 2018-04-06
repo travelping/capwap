@@ -27,8 +27,15 @@
 start(_StartType, _StartArgs) ->
     ok = capwap_config:validate(),
 
-    exometer:new([capwap, ac, wtp_count], counter, []),
-    exometer:new([capwap, ac, station_count], counter, []),
+    lists:foreach(
+      fun(MetricName) ->
+              exometer:new(MetricName, counter, [])
+      end, [
+            [capwap, ac, wtp_count],
+            [capwap, ac, station_count],
+            [capwap, ac, ssl_expired_certs_count],
+            [capwap, ac, error_wtp_http_config_count]
+           ]),
 
     case capwap_sup:start_link() of
 	{ok, _} = Ret ->
