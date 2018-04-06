@@ -12,6 +12,8 @@ Erlang CAPWAP AC implementation.
 
 [configuration providers for WTPs](docs/wtp_config_providers.md)
 
+[metrics](docs/metrics.md)
+
 BUILDING
 --------
 

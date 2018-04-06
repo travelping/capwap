@@ -65,3 +65,10 @@ dp commands
 * /api/v1/dp/stats: get
 
     show data path statistics
+
+metrics
+-------
+
+* /metrics
+
+    get all metrics in json or prometheus format. See [metrics](metrics.md).
