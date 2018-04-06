@@ -60,13 +60,16 @@ assert_mbox_match(MatchSpec, File, Line) ->
 suite() ->
     [{timetrap,{minutes,5}}].
 
-init_per_suite(Config) ->
-    setup_applications(),
+init_per_suite(Config0) ->
+    Apps = setup_applications(),
+    Config = [ {apps, Apps} | Config0 ],
     lager_common_test_backend:bounce(debug),
     Config.
 
-end_per_suite(_Config) ->
+end_per_suite(Config) ->
     meck_unload(),
+    Apps = proplists:get_value(apps, Config),
+    [ application:stop(App) || App <- Apps ],
     ok.
 
 all() ->
@@ -276,12 +279,14 @@ setup_applications() ->
 	   ],
     [application:load(Name) || {Name, _} <- Apps],
     meck_init(),
-    [setup_application(A) || A <- Apps].
+    lists:flatten([setup_application(A) || A <- Apps]).
 
 setup_application({Name, Env}) ->
     application:stop(Name),
     application:unload(Name),
     [application:set_env(Name, Key, Val) || {Key, Val} <- Env],
-    application:ensure_all_started(Name);
+    {ok, Started} = application:ensure_all_started(Name),
+    Started;
 setup_application(Name) ->
-    application:ensure_all_started(Name).
+    {ok, Started} = application:ensure_all_started(Name),
+    Started.

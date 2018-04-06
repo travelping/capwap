@@ -21,6 +21,7 @@
 
 -export([init/2, content_types_provided/2,
          handle_request_json/2,
+         handle_request_text/2,
          allowed_methods/2,
          content_types_accepted/2]).
 
@@ -38,7 +39,8 @@ allowed_methods(Req, State) ->
 
 content_types_provided(Req, State) ->
     {[
-      {<<"application/json">>, handle_request_json}
+      {<<"application/json">>, handle_request_json},
+      {{<<"text">>, <<"plain">>, '*'},  handle_request_text}
      ], Req, State}.
 
 content_types_accepted(Req, State) ->
@@ -61,8 +63,22 @@ handle_request_json(Req, State) ->
                 _ ->
                     {jsx:encode([{error, bad_command}]), Req, State}
             end;
+        [<<"metrics">> | TailPath] ->
+            TailPath1 = [ binary_to_existing_atom(P, utf8) || P <- TailPath ],
+            handle_request_metrics(json, TailPath1, Req, State);
         _ ->
             {jsx:encode([{error, bad_command}]), Req, State}
+    end.
+
+handle_request_text(Req, State) ->
+    Path = binary:split(cowboy_req:path(Req), <<"/">>, [global, trim_all]),
+    Method = cowboy_req:method(Req),
+    case {Method, Path} of
+        {<<"GET">>, [<<"metrics">> | TailPath] } ->
+            TailPath1 = [ binary_to_existing_atom(P, utf8) || P <- TailPath ],
+            handle_request_metrics(text, TailPath1, Req, State);
+        _ ->
+            {<<"error: bad_command">>, Req, State}
     end.
 
 handle_request_wtp(<<"GET">>, [], Req, State) ->
@@ -180,6 +196,20 @@ handle_request_dp(<<"GET">>, [<<"stats">>], Req,
     {jsx:encode(Res1), Req, State};
 handle_request_dp(_, _, Req, State) ->
     {jsx:encode([{error, bad_command}]), Req, State}.
+
+handle_request_metrics(text, Path, Req, State) ->
+    Metrics = lists:foldl(fun exo_entry_to_list/2, [],
+                          exometer:find_entries(Path)),
+    {prometheus_encode(Metrics), Req, State};
+handle_request_metrics(json, Path, Req, State) ->
+    Entries = lists:foldl(fun exo_entry_to_map/2, #{},
+                          exometer:find_entries(Path)),
+    Metrics = lists:foldl(fun(M, A) ->
+                                  io:format("M ~p~n~n", [M]),
+                                  io:format("A ~p~n~n===~n", [A]),
+                                  maps:get(ioize(M), A) end, Entries,
+                          Path),
+    {jsx:encode(Metrics), Req, State}.
 
 %%%===================================================================
 %%% Internal functions
@@ -342,3 +372,100 @@ bin_fmt(FmtStr, Args) ->
 
 fmt_station_mac(Station) ->
     bin_fmt("~s", [ieee80211_station:format_eui(Station)]).
+
+prometheus_encode(Metrics) ->
+    lists:foldl(fun prometheus_encode/2, [], Metrics).
+
+prometheus_encode({Path, Type, DataPoints}, Acc) ->
+    Name = make_metric_name(Path),
+    Payload = [[<<"# TYPE ">>, Name, <<" ">>, map_type(Type), <<"\n">>] |
+               [[Name, map_datapoint(DPName), <<" ">>, ioize(Value), <<"\n">>]
+                || {DPName, Value} <- DataPoints, is_valid_datapoint(DPName)]],
+    Payload1 = maybe_add_sum(Name, DataPoints, Type, Payload),
+    [Payload1, <<"\n">> | Acc].
+
+exo_get_value(Name, Fun, AccIn) ->
+    case exometer:get_value(Name) of
+	{ok, Value} ->
+	    Fun(Value, AccIn);
+	{error,not_found} ->
+	    AccIn
+    end.
+
+exo_entry_to_map({Name, Type, enabled}, Metrics) ->
+    exo_entry_to_map(Name, {Name, Type}, Metrics).
+
+exo_entry_to_map([Path], {Name, Type}, Metrics) ->
+    exo_get_value(Name, fun(V, Acc) ->
+				Entry = maps:from_list(V),
+				Acc#{ioize(Path) => Entry#{type => Type}}
+			end, Metrics);
+exo_entry_to_map([H|T], Metric, Metrics) ->
+    Key = ioize(H),
+    Entry = maps:get(Key, Metrics, #{}),
+    Metrics#{Key => exo_entry_to_map(T, Metric, Entry)}.
+
+exo_entry_to_list({Name, Type, enabled}, Metrics) ->
+exo_get_value(Name, fun(V, Acc) -> [{Name, Type, V}|Acc] end, Metrics).
+
+ioize(Atom) when is_atom(Atom) ->
+    atom_to_binary(Atom, utf8);
+ioize(Number) when is_float(Number) ->
+    float_to_binary(Number, [{decimals, 4}]);
+ioize(Number) when is_integer(Number) ->
+    integer_to_binary(Number);
+ioize(String) when is_list(String) ->
+    list_to_binary(String);
+ioize(Binary) when is_binary(Binary) ->
+    Binary;
+ioize({_,_,_,_} = IP) ->
+    list_to_binary(inet:ntoa(IP));
+ioize({_,_,_,_,_,_,_,_} = IP) ->
+    list_to_binary(inet:ntoa(IP));
+ioize(Something) ->
+    iolist_to_binary(io_lib:format("~p", [Something])).
+
+map_type(undefined)     -> <<"untyped">>;
+map_type(counter)       -> <<"counter">>;
+map_type(gauge)         -> <<"gauge">>;
+map_type(spiral)        -> <<"gauge">>;
+map_type(histogram)     -> <<"summary">>;
+map_type(function)      -> <<"gauge">>;
+map_type(Tuple) when is_tuple(Tuple) ->
+    case element(1, Tuple) of
+        function -> <<"gauge">>;
+        _Else    -> <<"untyped">>
+    end.
+
+map_datapoint(value)    -> <<"">>;
+map_datapoint(one)      -> <<"">>;
+map_datapoint(n)        -> <<"_count">>;
+map_datapoint(50)       -> <<"{quantile=\"0.5\"}">>;
+map_datapoint(90)       -> <<"{quantile=\"0.9\"}">>;
+map_datapoint(Integer) when is_integer(Integer)  ->
+    Bin = integer_to_binary(Integer),
+    <<"{quantile=\"0.", Bin/binary, "\"}">>;
+map_datapoint(Something)  ->
+    %% this is for functions with alternative datapoints
+    Bin = ioize(Something),
+    <<"{datapoint=\"", Bin/binary, "\"}">>.
+
+is_valid_datapoint(count) -> false;
+is_valid_datapoint(mean) -> false;
+is_valid_datapoint(min) -> false;
+is_valid_datapoint(max) -> false;
+is_valid_datapoint(median) -> false;
+is_valid_datapoint(ms_since_reset) -> false;
+is_valid_datapoint(_Else) -> true.
+
+maybe_add_sum(Name, DataPoints, histogram, Payload) ->
+    Mean = proplists:get_value(mean, DataPoints),
+    N = proplists:get_value(n, DataPoints),
+    [Payload | [Name, <<"_sum ">>, ioize(Mean * N), <<"\n">>]];
+maybe_add_sum(_Name, _DataPoints, _Type, Payload) ->
+    Payload.
+
+make_metric_name(Path) ->
+    NameList = lists:join($_, lists:map(fun ioize/1, Path)),
+    NameBin = iolist_to_binary(NameList),
+    re:replace(NameBin, "-|\\.", "_", [global, {return,binary}]).
