@@ -64,7 +64,8 @@ handle_request_json(Req, State) ->
                     {jsx:encode([{error, bad_command}]), Req, State}
             end;
         [<<"metrics">> | TailPath] ->
-            handle_request_metrics(json, TailPath, Req, State);
+            TailPath1 = [ binary_to_existing_atom(P, utf8) || P <- TailPath ],
+            handle_request_metrics(json, TailPath1, Req, State);
         _ ->
             {jsx:encode([{error, bad_command}]), Req, State}
     end.
@@ -74,7 +75,8 @@ handle_request_text(Req, State) ->
     Method = cowboy_req:method(Req),
     case {Method, Path} of
         {<<"GET">>, [<<"metrics">> | TailPath] } ->
-            handle_request_metrics(text, TailPath, Req, State);
+            TailPath1 = [ binary_to_existing_atom(P, utf8) || P <- TailPath ],
+            handle_request_metrics(text, TailPath1, Req, State);
         _ ->
             {<<"error: bad_command">>, Req, State}
     end.
@@ -196,14 +198,17 @@ handle_request_dp(_, _, Req, State) ->
     {jsx:encode([{error, bad_command}]), Req, State}.
 
 handle_request_metrics(text, Path, Req, State) ->
-    Entries = lists:foldl(fun exo_entry_to_list/2, [],
+    Metrics = lists:foldl(fun exo_entry_to_list/2, [],
                           exometer:find_entries(Path)),
-    Metrics = lists:foldl(fun(M, A) -> maps:get(ioize(M), A) end, Entries,
-                          Path),
     {prometheus_encode(Metrics), Req, State};
 handle_request_metrics(json, Path, Req, State) ->
-    Metrics = lists:foldl(fun exo_entry_to_map/2, #{},
+    Entries = lists:foldl(fun exo_entry_to_map/2, #{},
                           exometer:find_entries(Path)),
+    Metrics = lists:foldl(fun(M, A) ->
+                                  io:format("M ~p~n~n", [M]),
+                                  io:format("A ~p~n~n===~n", [A]),
+                                  maps:get(ioize(M), A) end, Entries,
+                          Path),
     {jsx:encode(Metrics), Req, State}.
 
 %%%===================================================================

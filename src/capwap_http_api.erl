@@ -30,7 +30,8 @@ start_link() ->
     Dispatch = cowboy_router:compile([
 		{'_', [
             {"/metrics",        capwap_http_api_handler, []},
-			{"/api/v1/version", capwap_http_api_handler, []},
+            {"/metrics/[...]",  capwap_http_api_handler, []},
+            {"/api/v1/version", capwap_http_api_handler, []},
 
             {"/api/v1/wtp",                           capwap_http_api_handler, []},
             {"/api/v1/wtp/:id",                       capwap_http_api_handler, []},
