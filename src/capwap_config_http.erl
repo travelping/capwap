@@ -44,9 +44,14 @@ wtp_radio_config({_CN, #wtp{radios = Radios}}, RadioId, _RadioType) ->
 request(Path, Opts) ->
     HttpServer = list_to_binary(Opts),
     Http = <<HttpServer/binary, Path/binary>>,
-    {ok, 200, _Headers, ClientRef} = hackney:request(get, Http, []),
-    {ok, Body} = hackney:body(ClientRef),
-    jsx:decode(Body, [{labels, existing_atom}]).
+    case hackney:request(get, Http, []) of
+        {ok, 200, _Headers, ClientRef} ->
+            {ok, Body} = hackney:body(ClientRef),
+            jsx:decode(Body, [{labels, existing_atom}]);
+        _ ->
+            exometer:update([capwap, ac, error_wtp_http_config_count], 1),
+            throw({error, get_http_config_wtp})
+    end.
 
 validate_config(JSON) ->
     <<"wtp-config">> = proplists:get_value(type, JSON),
