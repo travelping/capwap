@@ -205,8 +205,6 @@ handle_request_metrics(json, Path, Req, State) ->
     Entries = lists:foldl(fun exo_entry_to_map/2, #{},
                           exometer:find_entries(Path)),
     Metrics = lists:foldl(fun(M, A) ->
-                                  io:format("M ~p~n~n", [M]),
-                                  io:format("A ~p~n~n===~n", [A]),
                                   maps:get(ioize(M), A) end, Entries,
                           Path),
     {jsx:encode(Metrics), Req, State}.
