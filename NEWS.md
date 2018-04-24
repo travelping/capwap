@@ -3,6 +3,11 @@ capwap
 
 Erlang CAPWAP AC implementation.
 
+Version 2.2.0 - 24 Apr 2018
+---------------------------
+
+* Support prometheus metrics
+
 Version 2.1.0 - 26 Feb 2018
 ---------------------------
 
