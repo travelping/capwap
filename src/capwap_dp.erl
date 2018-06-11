@@ -26,6 +26,7 @@
 -export([add_wlan/5, del_wlan/3]).
 -export([attach_station/5, detach_station/1, get_station/1, list_stations/0]).
 -export([sendto/2, packet_out/3]).
+-export([send_dhcp_packet/1]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -91,6 +92,9 @@ sendto(WTP, Msg) when is_binary(Msg) ->
 
 packet_out(tap, VlanId, Msg) when is_binary(Msg) ->
     call({packet_out, tap, VlanId, Msg}).
+
+send_dhcp_packet(Msg) when is_binary(Msg) ->
+    call({send_dhcp_packet, Msg}).
 
 get_stats() ->
     call({get_stats}).
@@ -160,6 +164,10 @@ handle_info({packet_in, tap, VlanId, Packet}, State) ->
 handle_info({capwap_in, WTPDataChannelAddress, Msg}, State) ->
     lager:warning("CAPWAP from ~p: ~p", [WTPDataChannelAddress, Msg]),
     capwap_ac:handle_data(self(), WTPDataChannelAddress, Msg),
+    {noreply, State};
+
+handle_info({dhcp_in, Msg}, State) ->
+    capwap_dhcp_relay:send_to_dhcp(Msg),
     {noreply, State};
 
 handle_info({wtp_down, WTP}, State) ->
