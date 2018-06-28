@@ -2,6 +2,7 @@
     {description, "CAPWAP AC Server"},
     {vsn, "1.0.0"},
     {registered, []},
+    {included_applications, [dhcp]},
     {applications, [
 	kernel,
 	stdlib,
