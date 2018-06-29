@@ -28,12 +28,12 @@
          terminate/2, code_change/3]).
 
 -define(SERVER, ?MODULE).
--define(FROM_ADDRESS, {192,168,86,10}).
--define(DHCP_SERVER, {192,168,81,1}).
 -define(DHCP_PORT, 67).
 
 -record(s, {
-    socket
+    socket,
+    servers,
+    external_ip
 }).
 
 %%===================================================================
@@ -49,23 +49,33 @@ send_to_dhcp(Packet) ->
 %% gen_server callbacks
 %%===================================================================
 init([]) ->
-    {ok, Socket} = gen_udp:open(?DHCP_PORT, [binary, inet, {reuseaddr, true}, {ip, ?FROM_ADDRESS}]),
-    {ok, #s{socket = Socket}}.
+    Cfg = application:get_env(capwap, dhcp_relay, []),
+    ExternalIP = proplists:get_value(external_ip, Cfg, {0,0,0,0}),
+
+    Servers = proplists:get_value(servers, Cfg, []),
+
+    Options = [binary, inet, {reuseaddr, true}, {ip, ExternalIP} ],
+    {ok, Socket} = gen_udp:open(?DHCP_PORT, Options),
+    {ok, #s{socket = Socket,
+            servers = queue:from_list(Servers),
+            external_ip = ExternalIP}}.
 
 handle_call(_Request, _From, State) ->
     lager:warning("capwap_dhcp_relay: Unhandled handle_call"),
     {reply, ok, State}.
 
-handle_cast({send_to_dhcp, Packet}, State = #s{socket = Socket}) ->
+handle_cast({send_to_dhcp, Packet},
+            State = #s{socket = Socket, servers = Servers, external_ip = IP}) ->
     Decoded = dhcp_lib:decode(Packet),
+    lager:debug("Get request from DP and send it to DHCP server ~p", [Decoded]),
     Decoded1 = Decoded#dhcp{
-        giaddr = ?FROM_ADDRESS,
+        giaddr = IP,
         hops = Decoded#dhcp.hops + 1
     },
     OutPacket = dhcp_lib:encode(Decoded1),
-
-    ok = gen_udp:send(Socket, ?DHCP_SERVER, ?DHCP_PORT, OutPacket),
-    {noreply, State};
+    {{value, Server}, NewServers} = queue:out(Servers),
+    ok = gen_udp:send(Socket, Server, ?DHCP_PORT, OutPacket),
+    {noreply, State#s{servers = queue:in(Server, NewServers)}};
 
 handle_cast(_Request, State) ->
     lager:warning("capwap_dhcp_relay: Unhandled handle_cast"),
@@ -73,6 +83,7 @@ handle_cast(_Request, State) ->
 
 handle_info({udp, _Socket, _Ip, _Port, Packet}, State) ->
     Decoded = dhcp_lib:decode(Packet),
+    lager:debug("Get reply from DHCP server and send it to DP ~p", [Decoded]),
     Decoded1 = Decoded#dhcp{
         hops = Decoded#dhcp.hops + 1,
         giaddr = {0, 0, 0, 0}
