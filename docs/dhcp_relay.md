@@ -26,7 +26,10 @@ DHCP Relay config
 [{capwap,
     {dhcp_relay, [
         {external_ip, {192,168,86,10}},
-        {servers, [{192,168,81,1}]}
+        {servers, [{192,168,81,1}]},
+        {remote_id, [<<"User">>, 'Username', <<"END">>]},
+        {circuit_id, [<<"BSSID">>, 'BSSID', <<"END">>]},
+        {agent_id, [<<"AgentID">>]}
     ]},
     ...
 ]

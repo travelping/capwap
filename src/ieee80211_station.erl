@@ -21,7 +21,7 @@
 
 %% API
 -export([start_link/3, handle_ieee80211_frame/2, handle_ieee802_3_frame/3,
-	 take_over/3, detach/1, delete/1, start_gtk_rekey/4]).
+	 take_over/3, detach/1, delete/1, start_gtk_rekey/4, get_aaa_session/1]).
 
 %% For testing
 -export([frame_type/1, frame_type/2]).
@@ -131,6 +131,9 @@ delete(Pid) when is_pid(Pid) ->
 
 start_gtk_rekey(Station, Controller, GTK, IGTK) ->
     gen_statem:cast(Station, {start_gtk_rekey, Controller, GTK, IGTK}).
+
+get_aaa_session(Pid) when is_pid(Pid) ->
+    gen_statem:call(Pid, get_aaa_session).
 
 %%%===================================================================
 %%% gen_statem callbacks
@@ -514,6 +517,9 @@ handle_event({call, From}, Event, connected, Data)
 
 handle_event({call, From}, Event, _State, _Data) when Event == detach; Event == delete ->
     {keep_state_and_data, [{reply, From, {error, not_attached}}, ?IDLE_TIMEOUT]};
+
+handle_event({call, From}, get_aaa_session, _State, #data{aaa_session = AAA}) ->
+    {keep_state_and_data, [{reply, From, {ok, AAA}}, ?IDLE_TIMEOUT]};
 
 handle_event(timeout, _, State, _Data) ->
     lager:warning("idle timeout in ~p", [State]),

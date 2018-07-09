@@ -33,7 +33,10 @@
 -record(s, {
     socket,
     servers,
-    external_ip
+    external_ip,
+    remote_id,
+    circuit_id,
+    agent_id
 }).
 
 %%===================================================================
@@ -54,11 +57,18 @@ init([]) ->
 
     Servers = proplists:get_value(servers, Cfg, []),
 
+    RemoteID = proplists:get_value(remote_id, Cfg),
+    CircuitID = proplists:get_value(circuit_id, Cfg),
+    AgentID = proplists:get_value(agent_id, Cfg),
+
     Options = [binary, inet, {reuseaddr, true}, {ip, ExternalIP} ],
     {ok, Socket} = gen_udp:open(?DHCP_PORT, Options),
     {ok, #s{socket = Socket,
             servers = queue:from_list(Servers),
-            external_ip = ExternalIP}}.
+            external_ip = ExternalIP,
+            remote_id = RemoteID,
+            circuit_id = CircuitID,
+            agent_id = AgentID}}.
 
 handle_call(_Request, _From, State) ->
     lager:warning("capwap_dhcp_relay: Unhandled handle_call"),
@@ -68,25 +78,30 @@ handle_cast({send_to_dhcp, Packet},
             State = #s{socket = Socket, servers = Servers, external_ip = IP}) ->
     Decoded = dhcp_lib:decode(Packet),
     lager:debug("Get request from DP and send it to DHCP server ~p", [Decoded]),
+    DhcpOptions = compute_dhcp_options(Decoded#dhcp.chaddr, State),
+
     Decoded1 = Decoded#dhcp{
         giaddr = IP,
-        hops = Decoded#dhcp.hops + 1
+        hops = Decoded#dhcp.hops + 1,
+        options = DhcpOptions ++ Decoded#dhcp.options
     },
     OutPacket = dhcp_lib:encode(Decoded1),
     {{value, Server}, NewServers} = queue:out(Servers),
     ok = gen_udp:send(Socket, Server, ?DHCP_PORT, OutPacket),
     {noreply, State#s{servers = queue:in(Server, NewServers)}};
 
-handle_cast(_Request, State) ->
-    lager:warning("capwap_dhcp_relay: Unhandled handle_cast"),
+handle_cast(Request, State) ->
+    lager:warning("capwap_dhcp_relay: Unhandled handle_cast ~p", [Request]),
     {noreply, State}.
 
 handle_info({udp, _Socket, _Ip, _Port, Packet}, State) ->
     Decoded = dhcp_lib:decode(Packet),
     lager:debug("Get reply from DHCP server and send it to DP ~p", [Decoded]),
+    DhcpOptions = compute_dhcp_options(Decoded#dhcp.chaddr, State),
     Decoded1 = Decoded#dhcp{
         hops = Decoded#dhcp.hops + 1,
-        giaddr = {0, 0, 0, 0}
+        giaddr = {0, 0, 0, 0},
+        options = DhcpOptions ++ Decoded#dhcp.options
     },
 
     OutPacket = dhcp_lib:encode(Decoded1),
@@ -103,3 +118,49 @@ terminate(_Reason, #s{socket = Socket}) ->
 
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
+
+%%===================================================================
+%% Internal functions
+%%===================================================================
+compute_dhcp_options(_, #s{remote_id = undefined,
+                               circuit_id = undefined,
+                               agent_id = undefined}) ->
+    [];
+compute_dhcp_options({A, B, C, D, E, F}, #s{remote_id = RemoteID,
+                                            circuit_id = CircuitID,
+                                            agent_id = AgentID}) ->
+    {ok, Station} = capwap_station_reg:lookup(<<A,B,C,D,E,F>>),
+    {ok, AAASession} = ieee80211_station:get_aaa_session(Station),
+    Values = ergw_aaa_session:get(AAASession),
+
+    Options = lists:filtermap(
+        fun({Id, Val}) ->
+            attribute_map(Id, Values, Val)
+        end, [
+              {?RAI_CIRCUIT_ID, CircuitID},
+              {?RAI_REMOTE_ID,  RemoteID},
+              {?RAI_AGENT_ID,   AgentID}
+             ]),
+    case Options of
+        [] -> [];
+        _ ->  [{?DHO_DHCP_AGENT_OPTIONS, Options}]
+    end.
+
+attribute_map(_, _, undefined) -> false;
+attribute_map(Id, Values, Attributes) ->
+    {true, {Id, erlang:iolist_to_binary( lists:map(
+      fun(Attr) ->
+              compute_attribute(Attr, Values)
+      end, Attributes) )}}.
+
+compute_attribute(RuleVar, _Attributes)
+  when is_binary(RuleVar); is_list(RuleVar) ->
+    RuleVar;
+compute_attribute(RuleVar, Attributes)
+  when is_atom(RuleVar) ->
+    case Attributes of
+	#{RuleVar := Result} ->
+	    Result;
+	_ ->
+	    erlang:atom_to_binary(RuleVar, unicode)
+    end.
