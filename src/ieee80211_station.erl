@@ -21,7 +21,7 @@
 
 %% API
 -export([start_link/3, handle_ieee80211_frame/2, handle_ieee802_3_frame/3,
-         take_over/3, detach/1, delete/1, start_gtk_rekey/4]).
+	 take_over/3, detach/1, delete/1, start_gtk_rekey/4]).
 
 %% For testing
 -export([frame_type/1, frame_type/2]).
@@ -54,22 +54,22 @@
 -define(REFUSED, 1).
 
 -record(state, {
-          ac,
-          ac_monitor,
+	  ac,
+	  ac_monitor,
 	  aaa_session,
-          data_path,
-          data_channel_address,
+	  data_path,
+	  data_channel_address,
 	  wtp_id,
 	  wtp_session_id,
 	  ssid,
-          mac,
-          mac_mode,
-          tunnel_mode,
-          out_action,
+	  mac,
+	  mac_mode,
+	  tunnel_mode,
+	  out_action,
 	  aid,
 	  capabilities,
 
-          radio_mac,
+	  radio_mac,
 	  response_ies,
 	  wpa_config,
 	  gtk,
@@ -85,7 +85,7 @@
 	  rekey_control,
 
 	  rekey_tref
-         }).
+	 }).
 
 -record(auth_frame, {algo, seq_no, status, params}).
 
@@ -546,12 +546,12 @@ update_state_from_cfg(#station_config{data_path = DataPath,
 with_station(AC, BSS, StationMAC, Fun) ->
     lager:debug("search Station ~p", [{AC, StationMAC}]),
     case capwap_station_reg:lookup(AC, BSS, StationMAC) of
-        not_found ->
-            lager:debug("Station not found"),
-            {error, not_found};
+	not_found ->
+	    lager:debug("Station not found"),
+	    {error, not_found};
 
-        {ok, Station} ->
-            lager:debug("found Station as ~p", [Station]),
+	{ok, Station} ->
+	    lager:debug("found Station as ~p", [Station]),
 	    Fun(Station)
     end.
 
@@ -877,7 +877,7 @@ aaa_association(State = #state{mac = MAC, data_channel_address = WTPDataChannelA
     MACStr = capwap_tools:format_eui(MAC),
     BSSIDStr = capwap_tools:format_eui(BSSID),
     SessionData0 = [{'Accouting-Update-Fun', fun accounting_update/2},
-                    {'AAA-Application-Id', capwap_station},
+		    {'AAA-Application-Id', capwap_station},
 		    {'Service-Type', 'TP-CAPWAP-STA'},
 		    {'Framed-Protocol', 'TP-CAPWAP'},
 		    {'MAC', MAC},
@@ -1003,8 +1003,8 @@ pad_length(Width, Length) ->
 %%
 pad_to(Width, Binary) ->
     case pad_length(Width, size(Binary)) of
-        0 -> Binary;
-        N -> <<Binary/binary, 0:(N*8)>>
+	0 -> Binary;
+	N -> <<Binary/binary, 0:(N*8)>>
     end.
 
 cancel_timer(Ref) ->
@@ -1097,7 +1097,7 @@ eap_handshake(Data = {response, Id, EAPData, Response},
 		{authenticate, Opts}
 
 	    %% _ ->
-	    %% 	{disassociation, []}
+	    %%	{disassociation, []}
 	end,
     eap_handshake_next(Next, State);
 
