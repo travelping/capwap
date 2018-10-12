@@ -335,10 +335,10 @@ handle_event(cast, {accept, dtls, Socket}, listen, Data) ->
 			      id = CommonName},
 	    %% TODO: find old connection instance, take over their StationData and stop them
 	    {next_state, join, Data1};
-        {error, {tls_alert,"certificate expired"}} ->
-            lager:warning("ssl_accept failed: certificate expired"),
-            exometer:update([capwap, ac, ssl_expired_certs_count], 1),
-            {stop, normal, Data#data{session=Session}};
+	{error, {tls_alert,"certificate expired"}} ->
+	    lager:warning("ssl_accept failed: certificate expired"),
+	    exometer:update([capwap, ac, ssl_expired_certs_count], 1),
+	    {stop, normal, Data#data{session=Session}};
 	Other ->
 	    lager:error("ssl_accept failed: ~p", [Other]),
 	    {stop, normal, Data#data{session=Session}}
@@ -1667,7 +1667,7 @@ accounting_update(WTP, SessionOpts) ->
 start_session(Socket, _Data) ->
     {ok, {Address, _Port}} = capwap_udp:peername(Socket),
     SessionOpts = [{'Accouting-Update-Fun', fun accounting_update/2},
-                   {'AAA-Application-Id', capwap_wtp},
+		   {'AAA-Application-Id', capwap_wtp},
 		    {'Service-Type', 'TP-CAPWAP-WTP'},
 		    {'Framed-Protocol', 'TP-CAPWAP'},
 		    {'Calling-Station', ip2str(Address)},
