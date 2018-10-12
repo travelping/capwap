@@ -213,6 +213,8 @@ setup_applications() ->
 				  {software, <<"SCG">>}]},
 		      {ac_name, <<"CAPWAP AC">>},
 
+		      {http_api, [{port, 0}]},
+
 		      {default_ssid, <<"DEV CAPWAP WIFI">>},
 		      {default_ssid_suppress, 0},
 		      {dynamic_ssid_suffix_len, false},

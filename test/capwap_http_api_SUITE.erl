@@ -180,7 +180,7 @@ exo_function(_) ->
 setup_applications() ->
     {ok, CWD} = file:get_cwd(),
     os:cmd("touch " ++ CWD ++ "/upstream"),
-    Apps = [{lager, [{handlers, [{lager_console_backend, info},
+    Apps = [{lager, [{handlers, [{lager_console_backend, [{level, info}]},
                                  {lager_file_backend, [{file, "log/error.log"}, {level, error}, {size, 0}, {date, ""}]},
                                  {lager_file_backend, [{file, "log/console.log"}, {level, debug}, {size, 0}, {date, ""}]}]}]},
             {capwap, [{server_ip, {127, 0, 0, 1}},
@@ -192,6 +192,8 @@ setup_applications() ->
                       {versions, [{hardware, <<"SCG">>},
                                   {software, <<"SCG">>}]},
                       {ac_name, <<"CAPWAP AC">>},
+
+		      {http_api, [{port, 0}]},
 
                       {default_ssid, <<"DEV CAPWAP WIFI">>},
                       {default_ssid_suppress, 0},
