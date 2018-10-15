@@ -138,8 +138,7 @@ start_gtk_rekey(Station, Controller, GTK, IGTK) ->
 callback_mode() ->
     [handle_event_function].
 
-init([AC, ClientMAC, StationCfg = #station_config{bss = RadioMAC,
-						  mac_mode = MacMode}]) ->
+init([AC, ClientMAC, StationCfg = #station_config{bss = RadioMAC}]) ->
     Data0 = init_from_cfg(StationCfg),
 
     lager:debug("Register station ~p ~p as ~w", [AC, ClientMAC, self()]),
@@ -150,7 +149,7 @@ init([AC, ClientMAC, StationCfg = #station_config{bss = RadioMAC,
     Data = Data0#data{ac = AC,
 		      ac_monitor = ACMonitor,
 		      mac = ClientMAC},
-    {ok, initial_state(MacMode), Data}.
+    {ok, initial_state(Data), Data}.
 
 %%
 %% Data transitions follow IEEE 802.11-2012, Section 10.3.2
@@ -214,9 +213,9 @@ handle_event(cast, Event = {'Authentication', _DA, _SA, BSS, 0, 0, _Frame}, init
     {next_state, init_auth, Data, [postpone]};
 
 handle_event(cast, Event = {'Deauthentication', _DA, _SA, BSS, 0, 0, _Frame}, init_assoc,
-	   Data = #data{radio_mac = BSS, mac_mode = MacMode}) ->
+	     Data = #data{radio_mac = BSS}) ->
     lager:debug("in INIT_ASSOC got Deauthentication: ~p", [Event]),
-    {next_state, initial_state(MacMode), Data, ?SHUTDOWN_TIMEOUT};
+    {next_state, initial_state(Data), Data, ?SHUTDOWN_TIMEOUT};
 
 handle_event(cast, Event = {FrameType, DA, SA, BSS, 0, 0, ReqFrame}, init_assoc,
 	   #data{radio_mac = BSS,
@@ -273,11 +272,11 @@ handle_event(cast, Event = {'Disassociation', _DA, _SA, BSS, 0, 0, _Frame}, init
     {next_state, init_assoc, Data, ?SHUTDOWN_TIMEOUT};
 
 handle_event(cast, Event = {'Deauthentication', _DA, _SA, BSS, 0, 0, _Frame}, init_start,
-	   Data = #data{radio_mac = BSS, mac_mode = MacMode}) ->
+	     Data = #data{radio_mac = BSS}) ->
     lager:debug("in INIT_START got Deauthentication: ~p", [Event]),
     wtp_del_station(Data),
     aaa_disassociation(Data),
-    {next_state, initial_state(MacMode), Data, ?SHUTDOWN_TIMEOUT};
+    {next_state, initial_state(Data), Data, ?SHUTDOWN_TIMEOUT};
 
 handle_event(cast, Event = {'Null', _DA, _SA, BSS, 0, 1, <<>>}, init_start,
 	   Data0 = #data{radio_mac = BSS}) ->
@@ -328,11 +327,11 @@ handle_event(cast, Event = {'Disassociation', _DA, _SA, BSS, 0, 0, _Frame}, conn
     {next_state, init_assoc, Data, ?SHUTDOWN_TIMEOUT};
 
 handle_event(cast, Event = {'Deauthentication', _DA, _SA, BSS, 0, 0, _Frame}, connected,
-	  Data = #data{radio_mac = BSS, mac_mode = MacMode}) ->
+	     Data = #data{radio_mac = BSS}) ->
     lager:debug("in CONNECTED got Deauthentication: ~p", [Event]),
     wtp_del_station(Data),
     aaa_disassociation(Data),
-    {next_state, initial_state(MacMode), Data, ?SHUTDOWN_TIMEOUT};
+    {next_state, initial_state(Data), Data, ?SHUTDOWN_TIMEOUT};
 
 handle_event(cast, {'EAPOL', _DA, _SA, BSS, AuthData}, connected,
 	  Data0 = #data{radio_mac = BSS, rekey_running = ptk}) ->
@@ -368,12 +367,11 @@ handle_event(info, Event = {eapol_retransmit, {key, Flags, KeyData}}, connected,
     Data = send_eapol_key(Flags, KeyData, Data0),
     {keep_state, Data, [?IDLE_TIMEOUT]};
 
-handle_event(info, Event = {eapol_retransmit, _Msg}, connected,
-	  Data = #data{mac_mode = MacMode}) ->
+handle_event(info, Event = {eapol_retransmit, _Msg}, connected, Data) ->
     lager:warning("in CONNECTED got EAPOL retransmit final TIMEOUT: ~p", [Event]),
     wtp_del_station(Data),
     aaa_disassociation(Data),
-    {next_state, initial_state(MacMode), Data, ?SHUTDOWN_TIMEOUT};
+    {next_state, initial_state(Data), Data, ?SHUTDOWN_TIMEOUT};
 
 handle_event(cast, {start_gtk_rekey, RekeyCtl, GTKnew, IGTKnew}, connected,
 	  #data{gtk = GTK, igtk = IGTK} = Data)
@@ -392,8 +390,7 @@ handle_event(cast, Event = {start_gtk_rekey, RekeyCtl, GTKnew, IGTKnew}, connect
 
 handle_event({call, From}, {take_over, AC, StationCfg =
 				#station_config{
-				   bss = RadioMAC,
-				   mac_mode = MacMode}} = Event,
+				   bss = RadioMAC}} = Event,
 	     State, #data{ac = OldAC, ac_monitor = OldACMonitor,
 			  data_path = _OldDataPath,
 			  radio_mac = OldRadioMAC, mac = ClientMAC} = Data0) ->
@@ -416,18 +413,18 @@ handle_event({call, From}, {take_over, AC, StationCfg =
     ACMonitor = erlang:monitor(process, AC),
 
     Data = update_from_cfg(StationCfg, Data0#data{ac = AC, ac_monitor = ACMonitor}),
-    {next_state, initial_state(MacMode), Data, [{reply, From, {ok, self()}}, ?IDLE_TIMEOUT]};
+    {next_state, initial_state(Data), Data, [{reply, From, {ok, self()}}, ?IDLE_TIMEOUT]};
 
-handle_event({call, From}, delete, connected, Data = #data{mac_mode = MacMode}) ->
+handle_event({call, From}, delete, connected, Data) ->
     wtp_del_station(Data),
     aaa_disassociation(Data),
-    {next_state, initial_state(MacMode), Data, [{reply, From, ok}, ?SHUTDOWN_TIMEOUT]};
+    {next_state, initial_state(Data), Data, [{reply, From, ok}, ?SHUTDOWN_TIMEOUT]};
 
-handle_event({call, From}, Event, connected, Data = #data{mac_mode = MacMode})
+handle_event({call, From}, Event, connected, Data)
   when Event == detach; Event == delete ->
     wtp_del_station(Data),
     aaa_disassociation(Data),
-    {next_state, initial_state(MacMode), Data, [{reply, From, ok}, ?SHUTDOWN_TIMEOUT]};
+    {next_state, initial_state(Data), Data, [{reply, From, ok}, ?SHUTDOWN_TIMEOUT]};
 
 handle_event({call, From}, Event, _State, _Data) when Event == detach; Event == delete ->
     {keep_state_and_data, [{reply, From, {error, not_attached}}, ?IDLE_TIMEOUT]};
@@ -956,9 +953,9 @@ cancel_timer(Ref) ->
 	    RemainingTime
     end.
 
-initial_state(local_mac) ->
+initial_state(#data{mac_mode = local_mac}) ->
     init_assoc;
-initial_state(split_mac) ->
+initial_state(#data{mac_mode = split_mac}) ->
     init_auth.
 
 stop_eapol_timer(#data{eapol_timer = TRef} = Data)
