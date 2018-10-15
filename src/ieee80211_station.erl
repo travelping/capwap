@@ -27,12 +27,7 @@
 -export([frame_type/1, frame_type/2]).
 
 %% gen_statem callbacks
--export([callback_mode/0,
-	 init/1,
-	 init_auth/3,
-	 init_assoc/3,
-	 init_start/3,
-	 connected/3,
+-export([callback_mode/0, init/1, handle_event/4,
 	 terminate/3, code_change/4]).
 
 -include("capwap_debug.hrl").
@@ -53,7 +48,7 @@
 -define(SUCCESS, 0).
 -define(REFUSED, 1).
 
--record(state, {
+-record(data, {
 	  ac,
 	  ac_monitor,
 	  aaa_session,
@@ -141,78 +136,55 @@ start_gtk_rekey(Station, Controller, GTK, IGTK) ->
 %%% gen_statem callbacks
 %%%===================================================================
 callback_mode() ->
-    state_functions.
+    [handle_event_function].
 
 init([AC, ClientMAC, StationCfg = #station_config{bss = RadioMAC,
 						  mac_mode = MacMode}]) ->
-    State0 = init_state_from_cfg(StationCfg),
+    Data0 = init_from_cfg(StationCfg),
 
     lager:debug("Register station ~p ~p as ~w", [AC, ClientMAC, self()]),
     capwap_station_reg:register(ClientMAC),
     capwap_station_reg:register(AC, RadioMAC, ClientMAC),
     ACMonitor = erlang:monitor(process, AC),
 
-    State = State0#state{ac = AC,
-			 ac_monitor = ACMonitor,
-			 mac = ClientMAC},
-    {ok, initial_state(MacMode), State}.
+    Data = Data0#data{ac = AC,
+		      ac_monitor = ACMonitor,
+		      mac = ClientMAC},
+    {ok, initial_state(MacMode), Data}.
 
 %%
-%% State transitions follow IEEE 802.11-2012, Section 10.3.2
+%% Data transitions follow IEEE 802.11-2012, Section 10.3.2
 %%
 
 %%
-%% State 1
+%% Data 1
 %%
-init_auth(timeout, _, State) ->
-    lager:warning("idle timeout in INIT_AUTH"),
-    {stop, normal, State};
-
-init_auth(cast, Event = {'Authentication', DA, SA, BSS, 0, 0, Frame},
-	  State = #state{radio_mac = BSS}) ->
+handle_event(cast, Event = {'Authentication', DA, SA, BSS, 0, 0, Frame}, init_auth,
+	     Data = #data{radio_mac = BSS}) ->
     lager:debug("in INIT_AUTH got Authentication Request: ~p", [Event]),
     AuthFrame = decode_auth_frame(Frame),
     case AuthFrame of
 	#auth_frame{algo   = ?OPEN_SYSTEM,
 		    status = ?SUCCESS} ->
 	    %% send Auth OK
-	    wtp_send_80211(gen_auth_ok(DA, SA, BSS, Frame), State),
-	    {next_state, init_assoc, State, ?IDLE_TIMEOUT};
+	    wtp_send_80211(gen_auth_ok(DA, SA, BSS, Frame), Data),
+	    {next_state, init_assoc, Data, ?IDLE_TIMEOUT};
 	_ ->
 	    %% send Auth Fail
-	    wtp_send_80211(gen_auth_fail(DA, SA, BSS, Frame), State),
+	    wtp_send_80211(gen_auth_fail(DA, SA, BSS, Frame), Data),
 	    {keep_state_and_data, [?IDLE_TIMEOUT]}
     end;
 
-init_auth({call, _} = EventType, Event, State)
-  when element(1, Event) == take_over ->
-    lager:debug("in INIT_AUTH got TAKE-OVER: ~p", [Event]),
-    handle_take_over(EventType, Event, State);
-
-init_auth({call, From}, Event, _State) when Event == detach; Event == delete ->
-    {keep_state_and_data, [{reply, From, {error, not_attached}}, ?IDLE_TIMEOUT]};
-
-init_auth(info, Msg, State) ->
-    handle_info(Msg, init_auth, State);
-
-init_auth(Type, Event, _State) ->
-    lager:warning("in INIT_AUTH got unexpexted: ~p:~p", [Type, Event]),
-    {keep_state_and_data, [?IDLE_TIMEOUT]}.
-
 %%
-%% State 2
+%% Data 2
 %%
-init_assoc(timeout, _, State) ->
-    lager:warning("idle timeout in INIT_ASSOC"),
-    {stop, normal, State};
-
-init_assoc(cast, Event = {'Authentication', _DA, _SA, BSS, 0, 0, _Frame},
-	   #state{radio_mac = BSS, mac_mode = local_mac}) ->
+handle_event(cast, Event = {'Authentication', _DA, _SA, BSS, 0, 0, _Frame}, init_assoc,
+	   #data{radio_mac = BSS, mac_mode = local_mac}) ->
     lager:debug("in INIT_ASSOC Local-MAC Mode got Authentication Request: ~p", [Event]),
     {keep_state_and_data, [?IDLE_TIMEOUT]};
 
-init_assoc(cast, Event = {FrameType, _DA, _SA, BSS, 0, 0, Frame},
-	   State0 = #state{radio_mac = BSS, mac_mode = MacMode})
+handle_event(cast, Event = {FrameType, _DA, _SA, BSS, 0, 0, Frame}, init_assoc,
+	   Data0 = #data{radio_mac = BSS, mac_mode = MacMode})
   when MacMode == local_mac andalso
        (FrameType == 'Association Request' orelse FrameType == 'Reassociation Request') ->
     lager:debug("in INIT_ASSOC Local-MAC Mode got Association Request: ~p", [Event]),
@@ -228,41 +200,41 @@ init_assoc(cast, Event = {FrameType, _DA, _SA, BSS, 0, 0, Frame},
     %%   necessary, and upon receipt of a failed Association Response frame
     %%   from the AC, the WTP MUST send a Disassociation frame to the station.
 
-    State1 = assign_aid(State0),
-    State2 = update_sta_from_mgmt_frame(FrameType, Frame, State1),
-    State3 = aaa_association(State2),
-    State = wtp_add_station(State3),
+    Data1 = assign_aid(Data0),
+    Data2 = update_sta_from_mgmt_frame(FrameType, Frame, Data1),
+    Data3 = aaa_association(Data2),
+    Data = wtp_add_station(Data3),
 
-    {next_state, connected, State, ?IDLE_TIMEOUT};
+    {next_state, connected, Data, ?IDLE_TIMEOUT};
 
-init_assoc(cast, Event = {'Authentication', _DA, _SA, BSS, 0, 0, _Frame},
-	   State = #state{radio_mac = BSS}) ->
+handle_event(cast, Event = {'Authentication', _DA, _SA, BSS, 0, 0, _Frame}, init_assoc,
+	   Data = #data{radio_mac = BSS}) ->
     lager:debug("in INIT_ASSOC got Authentication Request: ~p", [Event]),
     %% fall-back to init_auth....
-    {next_state, init_auth, State, [{next_event, cast, Event}]};
+    {next_state, init_auth, Data, [postpone]};
 
-init_assoc(cast, Event = {'Deauthentication', _DA, _SA, BSS, 0, 0, _Frame},
-	   State = #state{radio_mac = BSS, mac_mode = MacMode}) ->
+handle_event(cast, Event = {'Deauthentication', _DA, _SA, BSS, 0, 0, _Frame}, init_assoc,
+	   Data = #data{radio_mac = BSS, mac_mode = MacMode}) ->
     lager:debug("in INIT_ASSOC got Deauthentication: ~p", [Event]),
-    {next_state, initial_state(MacMode), State, ?SHUTDOWN_TIMEOUT};
+    {next_state, initial_state(MacMode), Data, ?SHUTDOWN_TIMEOUT};
 
-init_assoc(cast, Event = {FrameType, DA, SA, BSS, 0, 0, ReqFrame},
-	   #state{radio_mac = BSS,
+handle_event(cast, Event = {FrameType, DA, SA, BSS, 0, 0, ReqFrame}, init_assoc,
+	   #data{radio_mac = BSS,
 		  response_ies = ResponseIEs0,
 		  wpa_config = #wpa_config{
 				  rsn = #wtp_wlan_rsn{
 					   version = RSNversion,
 					   management_frame_protection = MFP}}
-		 } = State0)
+		 } = Data0)
   when (FrameType == 'Association Request' orelse FrameType == 'Reassociation Request') ->
     lager:debug("in INIT_ASSOC got Association Request: ~p", [Event]),
 
-    State1 = assign_aid(State0),
-    State2 = update_sta_from_mgmt_frame(FrameType, ReqFrame, State1),
-    State3 = aaa_association(State2),
+    Data1 = assign_aid(Data0),
+    Data2 = update_sta_from_mgmt_frame(FrameType, ReqFrame, Data1),
+    Data3 = aaa_association(Data2),
 
     %% TODO: validate RSNE against Wlan Config
-    #state{capabilities = #sta_cap{rsn = StaRSN0}} = State3,
+    #data{capabilities = #sta_cap{rsn = StaRSN0}} = Data3,
     StaRSN = StaRSN0#wtp_wlan_rsn{version = RSNversion},
     StaBinRSN =capwap_ac:rsn_ie(StaRSN, MFP /= false),
     ResponseIEs1 = lists:keystore(?WLAN_EID_RSN, 1, ResponseIEs0, {?WLAN_EID_RSN, StaBinRSN}),
@@ -273,7 +245,7 @@ init_assoc(cast, Event = {FrameType, DA, SA, BSS, 0, 0, ReqFrame},
 
     IEs = build_ies(ResponseIEs),
     MgmtFrame = <<16#01:16/integer-little, 0:16/integer-little,
-		  (State3#state.aid):16/integer-little, IEs/binary>>,
+		  (Data3#data.aid):16/integer-little, IEs/binary>>,
 
     {Type, SubType} = frame_type('Association Response'),
     FrameControl = <<SubType:4, Type:2, 0:2, 0:6, 0:1, 0:1>>,
@@ -284,82 +256,48 @@ init_assoc(cast, Event = {FrameType, DA, SA, BSS, 0, 0, ReqFrame},
 	      SA:6/bytes, DA:6/bytes, BSS:6/bytes,
 	      SequenceControl:16,
 	      MgmtFrame/binary>>,
-    wtp_send_80211(Frame, State3),
+    wtp_send_80211(Frame, Data3),
 
-    State = wtp_add_station(State3),
+    Data = wtp_add_station(Data3),
 
-    {next_state, connected, State, ?IDLE_TIMEOUT};
-
-init_assoc({call, _} = EventType, Event, State)
-  when element(1, Event) == take_over ->
-    lager:debug("in INIT_ASSOC got TAKE-OVER: ~p", [Event]),
-    handle_take_over(EventType, Event, State);
-
-init_assoc({call, From}, Event, _State) when Event == detach; Event == delete ->
-    {keep_state_and_data, [{reply, From, {error, not_attached}}, ?IDLE_TIMEOUT]};
-
-init_assoc(info, Msg, State) ->
-    handle_info(Msg, init_assoc, State);
-
-init_assoc(Type, Event, _State) ->
-    lager:warning("in INIT_ASSOC got unexpexted: ~p:~p", [Type, Event]),
-    {keep_state_and_data, [?IDLE_TIMEOUT]}.
+    {next_state, connected, Data, ?IDLE_TIMEOUT};
 
 %%
-%% State 3
+%% Data 3
 %%
-init_start(timeout, _, State) ->
-    lager:warning("idle timeout in INIT_START"),
-    {stop, normal, State};
-
-init_start(cast, Event = {'Disassociation', _DA, _SA, BSS, 0, 0, _Frame},
-	   State = #state{radio_mac = BSS}) ->
+handle_event(cast, Event = {'Disassociation', _DA, _SA, BSS, 0, 0, _Frame}, init_start,
+	   Data = #data{radio_mac = BSS}) ->
     lager:debug("in INIT_START got Disassociation: ~p", [Event]),
-    wtp_del_station(State),
-    aaa_disassociation(State),
-    {next_state, init_assoc, State, ?SHUTDOWN_TIMEOUT};
+    wtp_del_station(Data),
+    aaa_disassociation(Data),
+    {next_state, init_assoc, Data, ?SHUTDOWN_TIMEOUT};
 
-init_start(cast, Event = {'Deauthentication', _DA, _SA, BSS, 0, 0, _Frame},
-	   State = #state{radio_mac = BSS, mac_mode = MacMode}) ->
+handle_event(cast, Event = {'Deauthentication', _DA, _SA, BSS, 0, 0, _Frame}, init_start,
+	   Data = #data{radio_mac = BSS, mac_mode = MacMode}) ->
     lager:debug("in INIT_START got Deauthentication: ~p", [Event]),
-    wtp_del_station(State),
-    aaa_disassociation(State),
-    {next_state, initial_state(MacMode), State, ?SHUTDOWN_TIMEOUT};
+    wtp_del_station(Data),
+    aaa_disassociation(Data),
+    {next_state, initial_state(MacMode), Data, ?SHUTDOWN_TIMEOUT};
 
-init_start(cast, Event = {'Null', _DA, _SA, BSS, 0, 1, <<>>},
-	   State0 = #state{radio_mac = BSS}) ->
+handle_event(cast, Event = {'Null', _DA, _SA, BSS, 0, 1, <<>>}, init_start,
+	   Data0 = #data{radio_mac = BSS}) ->
     lager:debug("in INIT_START got Null: ~p", [Event]),
-    State = wtp_add_station(State0),
-    {next_state, connected, State, ?IDLE_TIMEOUT};
-
-init_start({call, _} = EventType, Event, State)
-  when element(1, Event) == take_over ->
-    lager:debug("in INIT_START got TAKE-OVER: ~p", [Event]),
-    handle_take_over(EventType, Event, State);
-
-init_start({call, From}, Event, _State) when Event == detach; Event == delete ->
-    {keep_state_and_data, [{reply, From, {error, not_attached}}, ?IDLE_TIMEOUT]};
-
-init_start(info, Msg, State) ->
-    handle_info(Msg, init_start, State);
-
-init_start(Type, Event, _State) ->
-    lager:warning("in INIT_START got unexpexted: ~p:~p", [Type, Event]),
-    {keep_state_and_data, [?IDLE_TIMEOUT]}.
+    Data = wtp_add_station(Data0),
+    {next_state, connected, Data, ?IDLE_TIMEOUT};
 
 %%
-%% State 4
+%% Data 4
 %%
-connected(timeout, _, _State) ->
+handle_event(timeout, _, connected, _Data) ->
     lager:warning("idle timeout in CONNECTED"),
     {keep_state_and_data, [?IDLE_TIMEOUT]};
 
-connected(cast, {'802.3', Data}, _State) ->
+handle_event(cast, {'802.3', Data}, connected, _Data) ->
     lager:error("in CONNECTED got 802.3 Data:~n~s", [capwap_tools:hexdump(Data)]),
     {keep_state_and_data, [?IDLE_TIMEOUT]};
 
-connected(cast, Event = {FrameType, _DA, _SA, BSS, 0, 0, Frame},
-	  State0 = #state{radio_mac = BSS, mac_mode = MacMode})
+handle_event(cast, Event = {FrameType, _DA, _SA, BSS, 0, 0, Frame}, connected,
+	  Data0 = #data{radio_mac = BSS, mac_mode = MacMode})
   when MacMode == local_mac andalso
        (FrameType == 'Association Request' orelse FrameType == 'Reassociation Request') ->
     lager:debug("in CONNECTED Local-MAC Mode got Association Request: ~p", [Event]),
@@ -378,134 +316,156 @@ connected(cast, Event = {FrameType, _DA, _SA, BSS, 0, 0, Frame},
     %%   necessary, and upon receipt of a failed Association Response frame
     %%   from the AC, the WTP MUST send a Disassociation frame to the station.
 
-    State1 = update_sta_from_mgmt_frame(FrameType, Frame, State0),
-    State = wtp_add_station(State1),
-    {keep_state, State, [?IDLE_TIMEOUT]};
+    Data1 = update_sta_from_mgmt_frame(FrameType, Frame, Data0),
+    Data = wtp_add_station(Data1),
+    {keep_state, Data, [?IDLE_TIMEOUT]};
 
-connected(cast, Event = {'Disassociation', _DA, _SA, BSS, 0, 0, _Frame},
-	  State = #state{radio_mac = BSS}) ->
+handle_event(cast, Event = {'Disassociation', _DA, _SA, BSS, 0, 0, _Frame}, connected,
+	  Data = #data{radio_mac = BSS}) ->
     lager:debug("in CONNECTED got Disassociation: ~p", [Event]),
-    wtp_del_station(State),
-    aaa_disassociation(State),
-    {next_state, init_assoc, State, ?SHUTDOWN_TIMEOUT};
+    wtp_del_station(Data),
+    aaa_disassociation(Data),
+    {next_state, init_assoc, Data, ?SHUTDOWN_TIMEOUT};
 
-connected(cast, Event = {'Deauthentication', _DA, _SA, BSS, 0, 0, _Frame},
-	  State = #state{radio_mac = BSS, mac_mode = MacMode}) ->
+handle_event(cast, Event = {'Deauthentication', _DA, _SA, BSS, 0, 0, _Frame}, connected,
+	  Data = #data{radio_mac = BSS, mac_mode = MacMode}) ->
     lager:debug("in CONNECTED got Deauthentication: ~p", [Event]),
-    wtp_del_station(State),
-    aaa_disassociation(State),
-    {next_state, initial_state(MacMode), State, ?SHUTDOWN_TIMEOUT};
+    wtp_del_station(Data),
+    aaa_disassociation(Data),
+    {next_state, initial_state(MacMode), Data, ?SHUTDOWN_TIMEOUT};
 
-connected(cast, {'EAPOL', _DA, _SA, BSS, AuthData},
-	  State0 = #state{radio_mac = BSS, rekey_running = ptk}) ->
-    State = rsna_4way_handshake(eapol:decode(AuthData), State0),
-    {keep_state, State, [?IDLE_TIMEOUT]};
+handle_event(cast, {'EAPOL', _DA, _SA, BSS, AuthData}, connected,
+	  Data0 = #data{radio_mac = BSS, rekey_running = ptk}) ->
+    Data = rsna_4way_handshake(eapol:decode(AuthData), Data0),
+    {keep_state, Data, [?IDLE_TIMEOUT]};
 
-connected(cast, {'EAPOL', _DA, _SA, BSS, AuthData},
-	  State0 = #state{radio_mac = BSS, rekey_running = gtk}) ->
-    State = rsna_2way_handshake(eapol:decode(AuthData), State0),
-    {keep_state, State, [?IDLE_TIMEOUT]};
+handle_event(cast, {'EAPOL', _DA, _SA, BSS, AuthData}, connected,
+	  Data0 = #data{radio_mac = BSS, rekey_running = gtk}) ->
+    Data = rsna_2way_handshake(eapol:decode(AuthData), Data0),
+    {keep_state, Data, [?IDLE_TIMEOUT]};
 
-connected(cast, {'EAPOL', _DA, _SA, BSS, EAPData},
-	  State0 = #state{radio_mac = BSS, eapol_state = {request, _}}) ->
-    State = eap_handshake(eapol:decode(EAPData), State0),
-    {keep_state, State, [?IDLE_TIMEOUT]};
+handle_event(cast, {'EAPOL', _DA, _SA, BSS, EAPData}, connected,
+	  Data0 = #data{radio_mac = BSS, eapol_state = {request, _}}) ->
+    Data = eap_handshake(eapol:decode(EAPData), Data0),
+    {keep_state, Data, [?IDLE_TIMEOUT]};
 
-connected(info, {rekey, Type}, State0) ->
+handle_event(info, {rekey, Type}, connected, Data0) ->
     lager:warning("in CONNECTED got REKEY: ~p", [Type]),
-    State = rekey_start(Type, State0),
-    {keep_state, State, [?IDLE_TIMEOUT]};
+    Data = rekey_start(Type, Data0),
+    {keep_state, Data, [?IDLE_TIMEOUT]};
 
-connected(info, Event = {eapol_retransmit, {packet, EAPData}},
-	  State0 = #state{eapol_retransmit = TxCnt})
+handle_event(info, Event = {eapol_retransmit, {packet, EAPData}}, connected,
+	  Data0 = #data{eapol_retransmit = TxCnt})
   when TxCnt < 4 ->
     lager:warning("in CONNECTED got EAPOL retransmit: ~p", [Event]),
-    State = send_eapol_packet(EAPData, State0),
-    {keep_state, State, [?IDLE_TIMEOUT]};
+    Data = send_eapol_packet(EAPData, Data0),
+    {keep_state, Data, [?IDLE_TIMEOUT]};
 
-connected(info, Event = {eapol_retransmit, {key, Flags, KeyData}},
-	  State0 = #state{eapol_retransmit = TxCnt})
+handle_event(info, Event = {eapol_retransmit, {key, Flags, KeyData}}, connected,
+	  Data0 = #data{eapol_retransmit = TxCnt})
   when TxCnt < 4 ->
     lager:warning("in CONNECTED got EAPOL retransmit: ~p", [Event]),
-    State = send_eapol_key(Flags, KeyData, State0),
-    {keep_state, State, [?IDLE_TIMEOUT]};
+    Data = send_eapol_key(Flags, KeyData, Data0),
+    {keep_state, Data, [?IDLE_TIMEOUT]};
 
-connected(info, Event = {eapol_retransmit, _Msg},
-	  State = #state{mac_mode = MacMode}) ->
+handle_event(info, Event = {eapol_retransmit, _Msg}, connected,
+	  Data = #data{mac_mode = MacMode}) ->
     lager:warning("in CONNECTED got EAPOL retransmit final TIMEOUT: ~p", [Event]),
-    wtp_del_station(State),
-    aaa_disassociation(State),
-    {next_state, initial_state(MacMode), State, ?SHUTDOWN_TIMEOUT};
+    wtp_del_station(Data),
+    aaa_disassociation(Data),
+    {next_state, initial_state(MacMode), Data, ?SHUTDOWN_TIMEOUT};
 
-connected(cast, {start_gtk_rekey, RekeyCtl, GTKnew, IGTKnew},
-	  #state{gtk = GTK, igtk = IGTK} = State)
+handle_event(cast, {start_gtk_rekey, RekeyCtl, GTKnew, IGTKnew}, connected,
+	  #data{gtk = GTK, igtk = IGTK} = Data)
   when GTKnew#ieee80211_key.index == GTK#ieee80211_key.index andalso
        IGTKnew#ieee80211_key.index == IGTK#ieee80211_key.index ->
     capwap_ac_gtk_rekey:gtk_rekey_done(RekeyCtl, self()),
-    {keep_state, State, [?IDLE_TIMEOUT]};
+    {keep_state, Data, [?IDLE_TIMEOUT]};
 
-connected(cast, Event = {start_gtk_rekey, RekeyCtl, GTKnew, IGTKnew},
-	  #state{gtk = GTK, igtk = IGTK} = State0)
+handle_event(cast, Event = {start_gtk_rekey, RekeyCtl, GTKnew, IGTKnew}, connected,
+	  #data{gtk = GTK, igtk = IGTK} = Data0)
   when GTKnew#ieee80211_key.index /= GTK#ieee80211_key.index orelse
        IGTKnew#ieee80211_key.index /= IGTK#ieee80211_key.index ->
     lager:debug("in CONNECTED got Group rekey: ~p", [Event]),
-    State = rekey_start(gtk, State0#state{gtk = GTKnew, igtk = IGTKnew, rekey_control = RekeyCtl}),
-    {keep_state, State, [?IDLE_TIMEOUT]};
+    Data = rekey_start(gtk, Data0#data{gtk = GTKnew, igtk = IGTKnew, rekey_control = RekeyCtl}),
+    {keep_state, Data, [?IDLE_TIMEOUT]};
 
-connected({call, _} = EventType, Event, State)
-  when element(1, Event) == take_over ->
-    lager:debug("in CONNECTED got TAKE-OVER: ~p", [Event]),
-    aaa_disassociation(State),
-    handle_take_over(EventType, Event, State);
+handle_event({call, From}, {take_over, AC, StationCfg =
+				#station_config{
+				   bss = RadioMAC,
+				   mac_mode = MacMode}} = Event,
+	     State, #data{ac = OldAC, ac_monitor = OldACMonitor,
+			  data_path = _OldDataPath,
+			  radio_mac = OldRadioMAC, mac = ClientMAC} = Data0) ->
+    lager:debug("in ~p got TAKE-OVER: ~p", [State, Event]),
+    lager:debug("Takeover station ~p as ~w", [{OldAC, OldRadioMAC, ClientMAC}, self()]),
+    lager:debug("Register station ~p as ~w", [{AC, RadioMAC, ClientMAC}, self()]),
 
-connected({call, From}, delete, State = #state{mac_mode = MacMode}) ->
-    wtp_del_station(State),
-    aaa_disassociation(State),
-    {next_state, initial_state(MacMode), State, [{reply, From, ok}, ?SHUTDOWN_TIMEOUT]};
+    if State =:= connected ->
+	    aaa_disassociation(Data0);
+       true ->
+	    ok
+    end,
 
-connected({call, From}, detach, State = #state{mac_mode = MacMode}) ->
-    wtp_del_station(State),
-    aaa_disassociation(State),
-    {next_state, initial_state(MacMode), State, [{reply, From, ok}, ?SHUTDOWN_TIMEOUT]};
+    wtp_del_station(Data0),
+    capwap_ac:station_detaching(OldAC),
+    capwap_station_reg:unregister(OldAC, OldRadioMAC, ClientMAC),
+    erlang:demonitor(OldACMonitor, [flush]),
 
-connected(info, Msg, State) ->
-    handle_info(Msg, connected, State);
+    capwap_station_reg:register(AC, RadioMAC, ClientMAC),
+    ACMonitor = erlang:monitor(process, AC),
 
-connected(Type, Event, State) ->
-    lager:warning("in CONNECTED got unexpexted: ~p:~p", [Type, Event]),
-    {keep_state, State, [?IDLE_TIMEOUT]}.
+    Data = update_from_cfg(StationCfg, Data0#data{ac = AC, ac_monitor = ACMonitor}),
+    {next_state, initial_state(MacMode), Data, [{reply, From, {ok, self()}}, ?IDLE_TIMEOUT]};
 
-handle_info({'DOWN', _ACMonitor, process, AC, _Info}, _StateName,
-	    State = #state{ac = AC}) ->
+handle_event({call, From}, delete, connected, Data = #data{mac_mode = MacMode}) ->
+    wtp_del_station(Data),
+    aaa_disassociation(Data),
+    {next_state, initial_state(MacMode), Data, [{reply, From, ok}, ?SHUTDOWN_TIMEOUT]};
+
+handle_event({call, From}, Event, connected, Data = #data{mac_mode = MacMode})
+  when Event == detach; Event == delete ->
+    wtp_del_station(Data),
+    aaa_disassociation(Data),
+    {next_state, initial_state(MacMode), Data, [{reply, From, ok}, ?SHUTDOWN_TIMEOUT]};
+
+handle_event({call, From}, Event, _State, _Data) when Event == detach; Event == delete ->
+    {keep_state_and_data, [{reply, From, {error, not_attached}}, ?IDLE_TIMEOUT]};
+
+handle_event(timeout, _, State, _Data) ->
+    lager:warning("idle timeout in ~p", [State]),
+    {stop, normal};
+
+handle_event(info, {'DOWN', _ACMonitor, process, AC, _Info}, _State, #data{ac = AC}) ->
     lager:warning("AC died ~w", [AC]),
-    {stop, normal, State};
+    {stop, normal};
 
-handle_info(Msg, StateName, _State) ->
-    lager:warning("in State ~p unexpected Info: ~p", [StateName, Msg]),
+handle_event(Type, Event, State, _Data) ->
+    lager:warning("in ~p got unexpexted: ~p:~p", [State, Type, Event]),
     {keep_state_and_data, [?IDLE_TIMEOUT]}.
 
-terminate(_Reason, StateName, State = #state{ac = AC, mac = MAC}) ->
-    if StateName == connected ->
-	    wtp_del_station(State),
-	    aaa_disassociation(State);
+terminate(_Reason, State, Data = #data{ac = AC, mac = MAC}) ->
+    if State == connected ->
+	    wtp_del_station(Data),
+	    aaa_disassociation(Data);
        true ->
 	    ok
     end,
     capwap_ac:station_detaching(AC),
-    lager:warning("Station ~s terminated in State ~w", [capwap_tools:format_eui(MAC), StateName]),
+    lager:warning("Station ~s terminated in State ~w", [capwap_tools:format_eui(MAC), State]),
     ok.
 
-code_change(_OldVsn, StateName, State, _Extra) ->
-    {ok, StateName, State}.
+code_change(_OldVsn, State, Data, _Extra) ->
+    {ok, State, Data}.
 
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
-init_state_from_cfg(StationCfg) ->
-    update_state_from_cfg(StationCfg,
-			  #state{capabilities = #sta_cap{},
-				 rekey_running = false,
-				 rekey_pending = []}).
+init_from_cfg(StationCfg) ->
+    update_from_cfg(StationCfg,
+		    #data{capabilities = #sta_cap{},
+			  rekey_running = false,
+			  rekey_pending = []}).
 
 convert_ies_from_bss(IEs) ->
     lists:foldl(fun({IE = <<Id:8, _/binary>>, Flags}, Acc) ->
@@ -518,19 +478,19 @@ convert_ies_from_bss(IEs) ->
 build_ies(IEs) ->
     << <<IE/binary>> || {_Id, IE} <- lists:keysort(1, IEs) >>.
 
-update_state_from_cfg(#station_config{data_path = DataPath,
-				      wtp_data_channel_address = WTPDataChannelAddress,
-				      wtp_id = WtpId,
-				      wtp_session_id = SessionId,
-				      mac_mode = MacMode,
-				      tunnel_mode = TunnelMode,
-				      bss = BSS,
-				      bss_ies = IEs,
-				      wpa_config = WpaConfig,
-				      gtk = GTK,
-				      igtk = IGTK
-				     }, State) ->
-    State#state{data_path = DataPath,
+update_from_cfg(#station_config{data_path = DataPath,
+				wtp_data_channel_address = WTPDataChannelAddress,
+				wtp_id = WtpId,
+				wtp_session_id = SessionId,
+				mac_mode = MacMode,
+				tunnel_mode = TunnelMode,
+				bss = BSS,
+				bss_ies = IEs,
+				wpa_config = WpaConfig,
+				gtk = GTK,
+				igtk = IGTK
+			       }, Data) ->
+    Data#data{data_path = DataPath,
 		data_channel_address = WTPDataChannelAddress,
 		wtp_id = WtpId,
 		wtp_session_id = SessionId,
@@ -644,27 +604,6 @@ ieee80211_request(_AC, FrameType, DA, SA, BSS, FromDS, ToDS, Frame) ->
     lager:warning("unhandled IEEE 802.11 Frame: ~p", [{FrameType, DA, SA, BSS, FromDS, ToDS, Frame}]),
     {error, unhandled}.
 
-handle_take_over({call, From},
-		 {take_over, AC, StationCfg = #station_config{
-						 bss = RadioMAC,
-						 mac_mode = MacMode}},
-		 State0 = #state{ac = OldAC, ac_monitor = OldACMonitor,
-				 data_path = _OldDataPath,
-				 radio_mac = OldRadioMAC, mac = ClientMAC}) ->
-    lager:debug("Takeover station ~p as ~w", [{OldAC, OldRadioMAC, ClientMAC}, self()]),
-    lager:debug("Register station ~p as ~w", [{AC, RadioMAC, ClientMAC}, self()]),
-
-    wtp_del_station(State0),
-    capwap_ac:station_detaching(OldAC),
-    capwap_station_reg:unregister(OldAC, OldRadioMAC, ClientMAC),
-    erlang:demonitor(OldACMonitor, [flush]),
-
-    capwap_station_reg:register(AC, RadioMAC, ClientMAC),
-    ACMonitor = erlang:monitor(process, AC),
-
-    State = update_state_from_cfg(StationCfg, State0#state{ac = AC, ac_monitor = ACMonitor}),
-    {next_state, initial_state(MacMode), State, [{reply, From, {ok, self()}}, ?IDLE_TIMEOUT]}.
-
 %% partially en/decode Authentication Frames
 decode_auth_frame(<<Algo:16/little-integer, SeqNo:16/little-integer,
 		    Status:16/little-integer, Params/binary>>) ->
@@ -680,39 +619,39 @@ encode_auth_frame(#auth_frame{algo   = Algo, seq_no = SeqNo,
     <<Algo:16/little-integer, SeqNo:16/little-integer,
       Status:16/little-integer, Params/binary>>.
 
-assign_aid(State) ->
+assign_aid(Data) ->
     %% FIXME: generate uniq value...
-    State#state{aid = (rand:uniform(2007) + 1) bor 16#C000}.
+    Data#data{aid = (rand:uniform(2007) + 1) bor 16#C000}.
 
-update_sta_from_mgmt_frame(FrameType, Frame, State)
+update_sta_from_mgmt_frame(FrameType, Frame, Data)
   when (FrameType == 'Association Request') ->
     <<_Capability:16, _ListenInterval:16,
       IEs/binary>> = Frame,
-    update_sta_from_mgmt_frame_ies(IEs, State);
-update_sta_from_mgmt_frame(FrameType, Frame, State)
+    update_sta_from_mgmt_frame_ies(IEs, Data);
+update_sta_from_mgmt_frame(FrameType, Frame, Data)
   when (FrameType == 'Reassociation Request') ->
     <<_Capability:16, _ListenInterval:16,
       _CurrentAP:6/bytes, IEs/binary>> = Frame,
-    update_sta_from_mgmt_frame_ies(IEs, State);
-update_sta_from_mgmt_frame(_FrameType, _Frame, State) ->
-    State.
+    update_sta_from_mgmt_frame_ies(IEs, Data);
+update_sta_from_mgmt_frame(_FrameType, _Frame, Data) ->
+    Data.
 
-update_sta_from_mgmt_frame_ies(IEs, #state{aid = AID, capabilities = Cap0} = State0) ->
-    State1 = State0#state{capabilities = Cap0#sta_cap{aid = AID}},
+update_sta_from_mgmt_frame_ies(IEs, #data{aid = AID, capabilities = Cap0} = Data0) ->
+    Data1 = Data0#data{capabilities = Cap0#sta_cap{aid = AID}},
     ListIE = [ {Id, Data} || <<Id:8, Len:8, Data:Len/bytes>> <= IEs ],
-    State = lists:foldl(fun update_sta_from_mgmt_frame_ie/2, State1, ListIE),
+    Data = lists:foldl(fun update_sta_from_mgmt_frame_ie/2, Data1, ListIE),
 
-    lager:debug("New Station Caps: ~p", [lager:pr(State#state.capabilities, ?MODULE)]),
-    case State#state.capabilities of
+    lager:debug("New Station Caps: ~p", [lager:pr(Data#data.capabilities, ?MODULE)]),
+    case Data#data.capabilities of
 	#sta_cap{rsn = #wtp_wlan_rsn{} = RSN} ->
 	    lager:info("STA: ~p, Ciphers: Group ~p, PairWise: ~p, AKM: ~p, Caps: ~w, Mgmt: ~p",
-		       [capwap_tools:format_eui(State#state.mac),
+		       [capwap_tools:format_eui(Data#data.mac),
 			RSN#wtp_wlan_rsn.group_cipher_suite, RSN#wtp_wlan_rsn.cipher_suites,
 			RSN#wtp_wlan_rsn.akm_suites, RSN#wtp_wlan_rsn.capabilities,
 			RSN#wtp_wlan_rsn.group_mgmt_cipher_suite]);
 	_ -> nothing
     end,
-    State.
+    Data.
 
 smps2atom(0) -> static;
 smps2atom(1) -> dynamic;
@@ -720,7 +659,7 @@ smps2atom(2) -> reserved;
 smps2atom(3) -> disabled.
 
 update_sta_from_mgmt_frame_ie(IE = {?WLAN_EID_HT_CAP, HtCap},
-				  #state{capabilities = Cap} = State) ->
+				  #data{capabilities = Cap} = Data) ->
     lager:debug("Mgmt IE HT CAP: ~p", [IE]),
     <<CapInfo:2/bytes, AMPDU_ParamsInfo:8/bits, MCSinfo:16/bytes,
       ExtHtCapInfo:2/bytes, TxBFinfo:4/bytes, ASelCap:8/bits>> = HtCap,
@@ -732,7 +671,7 @@ update_sta_from_mgmt_frame_ie(IE = {?WLAN_EID_HT_CAP, HtCap},
     <<_:3, AMPDU_Density:3, AMPDU_Factor:2>> = AMPDU_ParamsInfo,
     <<RxMask:10/bytes, RxHighest:16/integer-little, _TxParms:8, _:3/bytes>> = MCSinfo,
 
-    State#state{
+    Data#data{
       capabilities =
 	  Cap#sta_cap{sgi_20mhz = (SGI20Mhz == 1), sgi_40mhz = (SGI40Mhz == 1),
 		      smps = smps2atom(SMPS), back_delay = (BAckDelay == 1),
@@ -747,28 +686,28 @@ update_sta_from_mgmt_frame_ie(IE = {?WLAN_EID_HT_CAP, HtCap},
 %%  WME Version: 1
 update_sta_from_mgmt_frame_ie(IE = {?WLAN_EID_VENDOR_SPECIFIC,
 				    <<16#00, 16#50, 16#F2, 2, 0, 1, _/binary>>},
-				  #state{capabilities = Cap} = State) ->
+				  #data{capabilities = Cap} = Data) ->
     lager:debug("Mgmt IE WMM: ~p", [IE]),
-    State#state{
+    Data#data{
       capabilities =
 	  Cap#sta_cap{wmm = true}};
 
 update_sta_from_mgmt_frame_ie(IE = {?WLAN_EID_RSN, <<RSNVersion:16/little, RSNData/binary>> = RSNE},
-			      #state{capabilities = Cap} = State) ->
+			      #data{capabilities = Cap} = Data) ->
     lager:debug("Mgmt IE RSN: ~p", [IE]),
     RSN = decode_rsne(group_cipher_suite, RSNData, #wtp_wlan_rsn{version = RSNVersion}),
-    State#state{
+    Data#data{
       capabilities =
 	  Cap#sta_cap{last_rsne = RSNE, rsn = RSN}};
 
 update_sta_from_mgmt_frame_ie(_IE = {?WLAN_EID_SSID, SSID},
-			      #state{} = State) ->
-    State#state{ssid = SSID };
+			      #data{} = Data) ->
+    Data#data{ssid = SSID };
 
 
-update_sta_from_mgmt_frame_ie(IE = {_Id, _Value}, State) ->
+update_sta_from_mgmt_frame_ie(IE = {_Id, _Value}, Data) ->
     lager:debug("Mgmt IE: ~p", [IE]),
-    State.
+    Data.
 
 decode_rsne(_, <<>>, RSN) ->
     RSN;
@@ -838,21 +777,21 @@ add_tunnel_info({Address, _Port}, SessionData) ->
      {'Tunnel-Client-Endpoint', ip2str(Address)}
      |SessionData].
 
-wtp_add_station(#state{ac = AC, radio_mac = BSS, mac = MAC, capabilities = Caps,
+wtp_add_station(#data{ac = AC, radio_mac = BSS, mac = MAC, capabilities = Caps,
 		       wpa_config = #wpa_config{privacy = Privacy},
-		       cipher_state = CipherState} = State) ->
+		       cipher_state = CipherData} = Data) ->
     if Privacy ->
-	    capwap_ac:add_station(AC, BSS, MAC, Caps, {true, false, CipherState}),
-	    init_eapol(State);
+	    capwap_ac:add_station(AC, BSS, MAC, Caps, {true, false, CipherData}),
+	    init_eapol(Data);
        true ->
 	    capwap_ac:add_station(AC, BSS, MAC, Caps, {false, false, undefined}),
-	    State
+	    Data
     end.
 
-wtp_del_station(#state{ac = AC, radio_mac = BSS, mac = MAC}) ->
+wtp_del_station(#data{ac = AC, radio_mac = BSS, mac = MAC}) ->
     capwap_ac:del_station(AC, BSS, MAC).
 
-wtp_send_80211(Data,  #state{ac = AC, radio_mac = BSS}) when is_binary(Data) ->
+wtp_send_80211(Data,  #data{ac = AC, radio_mac = BSS}) when is_binary(Data) ->
     capwap_ac:send_80211(AC, BSS, Data).
 
 accounting_update(STA, SessionOpts) ->
@@ -871,7 +810,7 @@ accounting_update(STA, SessionOpts) ->
 	    SessionOpts
     end.
 
-aaa_association(State = #state{mac = MAC, data_channel_address = WTPDataChannelAddress,
+aaa_association(Data = #data{mac = MAC, data_channel_address = WTPDataChannelAddress,
 				wtp_id = WtpId, wtp_session_id = WtpSessionId,
 				radio_mac = BSSID, ssid = SSID}) ->
     MACStr = capwap_tools:format_eui(MAC),
@@ -891,9 +830,9 @@ aaa_association(State = #state{mac = MAC, data_channel_address = WTPDataChannelA
     {ok, Session} = ergw_aaa_session_sup:new_session(self(), to_session(SessionData1)),
     lager:info("NEW session for ~w at ~p", [MAC, Session]),
     ergw_aaa_session:start(Session, to_session([])),
-    State#state{aaa_session = Session}.
+    Data#data{aaa_session = Session}.
 
-aaa_disassociation(#state{aaa_session = Session}) ->
+aaa_disassociation(#data{aaa_session = Session}) ->
     ergw_aaa_session:stop(Session, to_session([])),
     ok.
 
@@ -1022,67 +961,67 @@ initial_state(local_mac) ->
 initial_state(split_mac) ->
     init_auth.
 
-stop_eapol_timer(#state{eapol_timer = TRef} = State)
+stop_eapol_timer(#data{eapol_timer = TRef} = Data)
   when is_reference(TRef) ->
     cancel_timer(TRef),
-    State#state{eapol_timer = undefined};
-stop_eapol_timer(State) ->
-    State.
+    Data#data{eapol_timer = undefined};
+stop_eapol_timer(Data) ->
+    Data.
 
-start_eapol_timer(Msg, State0) ->
+start_eapol_timer(Msg, Data0) ->
     Interval = 500,
-    State = stop_eapol_timer(State0),
+    Data = stop_eapol_timer(Data0),
     lager:debug("Starting EAPOL Timer ~w ms", [Interval]),
     TRef = erlang:send_after(Interval, self(), {eapol_retransmit, Msg}),
-    State#state{eapol_timer = TRef}.
+    Data#data{eapol_timer = TRef}.
 
-send_eapol(EAPData, State = #state{mac = StationMAC, radio_mac = BSS}) ->
+send_eapol(EAPData, Data = #data{mac = StationMAC, radio_mac = BSS}) ->
     Frame = eapol:encode_802_11(StationMAC, BSS, EAPData),
-    wtp_send_80211(Frame, State).
+    wtp_send_80211(Frame, Data).
 
-send_eapol_packet(EAPData, State = #state{eapol_retransmit = TxCnt}) ->
-    send_eapol(eapol:packet(EAPData), State),
-    start_eapol_timer({packet, EAPData}, State#state{eapol_retransmit = TxCnt + 1}).
+send_eapol_packet(EAPData, Data = #data{eapol_retransmit = TxCnt}) ->
+    send_eapol(eapol:packet(EAPData), Data),
+    start_eapol_timer({packet, EAPData}, Data#data{eapol_retransmit = TxCnt + 1}).
 
 send_eapol_key(Flags, KeyData,
-	       State = #state{eapol_retransmit = TxCnt,
-			      cipher_state =
-				  #ccmp{replay_counter = ReplayCounter} = CipherState0
-			     }) ->
-    CipherState = CipherState0#ccmp{replay_counter = ReplayCounter + 1},
-    KeyFrame = eapol:key(Flags, KeyData, CipherState),
-    send_eapol(KeyFrame, State),
+	       Data = #data{eapol_retransmit = TxCnt,
+			    cipher_state =
+				#ccmp{replay_counter = ReplayCounter} = CipherData0
+			   }) ->
+    CipherData = CipherData0#ccmp{replay_counter = ReplayCounter + 1},
+    KeyFrame = eapol:key(Flags, KeyData, CipherData),
+    send_eapol(KeyFrame, Data),
     start_eapol_timer({key, Flags, KeyData},
-		      State#state{eapol_retransmit = TxCnt + 1,
-				  cipher_state = CipherState}).
+		      Data#data{eapol_retransmit = TxCnt + 1,
+				cipher_state = CipherData}).
 
-init_eapol(#state{capabilities = #sta_cap{rsn = #wtp_wlan_rsn{akm_suites = [AKM]}},
-		  wpa_config = #wpa_config{ssid = SSID, secret = Secret}} = State)
+init_eapol(#data{capabilities = #sta_cap{rsn = #wtp_wlan_rsn{akm_suites = [AKM]}},
+		  wpa_config = #wpa_config{ssid = SSID, secret = Secret}} = Data)
   when AKM == 'PSK'; AKM == 'FT-PSK' ->
     {ok, PSK} = eapol:phrase2psk(Secret, SSID),
     lager:debug("PSK: ~s", [pbkdf2:to_hex(PSK)]),
-    rsna_4way_handshake({init, PSK}, State#state{rekey_running = ptk});
+    rsna_4way_handshake({init, PSK}, Data#data{rekey_running = ptk});
 
-init_eapol(#state{capabilities = #sta_cap{rsn = #wtp_wlan_rsn{akm_suites = [AKM]}},
-		  wpa_config = #wpa_config{ssid = SSID}} = State)
+init_eapol(#data{capabilities = #sta_cap{rsn = #wtp_wlan_rsn{akm_suites = [AKM]}},
+		  wpa_config = #wpa_config{ssid = SSID}} = Data)
   when AKM == '802.1x'; AKM == 'FT-802.1x' ->
     ReqData = <<0, "networkid=", SSID/binary, ",nasid=SCG4,portid=1">>,
     Id = 1,
     EAPData = eapol:request(Id, identity, ReqData),
-    send_eapol_packet(EAPData, State#state{rekey_running = 'WPA',
-					   eapol_state = {request, Id},
-					   eapol_retransmit = 0}).
+    send_eapol_packet(EAPData, Data#data{rekey_running = 'WPA',
+					 eapol_state = {request, Id},
+					 eapol_retransmit = 0}).
 
 eap_handshake({start, _Data},
-	      #state{eapol_state = {request, _}} = State0) ->
+	      #data{eapol_state = {request, _}} = Data0) ->
     %% restart the handshake
-    State = stop_eapol_timer(State0),
-    init_eapol(State);
+    Data = stop_eapol_timer(Data0),
+    init_eapol(Data);
 
 eap_handshake(Data = {response, Id, EAPData, Response},
-	      #state{eapol_state = {request, Id}} = State0) ->
+	      #data{eapol_state = {request, Id}} = Data0) ->
     lager:debug("EAP Handshake: ~p", [Data]),
-    State = stop_eapol_timer(State0),
+    Data = stop_eapol_timer(Data0),
     Next =
 	case Response of
 	    {identity, Identity} ->
@@ -1099,16 +1038,16 @@ eap_handshake(Data = {response, Id, EAPData, Response},
 	    %% _ ->
 	    %%	{disassociation, []}
 	end,
-    eap_handshake_next(Next, State);
+    eap_handshake_next(Next, Data);
 
-eap_handshake(Data, State0) ->
+eap_handshake(Data, Data0) ->
     lager:warning("unexpected EAP Handshake: ~p", [Data]),
-    State = stop_eapol_timer(State0),
-    wtp_del_station(State),
-    aaa_disassociation(State),
-    State#state{eapol_state = undefined}.
+    Data = stop_eapol_timer(Data0),
+    wtp_del_station(Data),
+    aaa_disassociation(Data),
+    Data#data{eapol_state = undefined}.
 
-eap_handshake_next({authenticate, Opts}, #state{aaa_session = Session} = State) ->
+eap_handshake_next({authenticate, Opts}, #data{aaa_session = Session} = Data) ->
     case ergw_aaa_session:authenticate(Session, to_session(Opts)) of
 	success ->
 	    lager:info("AuthResult: success"),
@@ -1117,7 +1056,7 @@ eap_handshake_next({authenticate, Opts}, #state{aaa_session = Session} = State) 
 
 	    case ergw_aaa_session:attr_get('EAP-Data', SessionOpts) of
 		{ok, EAPData} ->
-		    send_eapol(eapol:packet(EAPData), State);
+		    send_eapol(eapol:packet(EAPData), Data);
 		_ ->
 		    ok
 	    end,
@@ -1125,7 +1064,7 @@ eap_handshake_next({authenticate, Opts}, #state{aaa_session = Session} = State) 
 	    MSK = << (ergw_aaa_session:attr_get('MS-MPPE-Recv-Key', SessionOpts, <<>>))/binary,
 		     (ergw_aaa_session:attr_get('MS-MPPE-Send-Key', SessionOpts, <<>>))/binary>>,
 	    lager:debug("MSK: ~s", [capwap_tools:hexdump(MSK)]),
-	    rsna_4way_handshake({init, MSK}, State);
+	    rsna_4way_handshake({init, MSK}, Data);
 
 	challenge ->
 	    lager:info("AuthResult: challenge"),
@@ -1133,26 +1072,26 @@ eap_handshake_next({authenticate, Opts}, #state{aaa_session = Session} = State) 
 	    <<_Code:8, Id:8, _/binary>> = EAPData,
 	    lager:info("EAP Challenge: ~p", [EAPData]),
 
-	    send_eapol_packet(EAPData, State#state{eapol_state = {request, Id}});
+	    send_eapol_packet(EAPData, Data#data{eapol_state = {request, Id}});
 
 	Other ->
 	    lager:info("AuthResult: ~p", [Other]),
 
 	    case ergw_aaa_session:get(Session, 'EAP-Data') of
 		{ok, EAPData} ->
-		    send_eapol_packet(EAPData, State);
+		    send_eapol_packet(EAPData, Data);
 		_ ->
 		    ok
 	    end,
-	    wtp_del_station(State),
-	    aaa_disassociation(State),
-	    State#state{eapol_state = undefined}
+	    wtp_del_station(Data),
+	    aaa_disassociation(Data),
+	    Data#data{eapol_state = undefined}
     end;
 
-eap_handshake_next({disassociation, _}, State) ->
-    wtp_del_station(State),
-    aaa_disassociation(State),
-    State#state{eapol_state = undefined}.
+eap_handshake_next({disassociation, _}, Data) ->
+    wtp_del_station(Data),
+    aaa_disassociation(Data),
+    Data#data{eapol_state = undefined}.
 
 encode_gtk_ie(Tx, #ieee80211_key{index = Index, key = Key}) ->
     <<16#dd, (byte_size(Key) + 6):8,
@@ -1175,18 +1114,18 @@ mic_for_akm('802.1x-Suite-B-192')	-> 'HMAC-SHA384';
 mic_for_akm('FT-802.1x-SHA384')		-> 'HMAC-SHA384';
 mic_for_akm(X)				-> X.
 
-rsna_4way_handshake({init, MSK}, #state{capabilities =
+rsna_4way_handshake({init, MSK}, #data{capabilities =
 					    #sta_cap{
 					       rsn = #wtp_wlan_rsn{
 							akm_suites = [AKM],
 							group_mgmt_cipher_suite = GroupMgmtCipherSuite}}}
-		    = State) ->
+		    = Data) ->
 
     %% IEEE 802.11-2012, Sect. 11.6.1.3
     <<PMK:32/bytes, _/binary>> = MSK,
 
     ANonce = crypto:strong_rand_bytes(32),
-    CipherState = #ccmp{akm_algo = AKM,
+    CipherData = #ccmp{akm_algo = AKM,
 			mic_algo = mic_for_akm(AKM),
 			group_mgmt_cipher_suite = GroupMgmtCipherSuite,
 			replay_counter = 0,
@@ -1194,22 +1133,22 @@ rsna_4way_handshake({init, MSK}, #state{capabilities =
 			pre_master_key = PMK,
 			nonce = ANonce},
     send_eapol_key([pairwise, ack], <<>>,
-		   State#state{eapol_state = init,
-			       eapol_retransmit = 0,
-			       rekey_running = ptk,
-			       cipher_state = CipherState});
+		   Data#data{eapol_state = init,
+			     eapol_retransmit = 0,
+			     rekey_running = ptk,
+			     cipher_state = CipherData});
 
-rsna_4way_handshake(rekey, State = #state{eapol_state = installed,
-					  cipher_state = CipherState0}) ->
+rsna_4way_handshake(rekey, Data = #data{eapol_state = installed,
+					  cipher_state = CipherData0}) ->
     ANonce = crypto:strong_rand_bytes(32),
-    CipherState = CipherState0#ccmp{nonce = ANonce},
+    CipherData = CipherData0#ccmp{nonce = ANonce},
     send_eapol_key([pairwise, ack], <<>>,
-		   State#state{eapol_state = init,
-			       eapol_retransmit = 0,
-			       cipher_state = CipherState});
+		   Data#data{eapol_state = init,
+			     eapol_retransmit = 0,
+			     cipher_state = CipherData});
 
 rsna_4way_handshake({key, _Flags, MICAlgo, ReplayCounter, SNonce, KeyData, MICData},
-		    State0 = #state{radio_mac = BSS, mac = StationMAC,
+		    Data0 = #data{radio_mac = BSS, mac = StationMAC,
 				    wpa_config = #wpa_config{
 						    ssid = SSID,
 						    mobility_domain = MDomain,
@@ -1226,7 +1165,7 @@ rsna_4way_handshake({key, _Flags, MICAlgo, ReplayCounter, SNonce, KeyData, MICDa
 					   replay_counter = ReplayCounter,
 					   master_session_key = MSK,
 					   pre_master_key = PMK,
-					   nonce = ANonce} = CipherState0})
+					   nonce = ANonce} = CipherData0})
   when AKM == 'FT-802.1x'; AKM == 'FT-PSK' ->
     %%
     %% Expected Msg: S1KH→R1KH: EAPOL-Key(0, 1, 0, 0, P, 0, 0, SNonce, MIC, RSNE[PMKR1Name], MDE, FTE)
@@ -1239,8 +1178,8 @@ rsna_4way_handshake({key, _Flags, MICAlgo, ReplayCounter, SNonce, KeyData, MICDa
     lager:debug("StationMAC: ~p", [pbkdf2:to_hex(StationMAC)]),
     lager:debug("ANonce: ~p", [pbkdf2:to_hex(ANonce)]),
     lager:debug("SNonce: ~p", [pbkdf2:to_hex(SNonce)]),
-    lager:debug("CipherState: ~p", [lager:pr(CipherState0, ?MODULE)]),
-    State = stop_eapol_timer(State0),
+    lager:debug("CipherData: ~p", [lager:pr(CipherData0, ?MODULE)]),
+    Data = stop_eapol_timer(Data0),
 
     %%
     %% 802.11-2012, Sect. 11.6.6.3: 4-Way Handshake Message 2
@@ -1276,9 +1215,9 @@ rsna_4way_handshake({key, _Flags, MICAlgo, ReplayCounter, SNonce, KeyData, MICDa
     {KCK, KEK, TK, _PMKR0Name, PMKR1Name} =
 	eapol:ft_msk2ptk(MSK, SNonce, ANonce, BSS, StationMAC,
 			 SSID, MDomain, R0KH, BSS, StationMAC, StationMAC),
-    CipherState = CipherState0#ccmp{rsn = RSN, kck = KCK, kek = KEK, tk = TK},
+    CipherData = CipherData0#ccmp{rsn = RSN, kck = KCK, kek = KEK, tk = TK},
 
-    case eapol:validate_mic(CipherState, MICData) of
+    case eapol:validate_mic(CipherData, MICData) of
 	ok ->
 	    lager:debug("rsna_4way_handshake 2 of 4: ok"),
 	    %% R1KH→S1KH: EAPOL-Key(1, 1, 1, 1, P, 0, 0, ANonce, MIC, RSNE[PMKR1Name], MDE,
@@ -1314,18 +1253,18 @@ rsna_4way_handshake({key, _Flags, MICAlgo, ReplayCounter, SNonce, KeyData, MICDa
 	    lager:debug("EncTxKeyData: ~p", [pbkdf2:to_hex(EncTxKeyData)]),
 
 	    send_eapol_key([pairwise, install, ack, mic, secure, enc], EncTxKeyData,
-			   State#state{eapol_state = install,
-				       eapol_retransmit = 0,
-				       cipher_state = CipherState});
+			   Data#data{eapol_state = install,
+				     eapol_retransmit = 0,
+				     cipher_state = CipherData});
 
 	Other ->
 	    lager:debug("rsna_4way_handshake FT 2 of 4: ~p", [Other]),
 	    %% silently discard, see above
-	    State
+	    Data
     end;
 
 rsna_4way_handshake({key, _Flags, MICAlgo, ReplayCounter, SNonce, KeyData, MICData},
-		    State0 = #state{radio_mac = BSS, mac = StationMAC,
+		    Data0 = #data{radio_mac = BSS, mac = StationMAC,
 				    capabilities = #sta_cap{last_rsne = LastRSNE},
 				    wpa_config = #wpa_config{
 						    rsn = #wtp_wlan_rsn{
@@ -1340,7 +1279,7 @@ rsna_4way_handshake({key, _Flags, MICAlgo, ReplayCounter, SNonce, KeyData, MICDa
 					   group_mgmt_cipher_suite = GroupMgmtCipherSuite,
 					   replay_counter = ReplayCounter,
 					   pre_master_key = PMK,
-					   nonce = ANonce} = CipherState0})
+					   nonce = ANonce} = CipherData0})
   when AKM == '802.1x'; AKM == 'PSK' ->
     %% CipherSuite and ReplayCounter match...
     lager:debug("KeyData: ~p", [pbkdf2:to_hex(KeyData)]),
@@ -1349,8 +1288,8 @@ rsna_4way_handshake({key, _Flags, MICAlgo, ReplayCounter, SNonce, KeyData, MICDa
     lager:debug("StationMAC: ~p", [pbkdf2:to_hex(StationMAC)]),
     lager:debug("ANonce: ~p", [pbkdf2:to_hex(ANonce)]),
     lager:debug("SNonce: ~p", [pbkdf2:to_hex(SNonce)]),
-    lager:debug("CipherState: ~p", [lager:pr(CipherState0, ?MODULE)]),
-    State = stop_eapol_timer(State0),
+    lager:debug("CipherData: ~p", [lager:pr(CipherData0, ?MODULE)]),
+    Data = stop_eapol_timer(Data0),
 
     %%
     %% 802.11-2012, Sect. 11.6.6.3: 4-Way Handshake Message 2
@@ -1376,9 +1315,9 @@ rsna_4way_handshake({key, _Flags, MICAlgo, ReplayCounter, SNonce, KeyData, MICDa
     lager:debug("KEK: ~p", [pbkdf2:to_hex(KEK)]),
     lager:debug("TK: ~p", [pbkdf2:to_hex(TK)]),
 
-    CipherState = CipherState0#ccmp{rsn = RSN, kck = KCK, kek = KEK, tk = TK},
+    CipherData = CipherData0#ccmp{rsn = RSN, kck = KCK, kek = KEK, tk = TK},
 
-    case {eapol:validate_mic(CipherState, MICData), KeyData} of
+    case {eapol:validate_mic(CipherData, MICData), KeyData} of
 	{ok, <<?WLAN_EID_RSN, RSNLen:8, LastRSNE:RSNLen/bytes, _/binary>>} ->
 	    lager:debug("rsna_4way_handshake 2 of 4: ok"),
 	    RSNIE = capwap_ac:rsn_ie(RSN, MFP == required),
@@ -1396,31 +1335,31 @@ rsna_4way_handshake({key, _Flags, MICAlgo, ReplayCounter, SNonce, KeyData, MICDa
 	    lager:debug("EncTxKeyData: ~p", [pbkdf2:to_hex(EncTxKeyData)]),
 
 	    send_eapol_key([pairwise, install, ack, mic, secure, enc], EncTxKeyData,
-			   State#state{eapol_state = install,
-				       eapol_retransmit = 0,
-				       cipher_state = CipherState});
+			   Data#data{eapol_state = install,
+				     eapol_retransmit = 0,
+				     cipher_state = CipherData});
 
 	{ok, _} ->
 	    %% MIC is ok, but RSNE does not match
 	    lager:debug("rsna_4way_handshake 2 of 4: MIC ok, RSNE don't match (~p != ~p)",
 		       [pbkdf2:to_hex(KeyData), pbkdf2:to_hex(LastRSNE)]),
-	    wtp_del_station(State),
-	    aaa_disassociation(State),
-	    State#state{eapol_state = undefined, cipher_state = undefined};
+	    wtp_del_station(Data),
+	    aaa_disassociation(Data),
+	    Data#data{eapol_state = undefined, cipher_state = undefined};
 
 	Other ->
 	    lager:debug("rsna_4way_handshake 2 of 4: ~p", [Other]),
 	    %% silently discard, see above
-	    State
+	    Data
     end;
 
 rsna_4way_handshake({key, _Flags, _CipherSuite, ReplayCounter, _SNonce, _KeyData, MICData},
-		    State0 = #state{ac = AC, radio_mac = BSS, mac = StationMAC, capabilities = Caps,
+		    Data0 = #data{ac = AC, radio_mac = BSS, mac = StationMAC, capabilities = Caps,
 				    eapol_state = install,
 				    cipher_state =
 					#ccmp{
-					   replay_counter = ReplayCounter} = CipherState}) ->
-    State = stop_eapol_timer(State0),
+					   replay_counter = ReplayCounter} = CipherData}) ->
+    Data = stop_eapol_timer(Data0),
 
     %%
     %% 802.11-2012, Sect. 11.6.6.5: 4-Way Handshake Message 4
@@ -1438,24 +1377,24 @@ rsna_4way_handshake({key, _Flags, _CipherSuite, ReplayCounter, _SNonce, _KeyData
     %%          the Authenticator silently discards Message 4.
     %%
 
-    case eapol:validate_mic(CipherState, MICData) of
+    case eapol:validate_mic(CipherData, MICData) of
 	ok ->
 	    lager:debug("rsna_4way_handshake 4 of 4: ok"),
-	    capwap_ac:add_station(AC, BSS, StationMAC, Caps, {false, true, CipherState}),
-	    rekey_done(ptk, State#state{eapol_state = installed});
+	    capwap_ac:add_station(AC, BSS, StationMAC, Caps, {false, true, CipherData}),
+	    rekey_done(ptk, Data#data{eapol_state = installed});
 
 	Other ->
 	    lager:debug("rsna_4way_handshake 4 of 4: ~p", [Other]),
 	    %% silently discard, see above
-	    State
+	    Data
     end;
 
-rsna_4way_handshake(Frame, State) ->
+rsna_4way_handshake(Frame, Data) ->
     lager:warning("got unexpexted EAPOL data in 4way Handshake: ~p", [Frame]),
     %% silently discard, both Message 2 and Message are handles this way
-    State.
+    Data.
 
-rsna_2way_handshake(rekey, State = #state{eapol_state = installed,
+rsna_2way_handshake(rekey, Data = #data{eapol_state = installed,
 					  cipher_state = #ccmp{
 							    group_mgmt_cipher_suite = GroupMgmtCipherSuite,
 							    kek = KEK},
@@ -1476,34 +1415,34 @@ rsna_2way_handshake(rekey, State = #state{eapol_state = installed,
     lager:debug("EncTxKeyData: ~p", [pbkdf2:to_hex(EncTxKeyData)]),
 
     send_eapol_key([group, ack, mic, secure, enc], EncTxKeyData,
-		   State#state{eapol_state = install,
-			       eapol_retransmit = 0});
+		   Data#data{eapol_state = install,
+			     eapol_retransmit = 0});
 
 rsna_2way_handshake({key, _Flags, _MICAlgo, ReplayCounter, _SNonce, _KeyData, MICData},
-		    State0 = #state{eapol_state = install,
+		    Data0 = #data{eapol_state = install,
 				    rekey_control = RekeyCtl,
 				    cipher_state =
 					#ccmp{
-					   replay_counter = ReplayCounter} = CipherState}) ->
+					   replay_counter = ReplayCounter} = CipherData}) ->
     %% EAPOL-Key(1,1,0,0,G,0,0,0,MIC,0)
-    State = stop_eapol_timer(State0),
+    Data = stop_eapol_timer(Data0),
     capwap_ac_gtk_rekey:gtk_rekey_done(RekeyCtl, self()),
 
-    case eapol:validate_mic(CipherState, MICData) of
+    case eapol:validate_mic(CipherData, MICData) of
 	ok ->
 	    lager:debug("rsna_2way_handshake 2 of 2: ok"),
-	    rekey_done(gtk, State#state{eapol_state = installed});
+	    rekey_done(gtk, Data#data{eapol_state = installed});
 
 	Other ->
 	    lager:debug("rsna_2way_handshake 2 of 2: ~p", [Other]),
-	    wtp_del_station(State),
-	    aaa_disassociation(State),
-	    State#state{eapol_state = undefined, cipher_state = undefined}
+	    wtp_del_station(Data),
+	    aaa_disassociation(Data),
+	    Data#data{eapol_state = undefined, cipher_state = undefined}
     end;
 
-rsna_2way_handshake(Frame, State) ->
+rsna_2way_handshake(Frame, Data) ->
     lager:warning("got unexpexted EAPOL data in 2way Handshake: ~p", [Frame]),
-    State.
+    Data.
 
 pad_key_data(KD) when byte_size(KD) < 15 ->
     pad_to(16, <<KD/binary, 16#dd>>);
@@ -1512,43 +1451,43 @@ pad_key_data(KD) when byte_size(KD) rem 8 /= 0 ->
 pad_key_data(KD) ->
     KD.
 
-rekey_timer_start(ptk, #state{wpa_config = #wpa_config{peer_rekey = Interval},
-			      rekey_tref = undefined} = State)
+rekey_timer_start(ptk, #data{wpa_config = #wpa_config{peer_rekey = Interval},
+			      rekey_tref = undefined} = Data)
   when is_integer(Interval) andalso Interval > 0 ->
     lager:debug("Starting rekey for PTK in ~w", [Interval]),
     TRef = erlang:send_after(Interval * 1000, self(), {rekey, ptk}),
-    State#state{rekey_tref = TRef};
-rekey_timer_start(_Type, State) ->
-    State.
+    Data#data{rekey_tref = TRef};
+rekey_timer_start(_Type, Data) ->
+    Data.
 
-rekey_timer_stop(ptk, #state{rekey_tref = TRef} = State)
+rekey_timer_stop(ptk, #data{rekey_tref = TRef} = Data)
   when is_reference(TRef) ->
     cancel_timer(TRef),
-    State#state{rekey_tref = undefined};
-rekey_timer_stop(_Type, State) ->
-    State.
+    Data#data{rekey_tref = undefined};
+rekey_timer_stop(_Type, Data) ->
+    Data.
 
-rekey_timer_start(State) ->
-    lists:foldl(fun rekey_timer_start/2, State, [ptk]).
+rekey_timer_start(Data) ->
+    lists:foldl(fun rekey_timer_start/2, Data, [ptk]).
 
-rekey_done(_Type, State0) ->
-    State = rekey_timer_start(State0#state{rekey_running = false}),
-    case State#state.rekey_pending of
+rekey_done(_Type, Data0) ->
+    Data = rekey_timer_start(Data0#data{rekey_running = false}),
+    case Data#data.rekey_pending of
 	[Next | Pending] ->
-	    rekey_init(Next, State#state{rekey_pending = Pending});
+	    rekey_init(Next, Data#data{rekey_pending = Pending});
 	_ ->
-	    State#state{rekey_pending = []}
+	    Data#data{rekey_pending = []}
     end.
 
-rekey_init(ptk, State) ->
-    rsna_4way_handshake(rekey, State#state{rekey_running = ptk});
-rekey_init(gtk, State) ->
-    rsna_2way_handshake(rekey, State#state{rekey_running = gtk});
-rekey_init(Type, State) ->
-    rekey_done(Type, State).
+rekey_init(ptk, Data) ->
+    rsna_4way_handshake(rekey, Data#data{rekey_running = ptk});
+rekey_init(gtk, Data) ->
+    rsna_2way_handshake(rekey, Data#data{rekey_running = gtk});
+rekey_init(Type, Data) ->
+    rekey_done(Type, Data).
 
-rekey_start(Type, State0 = #state{rekey_running = false}) ->
-    State = rekey_timer_stop(Type, State0),
-    rekey_init(Type, State);
-rekey_start(Type, State = #state{rekey_pending = Pending}) ->
-    rekey_timer_stop(Type, State#state{rekey_pending = [Type, Pending]}).
+rekey_start(Type, Data0 = #data{rekey_running = false}) ->
+    Data = rekey_timer_stop(Type, Data0),
+    rekey_init(Type, Data);
+rekey_start(Type, Data = #data{rekey_pending = Pending}) ->
+    rekey_timer_stop(Type, Data#data{rekey_pending = [Type, Pending]}).
