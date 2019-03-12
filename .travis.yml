@@ -1,14 +1,12 @@
-sudo: false
-
+sudo: required
 dist: xenial
 
 language: erlang
 
 otp_release:
- - 20.1.7
- - 20.2.4
- - 20.3.8.2
- - 21.0.2
+ - 20.3.8.5
+ - 21.1.4
+ - 21.2.5
 
 install: "true"
 
@@ -18,7 +16,8 @@ before_script:
 
 script:
   - ./rebar3 compile
-  - ./rebar3 do xref, ct, coveralls send
+  - ./rebar3 do xref, ct
+  - (./rebar3 as test do coveralls send || /bin/true)
 
 notifications:
   slack:

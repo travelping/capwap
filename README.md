@@ -24,8 +24,8 @@ Using rebar:
     # rebar3 compile
 
 <!-- Badges -->
-[travis]: https://travis-ci.org/travelping/capwap
-[travis badge]: https://img.shields.io/travis/travelping/capwap/master.svg?style=flat-square
+[travis]: https://travis-ci.com/travelping/capwap
+[travis badge]: https://img.shields.io/travis/com/travelping/capwap/master.svg?style=flat-square
 [coveralls]: https://coveralls.io/github/travelping/capwap
 [coveralls badge]: https://img.shields.io/coveralls/travelping/capwap/master.svg?style=flat-square
-[erlang version badge]: https://img.shields.io/badge/erlang-R20.0%20to%2020.1-blue.svg?style=flat-square
+[erlang version badge]: https://img.shields.io/badge/erlang-R20.3%20to%2021.2-blue.svg?style=flat-square
