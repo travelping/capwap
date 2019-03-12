@@ -1,5 +1,7 @@
 sudo: required
 dist: xenial
+services:
+  - docker
 
 language: erlang
 
@@ -10,6 +12,12 @@ otp_release:
 
 install: "true"
 
+env:
+  global:
+    - BUILD_IMAGE="ergw/ergw-capwap-node"
+    - DOCKER_USERNAME="ergwci"
+    - secure: "k8SSM16CNTQO2s6RTtnYAPEJ26DHoOju5YzySfclUeMF+esD1empKKBviq9QFdioPrIr+PWCANvWrCNASG0sEC86VuAsSdledikN+PCZlBYngR99RaHhprXJc3NPyTWsYO4kQCiJu5g4veHQCoFQ16oRYzBiuPrkMXmlrzI46C64bBeo4ttkTZu3D+rAQacSMtM4Xcl1FWkwsPSma9Ikn+k4avqP96r56avUjxSnyTzthvrdIyT0BMcQOAk4WJzfNMHkCCjc3t7MREVU73+nT8UAS1m6VrVWCiiy2bW/0l1vGB+MznTiy4c6mLz0ZSJLplvqA/Dd5kUKOcBefmwmnklDZ6ZnD1IrJIAO54rX+fuhnWZE0/pt/3pjhG3SMHgM+o9s1LGKzNf8TlTDEnevtniHFF3is9b6RzWSJIIdCBIPhyDi9rQ7nGMOYPf1tKdDsQThNEynDgQNPC9Waj/bHFFTzCyCWbikUnSCJtMCB46JxTSWEDd5xxgGWMx/QywIZlZip2OhZIVwOjKPCX2At7FYyJ5S1gGD+oGTjkgoPLBRSXiLus8jC615cNTmrBmZb6g/u6GGQgjh1HeFN5cmDvjNSWfcTednhIvnwmGp4fNMjrl/l338tVWYXIvxUWg91Wxz5N9z7cmFBjivqdUrbEeACJPbmvqQbbNK9+wlmew="
+
 before_script:
   - wget https://s3.amazonaws.com/rebar3/rebar3
   - chmod u+x ./rebar3
@@ -18,6 +26,22 @@ script:
   - ./rebar3 compile
   - ./rebar3 do xref, ct
   - (./rebar3 as test do coveralls send || /bin/true)
+
+jobs:
+  include:
+    - stage: docker
+      otp_release: 21.2.5
+      script:
+        - docker build -t $BUILD_IMAGE -f docker/Dockerfile .
+      after_success:
+        - echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
+        - export TAG=`if [ "$TRAVIS_EVENT_TYPE" == "pull_request" ]; then echo PR-$TRAVIS_PULL_REQUEST_BRANCH\_$TRAVIS_PULL_REQUEST_SHA ; else echo $TRAVIS_BRANCH\_$TRAVIS_COMMIT ; fi`
+        - export TAG=`echo "$TAG" | sed -e 's,/,-,g'`
+        - echo "Docker image $BUILD_IMAGE:$TAG"
+        - if [ "$TAG" == "master" ]; then export TAG="latest"; fi
+        - docker tag $BUILD_IMAGE $BUILD_IMAGE:$TAG
+        - docker push $BUILD_IMAGE:$TAG
+        - echo "docker push done"
 
 notifications:
   slack:
