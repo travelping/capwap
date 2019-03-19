@@ -23,6 +23,8 @@
          handle_request_json/2,
          handle_request_text/2,
          allowed_methods/2,
+         delete_resource/2,
+         resource_exists/2,
          content_types_accepted/2]).
 
 -record(s, {
@@ -32,7 +34,7 @@
 
 init(Req, Opts) ->
     Verbose = cowboy_req:header(<<"verbose">>, Req, <<"false">>),
-    {cowboy_rest, Req, #s{verbose = (Verbose == <<"true">>), opts = Opts}}.
+    {cowboy_rest, Req#{has_body => true}, #s{verbose = (Verbose == <<"true">>), opts = Opts}}.
 
 allowed_methods(Req, State) ->
     {[<<"GET">>, <<"DELETE">>, <<"POST">>], Req, State}.
@@ -63,6 +65,8 @@ handle_request_json(Req, State) ->
                 _ ->
                     {jsx:encode([{error, bad_command}]), Req, State}
             end;
+        [<<"api">>, <<"v2">> | TailPath ] ->
+            capwap_http_api_v2_handler:handle(Method, TailPath, Req, State);
         [<<"metrics">> | TailPath] ->
             TailPath1 = [ binary_to_existing_atom(P, utf8) || P <- TailPath ],
             handle_request_metrics(json, TailPath1, Req, State);
@@ -81,40 +85,54 @@ handle_request_text(Req, State) ->
             {<<"error: bad_command">>, Req, State}
     end.
 
+delete_resource(Req, State) ->
+    handle_request_json(Req, State).
+
+resource_exists(Req, State) ->
+    CheckList = [{wtp_id, fun wtp_id_check/1},
+                 {sta_id, fun station_id_check/1},
+                 {rid, fun(RadioId) ->
+                     WTP = cowboy_req:binding(wtp_id, Req),
+                     radio_id_check(RadioId, WTP)
+                 end}],
+    {Exist, Req1} = lists:foldl(fun resource_checker/2, {true, Req}, CheckList),
+    {Exist, Req1, State}.
+
+
 handle_request_wtp(<<"GET">>, [], Req, State) ->
     WTPs = lists:map(fun format_wtp/1, capwap:list_wtps()),
     {jsx:encode(WTPs), Req, State};
 handle_request_wtp(<<"GET">>, [ _ ], Req, State) ->
-    CN = cowboy_req:binding(id, Req),
+    CN = cowboy_req:binding(wtp_id, Req),
     case capwap:get_wtp(CN) of
         {error, Error} ->
             {jsx:encode([{error, Error}]), Req, State};
         {ok, #{id              := Id,
-          station_count        := StationCnt,
-          location             := Location,
-          board_data           := BoardData,
-          descriptor           := Descriptor,
-          name                 := Name,
-          start_time           := StartTime,
-          ctrl_channel_address := CtrlAddress,
-          data_channel_address := DataAddress,
-          session_id           := SessionId,
-          echo_request_timeout := EchoReqTimeout}} ->
-            Now = erlang:system_time(milli_seconds),
-            Ret = [{id, Id}, {stations, StationCnt},
-                   {start_time, [{time, fmt_time_ms(StartTime)},
-                                 {duration, (Now - StartTime) / 1000}]},
-                   {location, Location}, {name, Name},
-                   {board_data, fmt_wtp_board_data(BoardData)},
-                   {descriptor, fmt_wtp_descriptor(Descriptor)},
-                   {control_channel_endpoint, fmt_endpoint(CtrlAddress)},
-                   {data_channel_endpoint, fmt_endpoint(DataAddress)},
-                   {session_id, bin_fmt(SessionId)},
-                   {echo_request_timeout, EchoReqTimeout}],
-            {jsx:encode(Ret), Req, State}
+               station_count        := StationCnt,
+               location             := Location,
+               board_data           := BoardData,
+               descriptor           := Descriptor,
+               name                 := Name,
+               start_time           := StartTime,
+               ctrl_channel_address := CtrlAddress,
+               data_channel_address := DataAddress,
+               session_id           := SessionId,
+               echo_request_timeout := EchoReqTimeout}} ->
+                    Now = erlang:system_time(milli_seconds),
+                    Ret = [{id, Id}, {stations, StationCnt},
+                           {start_time, [{time, fmt_time_ms(StartTime)},
+                                         {duration, (Now - StartTime) / 1000}]},
+                           {location, Location}, {name, Name},
+                           {board_data, fmt_wtp_board_data(BoardData)},
+                           {descriptor, fmt_wtp_descriptor(Descriptor)},
+                           {control_channel_endpoint, fmt_endpoint(CtrlAddress)},
+                           {data_channel_endpoint, fmt_endpoint(DataAddress)},
+                           {session_id, bin_fmt(SessionId)},
+                           {echo_request_timeout, EchoReqTimeout}],
+                    {jsx:encode(Ret), Req, State}
     end;
 handle_request_wtp(<<"POST">>, [_, <<"update">> | _], Req, State) ->
-    CommonName= cowboy_req:binding(id, Req),
+    CommonName= cowboy_req:binding(wtp_id, Req),
     Link = cowboy_req:binding(link, Req),
     Hash = cowboy_req:binding(hash, Req),
     case catch validate_hash(Hash) of
@@ -125,7 +143,7 @@ handle_request_wtp(<<"POST">>, [_, <<"update">> | _], Req, State) ->
             {jsx:encode([{error, bin_fmt("~p", [Error])}]), Req, State}
     end;
 handle_request_wtp(<<"POST">>, [_, <<"set-ssid">> | _], Req, State) ->
-    CommonName = cowboy_req:binding(id, Req),
+    CommonName = cowboy_req:binding(wtp_id, Req),
     SSID = cowboy_req:binding(ssid, Req),
     try
         RadioID = binary_to_integer(cowboy_req:binding(rid, Req, <<"1">>)),
@@ -140,14 +158,18 @@ handle_request_wtp(<<"POST">>, [_, <<"set-ssid">> | _], Req, State) ->
             {jsx:encode([{error, badarg}]), Req, State}
     end;
 handle_request_wtp(<<"DELETE">>, [_, <<"stop-radio">> | _], Req, State) ->
-    CN = cowboy_req:binding(id, Req),
+    CN = cowboy_req:binding(wtp_id, Req),
     try
         RadioID = erlang:binary_to_integer(cowboy_req:binding(rid, Req)),
-        Res = capwap_ac:stop_radio(CN, RadioID),
-        {jsx:encode([{res, Res}]), Req, State}
+        case capwap_ac:stop_radio(CN, RadioID) of
+            ok ->
+                {true, Req, State};
+            _ ->
+                {false, Req, State}
+        end
     catch
         _:badarg ->
-            {jsx:encode([{error, badarg}]), Req, State}
+            {false, Req, State}
     end;
 handle_request_wtp(_, _, Req, State) ->
     {jsx:encode([{error, bad_command}]), Req, State}.
@@ -155,19 +177,21 @@ handle_request_wtp(_, _, Req, State) ->
 handle_request_station(<<"GET">>, [], Req, State) ->
     Stations = capwap:list_stations(),
     Ret = lists:map(fun({{CommonName, Endpoint}, MACs}) ->
-        [{id, CommonName},
-         {address, fmt_endpoint(Endpoint)},
-         {macs, [ fmt_station_mac(Station) || Station <- MACs ]}]
-    end, Stations),
+                        [{id, CommonName},
+                         {address, fmt_endpoint(Endpoint)},
+                         {macs, [ fmt_station_mac(Station) || Station <- MACs ]}]
+                    end, Stations),
     {jsx:encode(Ret), Req, State};
 handle_request_station(<<"DELETE">>, [_], Req, State) ->
-    MACStr = cowboy_req:binding(id, Req),
-    case mac_to_bin(MACStr) of
+    MACStr = cowboy_req:binding(sta_id, Req),
+    case capwap_tools:mac_to_hex(MACStr) of
         MAC when is_binary(MAC) ->
-            R = capwap:detach_station(MAC),
-            {jsx:encode([{result, R}]), Req, State};
+            case capwap:detach_station(MAC) of
+                ok -> {true, Req, State};
+                _ ->  {false, Req, State}
+            end;
         _ ->
-            {jsx:encode([{error, invalid_mac}]), Req, State}
+            {false, Req, State}
     end;
 handle_request_station(_, _, Req, State) ->
     {jsx:encode([{error, bad_command}]), Req, State}.
@@ -230,12 +254,6 @@ hex2dec(C) when C >= $a andalso C =< $f -> C - $a + 10;
 hex2dec(C) when C >= $A andalso C =< $F -> C - $A + 10;
 hex2dec(C) when C >= $0 andalso C =< $9 -> C - $0.
 
-mac_to_bin(MAC) ->
-    case io_lib:fread("~16u:~16u:~16u:~16u:~16u:~16u", MAC) of
-        {ok, Mlist, []} -> list_to_binary(Mlist);
-        _ -> undefined
-    end.
-
 fmt_dp_wtp(Verbose, {Endpoint, _WLANs, STAs, _RefCnt, _MTU, Stats}) ->
     Res = [{address, fmt_endpoint(Endpoint)}],
     Res1 = fmt_dp_wtp_stats(Verbose, Stats, Res),
@@ -245,8 +263,8 @@ fmt_dp_wtp(Verbose, {Endpoint, _WLANs, STAs, _RefCnt, _MTU, Stats}) ->
     [{wtp_stats, WTP_Stats} | Res1].
 
 fmt_dp_wtp_stats(true, {RcvdPkts, SendPkts, RcvdBytes, SendBytes,
-		       RcvdFragments, SendFragments,
-		       ErrInvalidStation, ErrFragmentInvalid, ErrFragmentTooOld}, Acc) ->
+                        RcvdFragments, SendFragments,
+                        ErrInvalidStation, ErrFragmentInvalid, ErrFragmentTooOld}, Acc) ->
     [{input, [{bytes, RcvdBytes},
               {packets, RcvdPkts},
               {fragments, RcvdFragments}]},
@@ -270,10 +288,10 @@ fmt_dp_wtp_stas(true, {MAC, _RadioId, _BSS, Stats}) ->
     ].
 
 fmt_worker_stats(Label, [RcvdPkts, SendPkts, RcvdBytes, SendBytes,
-			   RcvdFragments, SendFragments,
-			   ErrInvalidStation, ErrFragmentInvalid, ErrFragmentTooOld,
-			   ErrInvalidWtp, ErrHdrLengthInvalid, ErrTooShort,
-			   RateLimitUnknownWtp], Acc) ->
+                         RcvdFragments, SendFragments,
+                         ErrInvalidStation, ErrFragmentInvalid, ErrFragmentTooOld,
+                         ErrInvalidWtp, ErrHdrLengthInvalid, ErrTooShort,
+                         RateLimitUnknownWtp], Acc) ->
     [{Label,
          [{input, [{bytes, RcvdBytes},
                    {packets, RcvdPkts},
@@ -296,13 +314,13 @@ fmt_time_ms(StartTime) ->
     Secs = Rem1 div 1000,
     MilliSecs = StartTime rem 1000,
     {{Year, Month, Day}, {Hour, Minute, Second}} =
-	calendar:now_to_universal_time({MegaSecs, Secs, MilliSecs * 1000}),
+    calendar:now_to_universal_time({MegaSecs, Secs, MilliSecs * 1000}),
     bin_fmt("~4.10.0b-~2.10.0b-~2.10.0b ~2.10.0b:~2.10.0b:~2.10.0b.~4.10.0b",
-		  [Year, Month, Day, Hour, Minute, Second, MilliSecs]).
+            [Year, Month, Day, Hour, Minute, Second, MilliSecs]).
 
 fmt_wtp_board_data(#wtp_board_data{
-			 vendor = Vendor,
-			 board_data_sub_elements = SubElements}) ->
+                      vendor = Vendor,
+                      board_data_sub_elements = SubElements}) ->
     lists:map(fun fmt_wtp_board_data_sub_element/1, SubElements) ++
         [{vendor, bin_fmt("~8.16.0B", [Vendor])},
          {vendor_id, vendor_id_str(Vendor)}];
@@ -384,10 +402,10 @@ prometheus_encode({Path, Type, DataPoints}, Acc) ->
 
 exo_get_value(Name, Fun, AccIn) ->
     case exometer:get_value(Name) of
-	{ok, Value} ->
-	    Fun(Value, AccIn);
-	{error,not_found} ->
-	    AccIn
+        {ok, Value} ->
+            Fun(Value, AccIn);
+        {error,not_found} ->
+            AccIn
     end.
 
 exo_entry_to_map({Name, Type, enabled}, Metrics) ->
@@ -395,16 +413,16 @@ exo_entry_to_map({Name, Type, enabled}, Metrics) ->
 
 exo_entry_to_map([Path], {Name, Type}, Metrics) ->
     exo_get_value(Name, fun(V, Acc) ->
-				Entry = maps:from_list(V),
-				Acc#{ioize(Path) => Entry#{type => Type}}
-			end, Metrics);
+        Entry = maps:from_list(V),
+        Acc#{ioize(Path) => Entry#{type => Type}}
+    end, Metrics);
 exo_entry_to_map([H|T], Metric, Metrics) ->
     Key = ioize(H),
     Entry = maps:get(Key, Metrics, #{}),
     Metrics#{Key => exo_entry_to_map(T, Metric, Entry)}.
 
 exo_entry_to_list({Name, Type, enabled}, Metrics) ->
-exo_get_value(Name, fun(V, Acc) -> [{Name, Type, V}|Acc] end, Metrics).
+    exo_get_value(Name, fun(V, Acc) -> [{Name, Type, V}|Acc] end, Metrics).
 
 ioize(Atom) when is_atom(Atom) ->
     atom_to_binary(Atom, utf8);
@@ -467,3 +485,37 @@ make_metric_name(Path) ->
     NameList = lists:join($_, lists:map(fun ioize/1, Path)),
     NameBin = iolist_to_binary(NameList),
     re:replace(NameBin, "-|\\.", "_", [global, {return,binary}]).
+
+wtp_id_check(WTP) ->
+    case capwap_wtp_reg:lookup(WTP) of
+        {ok, _} -> true;
+        _ -> false
+    end.
+
+station_id_check(Station) ->
+    BinMAC = capwap_tools:mac_to_hex(Station),
+    case capwap_station_reg:lookup(BinMAC) of
+        {ok, _} -> true;
+        _ -> false
+    end.
+
+radio_id_check(RadioId, WTP) ->
+    {ok, WTPConf} = capwap:get_wtp(WTP),
+    case maps:find(config, WTPConf) of
+        {ok, RadioId} -> true;
+        _ -> false
+    end.
+
+
+resource_checker(_, Acc = {false, _AccReq}) -> Acc;
+resource_checker({Id, Pred}, Acc = {_, AccReq = #{bindings := Vars}}) ->
+    case maps:find(Id, Vars) of
+        {ok, Val} ->
+            case Pred(Val) of
+                true  -> Acc;
+                false ->
+                    RespBody = jsx:encode([{not_found, [{Id, Val}] }]),
+                    {false, cowboy_req:set_resp_body(RespBody, AccReq)}
+            end;
+        _ -> Acc
+    end.

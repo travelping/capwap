@@ -475,6 +475,12 @@
 	  cell_id
 }).
 
+-record(ieee_802_11_frame_info, {
+	  rssi = 0,
+	  snr = 0,
+	  data_rate = 0
+}).
+
 -record(tp_wtp_wwan_statistics, {
 	  timestamp = 0,
 	  wwan_id = 0,

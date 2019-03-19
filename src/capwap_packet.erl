@@ -38,7 +38,7 @@ decode(Type, <<0:4, 0:4,
     RestHeaderLen = (HLen - 2) * 4,
     <<RestHeader0:RestHeaderLen/bytes, PayLoad/binary>> = Rest,
     {RadioMAC, RestHeader1} = extract_header(M, RestHeader0),
-    {WirelessSpecInfo, _} = extract_header(W, RestHeader1),
+    WirelessSpecInfo = decode_frame_info(W, RestHeader1),
     F0 = if
 	     T == 1 -> {frame, native};
 	     true   -> {frame, '802.3'}
@@ -59,7 +59,7 @@ decode(Type, <<0:4, 0:4,
     if F == 1 ->
 	    {fragment, Type, KeepAlive, FragmentId, FragmentOffset, FragmentOffset + size(PayLoad), Last, Header,  PayLoad};
        true ->
-	    decode_packet(Type, KeepAlive , Header, PayLoad)
+	    decode_packet(Type, KeepAlive, Header, PayLoad)
     end.
 
 decode(control, Header, PayLoad) ->
@@ -240,6 +240,15 @@ decode_akm_suite(16#000FAC11) -> '802.1x-Suite-B';
 decode_akm_suite(16#000FAC12) -> '802.1x-Suite-B-192';
 decode_akm_suite(X) -> X.
 
+decode_frame_info(WBit, Header) ->
+    case extract_header(WBit, Header) of
+        {<<RSSI:8/signed-integer, SNR:8/signed-integer, DataRate:16/integer>>, _} ->
+            #ieee_802_11_frame_info{
+               rssi = RSSI,
+               snr = SNR,
+               data_rate = DataRate};
+            _ -> undefined
+    end.
 %%%-------------------------------------------------------------------
 %%% encoder
 %%%-------------------------------------------------------------------

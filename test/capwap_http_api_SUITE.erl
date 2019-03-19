@@ -96,7 +96,7 @@ http_api_get_wtp_info(_Config) ->
     {ok, {_, _, Body}} = httpc:request(get, {URL, []},
 				       [], [{body_format, binary}]),
     Response = jsx:decode(Body),
-    ?assertEqual([{<<"error">>, <<"not_found">>}], Response),
+    ?assertEqual([{<<"not_found">>,[{<<"wtp_id">>,<<"something">>}]}], Response),
     ok.
 
 http_api_prometheus_metrics_req() ->
