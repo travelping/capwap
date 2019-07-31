@@ -34,3 +34,5 @@ DHCP Relay config
     ...
 ]
 ```
+
+If this section not present in config DHCP Relay will be disabled.

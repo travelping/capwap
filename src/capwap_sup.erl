@@ -52,12 +52,18 @@ start_tracer(File) ->
 %% ===================================================================
 
 init([]) ->
-    {ok, {{one_for_one, 30, 60}, [
-				  ?CHILD(capwap_wtp_reg, worker, []),
-				  ?CHILD(capwap_ac_sup, supervisor, []),
-				  ?CHILD(capwap_station_reg, worker, []),
-				  ?CHILD(capwap_station_sup, supervisor, []),
-				  ?CHILD(capwap_dp, worker, []),
-				  ?CHILD(capwap_dhcp_relay, worker, []),
-                  ?CHILD(capwap_http_api, supervisor, [])
-    ]} }.
+    Children = [
+	?CHILD(capwap_wtp_reg, worker, []),
+	?CHILD(capwap_ac_sup, supervisor, []),
+	?CHILD(capwap_station_reg, worker, []),
+	?CHILD(capwap_station_sup, supervisor, []),
+	?CHILD(capwap_dp, worker, []),
+	?CHILD(capwap_http_api, supervisor, [])
+    ],
+
+    Children1 = case capwap_config:dhcp_relay_enabled() of
+	true -> [?CHILD(capwap_dhcp_relay, worker, []) | Children];
+	false -> Children
+    end,
+
+    {ok, {{one_for_one, 30, 60}, Children1} }.

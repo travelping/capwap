@@ -37,7 +37,7 @@
 
 -include("include/capwap_packet.hrl").
 
--record(state, {state, tref, timeout, interim, interim_timer, api_version}).
+-record(state, {state, tref, timeout, interim, interim_timer, api_version, dhcp_relay}).
 
 -define(SERVER, ?MODULE).
 
@@ -110,7 +110,8 @@ call(Args, Timeout) ->
 %% gen_server callbacks
 %%===================================================================
 init([]) ->
-    State = connect(#state{state = disconnected, tref = undefined, timeout = 10, interim = 30 * 1000}),
+    DhcpRelay = capwap_config:dhcp_relay_enabled(),
+    State = connect(#state{state = disconnected, tref = undefined, timeout = 10, interim = 30 * 1000, dhcp_relay = DhcpRelay}),
     {ok, State}.
 
 handle_call(Request, _From, State = #state{state = disconnected}) ->
@@ -166,8 +167,11 @@ handle_info({capwap_in, WTPDataChannelAddress, Msg}, State) ->
     capwap_ac:handle_data(self(), WTPDataChannelAddress, Msg),
     {noreply, State};
 
-handle_info({dhcp_in, Msg}, State) ->
-    capwap_dhcp_relay:send_to_dhcp(Msg),
+handle_info({dhcp_in, Msg}, State = #state{dhcp_relay = Enabled}) ->
+    case Enabled of
+	true -> capwap_dhcp_relay:send_to_dhcp(Msg);
+	_ -> lager:debug("Ignore dhcp packet when dhcp relay disabled")
+    end,
     {noreply, State};
 
 handle_info({wtp_down, WTP}, State) ->
