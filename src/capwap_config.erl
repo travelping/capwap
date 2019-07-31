@@ -21,7 +21,8 @@
 
 -export([validate/0, get/2, get/3,
 	 wtp_init_config_provider/1, wtp_config/1,
-	 wtp_radio_config/3]).
+	 wtp_radio_config/3,
+	 dhcp_relay_enabled/0]).
 
 -include("capwap_packet.hrl").
 -include("capwap_config.hrl").
@@ -100,3 +101,9 @@ wtp_config({Provider, State}) ->
 
 wtp_radio_config({Provider, State}, RadioId, RadioType) ->
     Provider:wtp_radio_config(State, RadioId, RadioType).
+
+dhcp_relay_enabled() ->
+    case application:get_env(capwap, dhcp_relay, false) of
+	false -> false;
+	_ -> true
+    end.
