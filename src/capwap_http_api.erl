@@ -34,16 +34,20 @@ start_link() ->
             {"/api/v1/version", capwap_http_api_handler, []},
 
             {"/api/v1/wtp",                           capwap_http_api_handler, []},
-            {"/api/v1/wtp/:id",                       capwap_http_api_handler, []},
-            {"/api/v1/wtp/:id/update/:link/:hash",    capwap_http_api_handler, []},
-            {"/api/v1/wtp/:id/set-ssid/:ssid[/:rid]", capwap_http_api_handler, []},
-            {"/api/v1/wtp/:id/stop-radio/:rid",       capwap_http_api_handler, []},
+            {"/api/v1/wtp/:wtp_id",                       capwap_http_api_handler, []},
+            {"/api/v1/wtp/:wtp_id/update/:link/:hash",    capwap_http_api_handler, []},
+            {"/api/v1/wtp/:wtp_id/set-ssid/:ssid[/:rid]", capwap_http_api_handler, []},
+            {"/api/v1/wtp/:wtp_id/stop-radio/:rid",       capwap_http_api_handler, []},
 
-            {"/api/v1/station",     capwap_http_api_handler, []},
-            {"/api/v1/station/:id", capwap_http_api_handler, []},
+            {"/api/v1/station",         capwap_http_api_handler, []},
+            {"/api/v1/station/:sta_id", capwap_http_api_handler, []},
 
             {"/api/v1/dp/wtp-list", capwap_http_api_handler, []},
             {"/api/v1/dp/stats",    capwap_http_api_handler, []},
+
+            {"/api/v2/station",                     capwap_http_api_handler, []},
+            {"/api/v2/station/:sta_id",             capwap_http_api_handler, []},
+            {"/api/v2/wtp/:wtp_id/station/:sta_id", capwap_http_api_handler, []},
 
             {"/api/v1/spec/ui",       capwap_swagger_ui_handler, []},
             {"/api/v1/spec/ui/[...]", cowboy_static, {priv_dir, capwap, "static"}}
@@ -57,4 +61,3 @@ get_inet({_, _, _, _}) ->
     inet;
 get_inet({_, _, _, _, _, _, _, _}) ->
     inet6.
-

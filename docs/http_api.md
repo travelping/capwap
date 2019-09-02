@@ -12,6 +12,9 @@ Settings for http api in sys.config:
 ]
 ```
 
+HTTP API V1
+===========
+
 Swagger is available in path: ```http://SERVER/api/v1/spec/ui```
 
 general commands
@@ -66,8 +69,24 @@ dp commands
 
     show data path statistics
 
-metrics
--------
+HTTP API V2
+===========
+
+station commands
+----------------
+
+* /api/v2/station: get
+
+    list all WTPs with connected stations and supplementary info
+    (TX/RX bytes, RSSI)
+
+* /api/v2/wtp/{wtp-id}/station/{mac}: delete
+    
+    trying to delete station with {mac} from wtp {wtp-id}. It's similar 
+    ``` /api/v1/station/{mac} ``` but with extra checks
+
+METRICS
+=======
 
 * /metrics
 

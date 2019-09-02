@@ -16,6 +16,7 @@
 -module(capwap_tools).
 
 -export([format_eui/1, format_mac/1, format_ip/1, format_peer/1]).
+-export([mac_to_hex/1]).
 -export([hexdump/1]).
 -export([ip_csum/1]).
 -export([may_learn/1, may_learn/2, eth_addr_is_reserved/1]).
@@ -30,6 +31,12 @@ format_mac(<<A:8, B:8, C:8, D:8, E:8, F:8>>) ->
     flat_format("~2.16.0b:~2.16.0b:~2.16.0b:~2.16.0b:~2.16.0b:~2.16.0b", [A, B, C, D, E, F]);
 format_mac(MAC) ->
     flat_format("~w", MAC).
+
+mac_to_hex(MAC) ->
+    case io_lib:fread("~16u:~16u:~16u:~16u:~16u:~16u", binary_to_list(MAC)) of
+        {ok, Mlist, []} -> list_to_binary(Mlist);
+        _ -> undefined
+    end.
 
 format_ip(undefined) ->
     "undefined";

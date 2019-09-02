@@ -29,7 +29,7 @@
 -include_lib("stdlib/include/ms_transform.hrl").
 
 -define(SERVER, ?MODULE).
--define(SELECT_COMMONNAMES_ADDRESS, [{{'$1','_','$2'},[{is_binary,'$1'}],[{{'$1','$2'}}]}]).
+-define(SELECT_COMMONNAMES_ADDRESS, [{{'$1','_','$2'},[{is_binary,'$1'},{'/=', '$2', undefined}],[{{'$1','$2'}}]}]).
 -define(SELECT_BY_PID (Pid), [{{'$1',Pid,'$2'},[],[true]}]).
 
 -record(state, {
@@ -68,7 +68,7 @@ lookup_sessionid(PeerId, SessionId) ->
     end.
 
 get_commonname(GetPid) ->
-    ets:select(?SERVER, ets:fun2ms(fun({PeerId, Pid, Args}) when Pid == GetPid, is_binary(PeerId) -> {PeerId, Args} end)).
+    ets:select(?SERVER, ets:fun2ms(fun({PeerId, Pid, Args}) when Pid == GetPid, is_binary(PeerId), Args /= undefined-> {PeerId, Args} end)).
 
 list_commonnames() ->
     ets:select(?SERVER, ?SELECT_COMMONNAMES_ADDRESS).

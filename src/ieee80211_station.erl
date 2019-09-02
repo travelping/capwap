@@ -131,7 +131,6 @@ delete(Pid) when is_pid(Pid) ->
 
 start_gtk_rekey(Station, Controller, GTK, IGTK) ->
     gen_statem:cast(Station, {start_gtk_rekey, Controller, GTK, IGTK}).
-
 %%%===================================================================
 %%% gen_statem callbacks
 %%%===================================================================
@@ -522,6 +521,9 @@ handle_event(timeout, _, State, _Data) ->
 handle_event(info, {'DOWN', _ACMonitor, process, AC, _Info}, _State, #data{ac = AC}) ->
     lager:warning("AC died ~w", [AC]),
     {stop, normal};
+
+handle_event({call, From}, get_aaa_session, _State, #data{aaa_session = AAA}) ->
+    {keep_state_and_data, [{reply, From, {ok, AAA}}, ?IDLE_TIMEOUT]};
 
 handle_event(Type, Event, State, _Data) ->
     lager:warning("in ~p got unexpexted: ~p:~p", [State, Type, Event]),
@@ -928,7 +930,7 @@ accounting_update(STA, SessionOpts) ->
 	{ok, MAC} ->
 	    STAStats = capwap_dp:get_station(MAC),
 	    lager:debug("STA Stats: ~p", [STAStats]),
-	    {_MAC, _VLan, _RadioId, _BSS, {RcvdPkts, SendPkts, RcvdBytes, SendBytes}} = STAStats,
+	    {_MAC, _VLan, _RadioId, _BSS, {RcvdPkts, SendPkts, RcvdBytes, SendBytes, _RSSI, _SNR, _DR}} = STAStats,
 	    Acc = [{'InPackets',  RcvdPkts},
 		    {'OutPackets', SendPkts},
 		    {'InOctets',   RcvdBytes},
