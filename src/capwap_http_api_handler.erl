@@ -360,10 +360,10 @@ fmt_ip(IP) ->
     erlang:list_to_binary(Res).
 
 fmt_wtp_descriptor(#wtp_descriptor{
-			 max_radios = MaxRadios,
-			 radios_in_use = RadiosInUse,
-			 encryption_sub_element = EncSubElem,
-			 sub_elements = SubElements}) ->
+                      max_radios = MaxRadios,
+                      radios_in_use = RadiosInUse,
+                      encryption_sub_element = EncSubElem,
+                      sub_elements = SubElements}) ->
     lists:map(fun fmt_wtp_descriptor_sub_element/1, SubElements) ++
     [ {max_radios, MaxRadios},
       {radios_in_use, RadiosInUse},
