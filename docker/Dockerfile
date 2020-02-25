@@ -35,9 +35,7 @@ FROM    alpine:3.11
 
 ARG     BUILD_PROFILE=prod
 WORKDIR /
-RUN     apk update && \
-		apk --no-cache upgrade && \
-		apk --no-cache add zlib ncurses-libs libcrypto1.1 lksctp-tools
+RUN     apk add --no-cache -U zlib ncurses-libs libcrypto1.1 lksctp-tools tini
 COPY    docker/docker-entrypoint.sh /
 COPY    config/ergw-capwap-node.config /etc/ergw-capwap-node/
 
@@ -46,5 +44,5 @@ RUN     mkdir -p /var/lib/ergw/ && \
 
 COPY    --from=build-env /build/_build/${BUILD_PROFILE}/rel/ /opt/
 
-ENTRYPOINT ["/docker-entrypoint.sh"]
+ENTRYPOINT ["tini", "--", "/docker-entrypoint.sh"]
 CMD     ["/opt/ergw-capwap-node/bin/ergw-capwap-node", "foreground"]
