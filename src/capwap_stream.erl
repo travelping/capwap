@@ -68,16 +68,16 @@ recv(Type, Data, State0) ->
 			    {ok, {Header, Msg}, State1}
 
 		    catch
-			_Class:Error ->
-			    {error, {Error, erlang:get_stacktrace()}}
+			_Class:Error:Stack ->
+			    {error, {Error, Stack}}
 		    end;
 
 		{_, State1} ->
 		    {ok, more, State1}
 	    end
     catch
-	_Class:Error ->
-	    {error, {Error, erlang:get_stacktrace()}}
+	_Class:Error:Stack ->
+	    {error, {Error, Stack}}
     end.
 
 encode(Type, Msg, State = #stream{mtu = MTU, fragment_id = FragId}) ->

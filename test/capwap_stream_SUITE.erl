@@ -53,9 +53,9 @@ run_permutation(Result, Perm) ->
 		     [?FILE, ?LINE, Perm, Result, V]),
 	     error(badmatch)
     catch
-	Class:Error ->
+	Class:Error:Stack ->
 	    io:format("ERROR(~s:~b)~nCase: ~p~nExpected: ~p~nError: ~p:~p at ~p~n",
-		    [?FILE, ?LINE, Perm, Result, Class, Error, erlang:get_stacktrace()]),
+		    [?FILE, ?LINE, Perm, Result, Class, Error, Stack]),
 	    error(Error)
     end.
 
