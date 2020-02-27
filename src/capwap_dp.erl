@@ -34,6 +34,7 @@
 %% dev API
 -export([run/1]).
 
+-include_lib("kernel/include/logger.hrl").
 -include("include/capwap_packet.hrl").
 
 -record(state, {state, tref, timeout, interim, interim_timer, api_version}).
@@ -110,60 +111,60 @@ init([]) ->
     {ok, State}.
 
 handle_call(Request, _From, State = #state{state = disconnected}) ->
-    lager:warning("got call ~p without active data path", [Request]),
+    ?LOG(warning, "got call ~p without active data path", [Request]),
     {reply, {error, not_connected}, State};
 
 handle_call(_Request, _From, State) ->
     {reply, ok, State}.
 
 handle_cast(Request, State = #state{state = disconnected}) ->
-    lager:warning("got cast ~p without active data path", [Request]),
+    ?LOG(warning, "got cast ~p without active data path", [Request]),
     {noreply, State};
 
 handle_cast(_Request, State) ->
     {noreply, State}.
 
 handle_info({nodedown, Node}, State0) ->
-    lager:warning("node down: ~p", [Node]),
+    ?LOG(warning, "node down: ~p", [Node]),
 
     State1 = handle_nodedown(State0),
     State2 = start_nodedown_timeout(State1),
     {noreply, State2};
 
 handle_info(reconnect, State0) ->
-    lager:warning("trying to reconnect"),
+    ?LOG(warning, "trying to reconnect"),
     State1 = connect(State0#state{tref = undefined}),
     {noreply, State1};
 
 handle_info(Info, State = #state{state = disconnected}) ->
-    lager:warning("got info ~p without active data path", [Info]),
+    ?LOG(warning, "got info ~p without active data path", [Info]),
     {noreply, State};
 
 handle_info({packet_in, tap, VlanId, Packet}, State) ->
-    lager:debug("TAP: ~p", [Packet]),
+    ?LOG(debug, "TAP: ~p", [Packet]),
     <<MAC:6/bytes, _/binary>> = Packet,
     case MAC of
 	<<255, 255, 255, 255, 255, 255>> ->
-	    lager:warning("need to handle broadcast on VLAN ~w", [VlanId]),
+	    ?LOG(warning, "need to handle broadcast on VLAN ~w", [VlanId]),
 	    ok;
 
 	<<_:7, 1:1, _/binary>> ->
-	    lager:warning("need to handle multicast on VLAN ~w to ~s", [VlanId, capwap_tools:format_eui(MAC)]),
+	    ?LOG(warning, "need to handle multicast on VLAN ~w to ~s", [VlanId, capwap_tools:format_eui(MAC)]),
 	    ok;
 
 	_ ->
-	    lager:warning("packet for invalid STA ~s on VLAN ~w", [capwap_tools:format_eui(MAC), VlanId]),
+	    ?LOG(warning, "packet for invalid STA ~s on VLAN ~w", [capwap_tools:format_eui(MAC), VlanId]),
 	    ok
     end,
     {noreply, State};
 
 handle_info({capwap_in, WTPDataChannelAddress, Msg}, State) ->
-    lager:warning("CAPWAP from ~p: ~p", [WTPDataChannelAddress, Msg]),
+    ?LOG(warning, "CAPWAP from ~p: ~p", [WTPDataChannelAddress, Msg]),
     capwap_ac:handle_data(self(), WTPDataChannelAddress, Msg),
     {noreply, State};
 
 handle_info({wtp_down, WTP}, State) ->
-    lager:warning("WTP DOWN: ~p", [WTP]),
+    ?LOG(warning, "WTP DOWN: ~p", [WTP]),
     del_wtp(WTP),
     {noreply, State};
 
@@ -174,7 +175,7 @@ handle_info({timeout, TRef, interim},
     {noreply, State};
 
 handle_info(Info, State) ->
-    lager:warning("Unhandled info message: ~p", [Info]),
+    ?LOG(warning, "Unhandled info message: ~p", [Info]),
     {noreply, State}.
 
 terminate(_Reason, _State) ->
@@ -213,7 +214,7 @@ connect(State0) ->
     Node = get_node(),
     case net_adm:ping(Node) of
 	pong ->
-	    lager:warning("Node ~p is up", [Node]),
+	    ?LOG(warning, "Node ~p is up", [Node]),
 	    erlang:monitor_node(Node, true),
 	    clear(),
 	    {ok, APIVersion} = bind(self()),
@@ -221,7 +222,7 @@ connect(State0) ->
 	    State1 = start_interim(State0),
 	    State1#state{state = connected, timeout = 10, api_version = APIVersion};
 	pang ->
-	    lager:warning("Node ~p is down", [Node]),
+	    ?LOG(warning, "Node ~p is down", [Node]),
 	    start_nodedown_timeout(State0)
     end.
 
@@ -303,7 +304,7 @@ report_stats() ->
 	    exo_report_stats("all", Sum),
 	    ok;
 	Other ->
-	    lager:warning("WTP Stats: ~p", [Other]),
+	    ?LOG(warning, "WTP Stats: ~p", [Other]),
 	    ok
     end.
 

@@ -24,6 +24,8 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
 	 terminate/2, code_change/3]).
 
+-include_lib("kernel/include/logger.hrl").
+
 -define(SERVER, ?MODULE).
 
 -record(state, {acref, stations, timer}).
@@ -54,22 +56,22 @@ handle_call(_Request, _From, State) ->
     {reply, ok, State}.
 
 handle_cast({gtk_rekey_done, Sta}, State) ->
-    lager:debug("Group Rekey Station DONE: ~p", [Sta]),
+    ?LOG(debug, "Group Rekey Station DONE: ~p", [Sta]),
     handle_sta_done(Sta, State);
 
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
 handle_info({'DOWN', _MonitorRef, process, Sta, _Info}, State) ->
-    lager:debug("Group Rekey Station Down: ~p", [Sta]),
+    ?LOG(debug, "Group Rekey Station Down: ~p", [Sta]),
     handle_sta_done(Sta, State);
 
 handle_info(group_rekey_timeout, State) ->
-    lager:debug("Group Rekey Timeout"),
+    ?LOG(debug, "Group Rekey Timeout"),
     gtk_rekey_done(State);
 
 handle_info(Info, State) ->
-    lager:debug("GTP ReKey handler, unexpected Info: ~p", [Info]),
+    ?LOG(debug, "GTP ReKey handler, unexpected Info: ~p", [Info]),
     {noreply, State}.
 
 terminate(_Reason, _State) ->

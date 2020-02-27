@@ -23,6 +23,8 @@
 %% Supervisor callbacks
 -export([init/1]).
 
+-include_lib("kernel/include/logger.hrl").
+
 -define(SERVER, ?MODULE).
 
 %%%===================================================================
@@ -33,9 +35,9 @@ start_link() ->
     supervisor:start_link({local, ?SERVER}, ?MODULE, []).
 
 new_wtp(Peer) ->
-    lager:debug("Stating new WTP: ~p", [Peer]),
+    ?LOG(debug, "Stating new WTP: ~p", [Peer]),
     R = supervisor:start_child(?SERVER, [Peer]),
-    lager:debug("Result: ~p", [R]),
+    ?LOG(debug, "Result: ~p", [R]),
     R.
 
 %%%===================================================================
