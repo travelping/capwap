@@ -1,14 +1,14 @@
 sudo: required
-dist: xenial
+dist: bionic
 services:
   - docker
 
 language: erlang
 
 otp_release:
- - 20.3.8.5
- - 21.1.4
- - 21.2.5
+ - 22.0.7
+ - 22.1.8.1
+ - 22.2.7
 
 install: "true"
 
@@ -30,7 +30,7 @@ script:
 jobs:
   include:
     - stage: docker
-      otp_release: 21.2.5
+      otp_release: 22.2.7
       script:
         - docker build -t $BUILD_IMAGE -f docker/Dockerfile .
       after_success:
