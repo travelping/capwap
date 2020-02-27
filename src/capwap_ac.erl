@@ -160,8 +160,8 @@ handle_packet(WTPControlChannelAddress, Packet) ->
 		{error, not_capwap}
 	end
     catch
-	Class:Error ->
-	    ?LOG(debug, "failure: ~p:~p", [Class, Error]),
+	Class:Error:ST ->
+	    ?LOG(debug, "failure: ~p:~p with ~0p", [Class, Error, ST]),
 	    {error, not_capwap}
     end.
 
@@ -178,8 +178,8 @@ handle_data(DataPath, WTPDataChannelAddress, Packet) ->
 		{error, not_capwap}
 	end
     catch
-	Class:Error ->
-	    ?LOG(debug, "failure: ~p:~p", [Class, Error]),
+	Class:Error:ST ->
+	    ?LOG(debug, "failure: ~p:~p with ~0p", [Class, Error, ST]),
 	    {error, not_capwap}
     end.
 
