@@ -121,7 +121,7 @@ tuple_to_ip({A, B, C, D, E, F, G, H}) ->
 
 make_udp(NwSrc, NwDst, TpSrc, TpDst, PayLoad) ->
     Id = 0,
-    Proto = gen_socket:protocol(udp),
+    Proto = 17,
 
     UDPLength = 8 + size(PayLoad),
     UDPCSum = capwap_tools:ip_csum(<<NwSrc:4/bytes-unit:8, NwDst:4/bytes-unit:8,

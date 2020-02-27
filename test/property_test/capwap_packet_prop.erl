@@ -86,7 +86,7 @@ enc_dec_prop(Config) ->
 
 make_udp(NwSrc, NwDst, TpSrc, TpDst, PayLoad) ->
     Id = 0,
-    Proto = gen_socket:protocol(udp),
+    Proto = 17,
 
     UDPLength = 8 + size(PayLoad),
     UDPCSum = capwap_tools:ip_csum(<<NwSrc:4/bytes-unit:8, NwDst:4/bytes-unit:8,
