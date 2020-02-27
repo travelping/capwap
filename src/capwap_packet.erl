@@ -16,6 +16,7 @@
 -module(capwap_packet).
 
 -export([decode/2, decode/3, encode/2, encode/4, msg_description/1]).
+-export([pretty_print/1]).
 -export([decode_rate/1, encode_rate/2,
 	 decode_cipher_suite/1, encode_cipher_suite/1,
 	 decode_akm_suite/1, encode_akm_suite/1]).
@@ -114,6 +115,29 @@ encode(data, {Header = #capwap_header{flags = Flags}, PayLoad}, FragId, MTU) ->
 	_ ->
 	    encode_data_packet(Header, PayLoad, FragId, MTU)
     end.
+
+%%%===================================================================
+%%% Record formating
+%%%===================================================================
+
+-define(PRETTY_PRINT(F, R),
+	F(R, N) ->
+	       case record_info(size, R) - 1 of
+		   N -> record_info(fields, R);
+		   _ -> no
+	       end).
+
+pretty_print(Record) ->
+    RecDefFun = fun pretty_print/2,
+    io_lib_pretty:print(Record, 1, 0, -1, -1, RecDefFun).
+
+pretty_print(capwap_header, N) ->
+    case record_info(size, capwap_header) - 1 of
+	N -> record_info(fields, capwap_header);
+	_ -> no
+    end;
+pretty_print(Record, N) ->
+    pretty_print_f(Record, N).
 
 %%%===================================================================
 %%% Internal functions
@@ -2401,3 +2425,99 @@ encode_element({Tag = {Vendor, Type}, Value}) when is_integer(Vendor), is_intege
 
 encode_element({Tag, Value}) when is_integer(Tag), is_binary(Value) ->
     encode_element(Tag, Value).
+
+?PRETTY_PRINT(pretty_print_f, ac_descriptor);
+?PRETTY_PRINT(pretty_print_f, ac_ipv4_list);
+?PRETTY_PRINT(pretty_print_f, ac_ipv6_list);
+?PRETTY_PRINT(pretty_print_f, ac_name);
+?PRETTY_PRINT(pretty_print_f, ac_name_with_priority);
+?PRETTY_PRINT(pretty_print_f, ac_timestamp);
+?PRETTY_PRINT(pretty_print_f, add_mac_acl);
+?PRETTY_PRINT(pretty_print_f, add_station);
+?PRETTY_PRINT(pretty_print_f, control_ipv4_address);
+?PRETTY_PRINT(pretty_print_f, control_ipv6_address);
+?PRETTY_PRINT(pretty_print_f, local_ipv4_address);
+?PRETTY_PRINT(pretty_print_f, local_ipv6_address);
+?PRETTY_PRINT(pretty_print_f, timers);
+?PRETTY_PRINT(pretty_print_f, transport_protocol);
+?PRETTY_PRINT(pretty_print_f, data_transfer_data);
+?PRETTY_PRINT(pretty_print_f, data_transfer_mode);
+?PRETTY_PRINT(pretty_print_f, decryption_error_report);
+?PRETTY_PRINT(pretty_print_f, decryption_error_report_period);
+?PRETTY_PRINT(pretty_print_f, delete_mac_acl_entry);
+?PRETTY_PRINT(pretty_print_f, delete_station);
+?PRETTY_PRINT(pretty_print_f, discovery_type);
+?PRETTY_PRINT(pretty_print_f, duplicate_ipv4_address);
+?PRETTY_PRINT(pretty_print_f, duplicate_ipv6_address);
+?PRETTY_PRINT(pretty_print_f, idle_timeout);
+?PRETTY_PRINT(pretty_print_f, ecn_support);
+?PRETTY_PRINT(pretty_print_f, image_data);
+?PRETTY_PRINT(pretty_print_f, image_identifier);
+?PRETTY_PRINT(pretty_print_f, image_information);
+?PRETTY_PRINT(pretty_print_f, initiate_download);
+?PRETTY_PRINT(pretty_print_f, location_data);
+?PRETTY_PRINT(pretty_print_f, maximum_message_length);
+?PRETTY_PRINT(pretty_print_f, mtu_discovery_padding);
+?PRETTY_PRINT(pretty_print_f, radio_administrative_state);
+?PRETTY_PRINT(pretty_print_f, radio_operational_state);
+?PRETTY_PRINT(pretty_print_f, result_code);
+?PRETTY_PRINT(pretty_print_f, returned_message_element);
+?PRETTY_PRINT(pretty_print_f, session_id);
+?PRETTY_PRINT(pretty_print_f, statistics_timer);
+?PRETTY_PRINT(pretty_print_f, wtp_board_data);
+?PRETTY_PRINT(pretty_print_f, wtp_descriptor);
+?PRETTY_PRINT(pretty_print_f, wtp_fallback);
+?PRETTY_PRINT(pretty_print_f, wtp_frame_tunnel_mode);
+?PRETTY_PRINT(pretty_print_f, wtp_mac_type);
+?PRETTY_PRINT(pretty_print_f, wtp_name);
+?PRETTY_PRINT(pretty_print_f, wtp_radio_statistics);
+?PRETTY_PRINT(pretty_print_f, wtp_reboot_statistics);
+?PRETTY_PRINT(pretty_print_f, wtp_static_ip_address_information);
+?PRETTY_PRINT(pretty_print_f, ieee_802_11_add_wlan);
+?PRETTY_PRINT(pretty_print_f, ieee_802_11_antenna);
+?PRETTY_PRINT(pretty_print_f, ieee_802_11_assigned_wtp_bssid);
+?PRETTY_PRINT(pretty_print_f, ieee_802_11_delete_wlan);
+?PRETTY_PRINT(pretty_print_f, ieee_802_11_direct_sequence_control);
+?PRETTY_PRINT(pretty_print_f, ieee_802_11_information_element);
+?PRETTY_PRINT(pretty_print_f, ieee_802_11_mac_operation);
+?PRETTY_PRINT(pretty_print_f, ieee_802_11_mic_countermeasures);
+?PRETTY_PRINT(pretty_print_f, ieee_802_11_multi_domain_capability);
+?PRETTY_PRINT(pretty_print_f, ieee_802_11_ofdm_control);
+?PRETTY_PRINT(pretty_print_f, ieee_802_11_rate_set);
+?PRETTY_PRINT(pretty_print_f, ieee_802_11_rsna_error_report_from_station);
+?PRETTY_PRINT(pretty_print_f, ieee_802_11_station);
+?PRETTY_PRINT(pretty_print_f, ieee_802_11_station_qos_profile);
+?PRETTY_PRINT(pretty_print_f, ieee_802_11_station_session_key);
+?PRETTY_PRINT(pretty_print_f, ieee_802_11_statistics);
+?PRETTY_PRINT(pretty_print_f, ieee_802_11_supported_rates);
+?PRETTY_PRINT(pretty_print_f, ieee_802_11_tx_power);
+?PRETTY_PRINT(pretty_print_f, ieee_802_11_tx_power_level);
+?PRETTY_PRINT(pretty_print_f, ieee_802_11_update_station_qos);
+?PRETTY_PRINT(pretty_print_f, ieee_802_11_update_wlan);
+?PRETTY_PRINT(pretty_print_f, ieee_802_11_wtp_quality_of_service);
+?PRETTY_PRINT(pretty_print_f, ieee_802_11_wtp_radio_configuration);
+?PRETTY_PRINT(pretty_print_f, ieee_802_11_wtp_radio_fail_alarm_indication);
+?PRETTY_PRINT(pretty_print_f, ieee_802_11_wtp_radio_information);
+?PRETTY_PRINT(pretty_print_f, tp_wtp_wwan_statistics_0_9);
+?PRETTY_PRINT(pretty_print_f, tp_wtp_wwan_statistics);
+?PRETTY_PRINT(pretty_print_f, tp_wtp_timestamp);
+?PRETTY_PRINT(pretty_print_f, tp_wtp_timestamp_1_1);
+?PRETTY_PRINT(pretty_print_f, tp_wtp_wwan_iccid);
+?PRETTY_PRINT(pretty_print_f, tp_ieee_802_11_wlan_hold_time);
+?PRETTY_PRINT(pretty_print_f, tp_data_channel_dead_interval);
+?PRETTY_PRINT(pretty_print_f, tp_ac_join_timeout);
+?PRETTY_PRINT(pretty_print_f, tp_ac_address_with_priority);
+?PRETTY_PRINT(pretty_print_f, wtp_apn_settings);
+?PRETTY_PRINT(pretty_print_f, wtp_administrator_password_settings);
+?PRETTY_PRINT(pretty_print_f, firmware_download_information);
+?PRETTY_PRINT(pretty_print_f, firmware_download_status);
+?PRETTY_PRINT(pretty_print_f, ieee_802_11_tp_wlan);
+?PRETTY_PRINT(pretty_print_f, apply_confirmation_timeout);
+?PRETTY_PRINT(pretty_print_f, power_save_mode);
+?PRETTY_PRINT(pretty_print_f, gps_last_acquired_position);
+?PRETTY_PRINT(pretty_print_f, ieee_802_11n_wlan_radio_configuration);
+?PRETTY_PRINT(pretty_print_f, ieee_802_11n_station_information);
+?PRETTY_PRINT(pretty_print_f, tp_ieee_802_11_encryption_capabilities);
+?PRETTY_PRINT(pretty_print_f, tp_ieee_802_11_update_key);
+pretty_print_f(_, _) ->
+    no.

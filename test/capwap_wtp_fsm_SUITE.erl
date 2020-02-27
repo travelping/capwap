@@ -16,7 +16,6 @@
 -module(capwap_wtp_fsm_SUITE).
 
 -compile(export_all).
--compile({parse_transform, lager_transform}).
 
 -include_lib("common_test/include/ct.hrl").
 -include_lib("stdlib/include/ms_transform.hrl").
@@ -63,7 +62,7 @@ suite() ->
 init_per_suite(Config0) ->
     Apps = setup_applications(),
     Config = [ {apps, Apps} | Config0 ],
-    lager_common_test_backend:bounce(debug),
+    logger:update_primary_config(#{level => all}),
     Config.
 
 end_per_suite(Config) ->
@@ -200,10 +199,7 @@ meck_unload() ->
 setup_applications() ->
     {ok, CWD} = file:get_cwd(),
     os:cmd("touch " ++ CWD ++ "/upstream"),
-    Apps = [{lager, [{handlers, [{lager_console_backend, info},
-				 {lager_file_backend, [{file, "log/error.log"}, {level, error}, {size, 0}, {date, ""}]},
-				 {lager_file_backend, [{file, "log/console.log"}, {level, debug}, {size, 0}, {date, ""}]}]}]},
-	    {capwap, [{server_ip, {127, 0, 0, 1}},
+    Apps = [{capwap, [{server_ip, {127, 0, 0, 1}},
 		      {enforce_dtls_control, false},
 		      {server_socket_opts, [{recbuf, 1048576}, {sndbuf, 1048576}]},
 		      {limit, 200},

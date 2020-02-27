@@ -23,6 +23,8 @@
 %% Supervisor callbstationks
 -export([init/1]).
 
+-include_lib("kernel/include/logger.hrl").
+
 -define(SERVER, ?MODULE).
 
 %%%===================================================================
@@ -33,9 +35,9 @@ start_link() ->
     supervisor:start_link({local, ?SERVER}, ?MODULE, []).
 
 new_station(AC, StationMAC, StationCfg) ->
-    lager:debug("Starting new station: ~p, ~p, ~p", [AC, StationMAC, lager:pr(StationCfg, capwap_ac)]),
+    ?LOG(debug, "Starting new station: ~p, ~p, ~p", [AC, StationMAC, StationCfg]),
     R = supervisor:start_child(?SERVER, [AC, StationMAC, StationCfg]),
-    lager:debug("Starting new station result: ~p", [R]),
+    ?LOG(debug, "Starting new station result: ~p", [R]),
     R.
 
 %%%===================================================================

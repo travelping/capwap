@@ -67,10 +67,10 @@ enc_dec_prop(Config) ->
     numtests(1000,
 	     ?FORALL(Msg, msg_gen(),
 		     begin
-			 ct:pal("Msg: ~p", [Msg]),
+			 ct:pal("Msg: ~s", [capwap_packet:pretty_print(Msg)]),
 			 [Enc] = capwap_packet:encode(control, Msg),
 			 Dec = capwap_packet:decode(control, Enc),
-			 ct:pal("Dec: ~p", [Dec]),
+			 ct:pal("Dec: ~s", [capwap_packet:pretty_print(Dec)]),
 			 ?equal([Enc], capwap_packet:encode(control,
 							  capwap_packet:decode(control, Enc)))
 		     end)).

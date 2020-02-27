@@ -709,7 +709,14 @@ write_encoder(FunName, {Id, Name, Fields}) ->
     BinAssign = string:join(collect(fun(X) -> gen_encoder_bin(X) end, Fields), [",\n", BinIndent]),
     io_lib:format("~s~s<<~s>>)", [FunHead, DecHead, BinAssign]).
 
+write_pretty_print(_, {_, Name, _}) ->
+    io_lib:format("?PRETTY_PRINT(pretty_print_f, ~s)", [s2a(Name)]).
+
 main(_) ->
+    StdIEs = ies(),
+    VendorIEs = vendor_ies(),
+    IEs = StdIEs ++ VendorIEs,
+
     MsgDescription = string:join([io_lib:format("msg_description(~s) -> <<\"~s\">>", [s2a(X), X]) || {_, X} <- msgs()]
 				 ++ ["msg_description(X) -> io_lib:format(\"~p\", [X])"], ";\n") ++ ".\n",
 
@@ -717,25 +724,28 @@ main(_) ->
     WildFun = ["message_type({Vendor, Type}) when is_integer(Vendor), is_integer(Type) -> {Vendor, Type}"],
     MTypes = string:join(FwdFuns ++ RevFuns ++ WildFun, ";\n") ++ ".\n",
 
-    Records = string:join([write_record(X) || X <- ies() ++ vendor_ies(), element(1, X) /= 37], "\n"),
+    Records = string:join([write_record(X) || X <- IEs, element(1, X) /= 37], "\n"),
     HrlRecs = io_lib:format("%% -include(\"capwap_packet_gen.hrl\").~n~n~s", [Records]),
-    Enums = write_enums(ies() ++ vendor_ies()),
+    Enums = write_enums(IEs),
 
     CatchAnyDecoder = "decode_element(Tag, Value) ->\n    {Tag, Value}",
     CatchAnyVendorDecoder = "decode_vendor_element(Tag, Value) ->\n    {Tag, Value}",
 
-    Funs = string:join([write_decoder("decode_element", X) || X <- ies()] ++ [CatchAnyDecoder], ";\n\n"),
-    VendorFuns = string:join([write_decoder("decode_vendor_element", X) || X <- vendor_ies()] ++ [CatchAnyVendorDecoder], ";\n\n"),
+    Funs = string:join([write_decoder("decode_element", X) || X <- StdIEs] ++ [CatchAnyDecoder], ";\n\n"),
+    VendorFuns = string:join([write_decoder("decode_vendor_element", X) || X <- VendorIEs] ++ [CatchAnyVendorDecoder], ";\n\n"),
 
     CatchAnyVendorEncoder = "encode_element({Tag = {Vendor, Type}, Value}) when is_integer(Vendor), is_integer(Type), is_binary(Value) ->\n    encode_vendor_element(Tag, Value)",
     CatchAnyEncoder = "encode_element({Tag, Value}) when is_integer(Tag), is_binary(Value) ->\n    encode_element(Tag, Value)",
-    EncFuns = string:join([write_encoder("encode_element", X) || X <- ies(), element(1, X) /= 37] ++
-			  [write_encoder("encode_vendor_element", X) || X <- vendor_ies()]
+    EncFuns = string:join([write_encoder("encode_element", X) || X <- StdIEs, element(1, X) /= 37] ++
+			  [write_encoder("encode_vendor_element", X) || X <- VendorIEs]
 			  ++ [CatchAnyVendorEncoder, CatchAnyEncoder] , ";\n\n"),
 
-    ErlDecls = io_lib:format("%% -include(\"capwap_packet_gen.hrl\").~n~n~s~n~s~n~s~n~s.~n~n~s.~n~n~s.~n",
-			     [MsgDescription, MTypes, Enums, Funs, VendorFuns, EncFuns]),
+    CatchAnyPretty = "pretty_print_f(_, _) ->\n    no",
+    RecPrettyDefs = string:join([write_pretty_print("pretty_print_f", X) || X <- IEs, element(1, X) /= 37]
+				++ [CatchAnyPretty] , ";\n"),
 
+    ErlDecls = io_lib:format("%% -include(\"capwap_packet_gen.hrl\").~n~n~s~n~s~n~s~n~s.~n~n~s.~n~n~s.~n~n~s.~n",
+			     [MsgDescription, MTypes, Enums, Funs, VendorFuns, EncFuns, RecPrettyDefs]),
 
     {ok, HrlF0} = file:read_file("include/capwap_packet.hrl"),
     [HrlHead, _] = binary:split(HrlF0, [<<"%% -include(\"capwap_packet_gen.hrl\").">>],[]),

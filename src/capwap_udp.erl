@@ -39,6 +39,8 @@
 %% Transport Modules Callbacks
 -export([listener_spec/1]).
 
+-include_lib("kernel/include/logger.hrl").
+
 -define(SERVER, ?MODULE).
 -define(PROTOCOL, ?MODULE).
 
@@ -81,11 +83,11 @@ connect(Address, Port, Opts0) ->
                 ok ->
                     {ok, Socket};
                 Error = {error, _Reason} ->
-                    lager:error("Error ~p connecting socket on port ~p : ~p", [Error, Port, Address]),
+                    ?LOG(error, "Error ~p connecting socket on port ~p : ~p", [Error, Port, Address]),
                     Error
             end;
         Error = {error, _Reason} ->
-            lager:error("Error ~p opening socket on port 0 with opts ~p", [Error, Options]),
+            ?LOG(error, "Error ~p opening socket on port 0 with opts ~p", [Error, Options]),
             Error
     end.
 
@@ -101,7 +103,7 @@ controlling_process(Socket, Pid) ->
     call(Socket, controlling_process, {self(), Pid}).
 
 close(Socket) when is_port(Socket) ->
-    lager:debug("Closing socket ~p", [Socket]),
+    ?LOG(debug, "Closing socket ~p", [Socket]),
     gen_udp:close(Socket);
 close(Socket) ->
     call(Socket, close, undefined).
@@ -171,7 +173,7 @@ callback_info() ->
 %%----------------------------------
 
 call(Socket, Request, Args) ->
-    lager:debug(?GREEN "call: ~p ~p" ?WHITE, [Socket, Request]),
+    ?LOG(debug, ?GREEN "call: ~p ~p" ?WHITE, [Socket, Request]),
     call(Socket, Request, Args, 5000).
 
 call(Socket, Request, Args, Timeout) when is_pid(Socket) ->
@@ -211,7 +213,7 @@ init([Owner, Port, Options0]) ->
                         connections = gb_trees:empty(),
                         virtual_sockets = gb_trees:empty()}};
         Error ->
-            lager:error("Error ~p opening socket on port port ~p with opts ~p", [Error, Port, Opts]),
+            ?LOG(error, "Error ~p opening socket on port port ~p with opts ~p", [Error, Port, Opts]),
             Error
     end.
 
@@ -280,17 +282,17 @@ handle_call({controlling_process, undefined, _}, _From, State) ->
     {reply, {error, not_owner}, State};
 
 handle_call({close, undefined, _Args}, _From, State0 = #state{socket = Socket}) ->
-    lager:info("Closing socket, requested from ~p", [_From]),
+    ?LOG(info, "Closing socket, requested from ~p", [_From]),
     Reply = gen_udp:close(Socket),
     State = reply_accept(?ECLOSED, State0),
     {reply, Reply, State#state{state = closed}};
 
 handle_call({_, undefined, _Args}, _From, State = #state{state = closed}) ->
-    lager:debug("Socket already closed", []),
+    ?LOG(debug, "Socket already closed", []),
     {reply, ?ECLOSED, State};
 
 handle_call({_, undefined, _Args}, _From, State) ->
-    lager:debug("Socket not connected", []),
+    ?LOG(debug, "Socket not connected", []),
     {reply, ?ENOTCONN, State};
 
 %% ---------------------------------------------------------------------------
@@ -298,7 +300,7 @@ handle_call({_, undefined, _Args}, _From, State) ->
 %% ---------------------------------------------------------------------------
 
 handle_call({close, CSocketId, Args}, From, State) ->
-    lager:info("Closing socket, requested from ~p", [From]),
+    ?LOG(info, "Closing socket, requested from ~p", [From]),
     with_socket(CSocketId, Args, From, ok, fun socket_close/4, State);
 
 handle_call({shutdown, CSocketId, How}, From, State) ->
@@ -353,7 +355,7 @@ handle_info({udp, Socket, IP, InPortNo, Packet},
 %%     {noreply, State1};
 
 handle_info({'EXIT', Owner, _}, State = #state{owner = Owner}) ->
-    lager:info("owner process ~p exited", [Owner]),
+    ?LOG(info, "owner process ~p exited", [Owner]),
     {stop, normal, State#state{owner = undefined}};
 
 handle_info({'DOWN', _MonitorRef, _Type, Pid, _Info}, State0 = #state{virtual_sockets = VSockets}) ->
@@ -361,7 +363,7 @@ handle_info({'DOWN', _MonitorRef, _Type, Pid, _Info}, State0 = #state{virtual_so
     {noreply, State};
 
 handle_info(Info, State) ->
-    lager:warning("Unhandled info message: ~p", [Info]),
+    ?LOG(warning, "Unhandled info message: ~p", [Info]),
     {noreply, State}.
 
 handle_packet(Peer, <<0:4, 0:4, _/binary>> = Packet, State) ->
@@ -369,7 +371,7 @@ handle_packet(Peer, <<0:4, 0:4, _/binary>> = Packet, State) ->
 handle_packet(Peer, <<0:4, 1:4, _:3/bytes, Packet/binary>>, State) ->
     handle_packet(Peer, dtls, Packet, State);
 handle_packet(Peer, Packet, State) ->
-    lager:debug(?RED "invalid CAPWAP header from ~p: ~p" ?WHITE, [Peer, Packet]),
+    ?LOG(debug, ?RED "invalid CAPWAP header from ~p: ~p" ?WHITE, [Peer, Packet]),
     %% silently ignore
     State.
 
@@ -379,15 +381,15 @@ handle_packet(Peer, Type, Packet, State) ->
 
 handle_packet(Peer, Type, undefined, Packet,
 	      State0 = #state{socket = Socket}) ->
-    lager:debug("handle_packet #4"),
+    ?LOG(debug, "handle_packet #4"),
     case handle_first_packet(Peer, Type, Packet, State0) of
         {reply, Data} ->
-            lager:debug("handle_packet #4-1"),
+            ?LOG(debug, "handle_packet #4-1"),
             send(Socket, Peer, Type, [Data]),
             State0;
 
         accept ->
-            lager:debug("handle_packet #4-2"),
+            ?LOG(debug, "handle_packet #4-2"),
             %% NOTE: the first request is decode twice, should this be changed?
             {ok, Owner} = get_wtp(Peer, State0),
 
@@ -396,32 +398,32 @@ handle_packet(Peer, Type, undefined, Packet,
             State;
 
         Other ->
-            lager:debug(?RED "handle_packet #4-3: ~p" ?WHITE, [Other]),
+            ?LOG(debug, ?RED "handle_packet #4-3: ~p" ?WHITE, [Other]),
             %% silently ignore
             State0
     end;
 
 handle_packet(_Peer, _Type, CSocket0 = #capwap_socket{mode = passive, queue = Queue}, Packet, State) ->
-    lager:debug("handle_packet #5"),
+    ?LOG(debug, "handle_packet #5"),
     CSocket = CSocket0#capwap_socket{queue = queue:in(Packet, Queue)},
     update_csocket(CSocket, State);
 
 handle_packet(_Peer, _Type, #capwap_socket{id = CSocketId, mode = _Mode, owner = Owner}, Packet, State) ->
-    lager:debug("handle_packet #6"),
+    ?LOG(debug, "handle_packet #6"),
     Owner ! {?PROTOCOL, capwap_socket(CSocketId), Packet},
     State.
 
 handle_first_packet(WTPControlChannelAddress, udp, Packet, _State) ->
-    lager:debug("handle_first_packet: plain CAPWAP~n~p", [Packet]),
+    ?LOG(debug, "handle_first_packet: plain CAPWAP~n~p", [Packet]),
     %% TODO: keep AC configuration in State and pass it to AC
     capwap_ac:handle_packet(WTPControlChannelAddress, Packet);
 handle_first_packet({Address, Port}, dtls, Packet, _State) ->
-    lager:debug(?BLUE "handle_first_packet: DTLS CAPWAP" ?WHITE),
+    ?LOG(debug, ?BLUE "handle_first_packet: DTLS CAPWAP" ?WHITE),
     try
         dtlsex_datagram:handle_packet(Address, Port, Packet)
     catch
         E:C ->
-            lager:error("Error ~p:~p handling DTLS packet ~p", [E, C, Packet]),
+            ?LOG(error, "Error ~p:~p handling DTLS packet ~p", [E, C, Packet]),
             ignore
     end.
 
@@ -575,5 +577,5 @@ delete_csocket(#capwap_socket{id = CSocketId, type = Type, peer = Peer, monitor 
 open_socket(Port, Options) ->
     Opts1 = [{reuseaddr, true}|Options],
     Res = gen_udp:open(Port, Opts1),
-    lager:debug("Opening udp connecting on port ~p : ~p : ~p ", [Port, Res, Opts1]),
+    ?LOG(debug, "Opening udp connecting on port ~p : ~p : ~p ", [Port, Res, Opts1]),
     Res.

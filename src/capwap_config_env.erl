@@ -20,6 +20,7 @@
 -export([wtp_init_config/2, wtp_config/1,
 	 wtp_radio_config/3]).
 
+-include_lib("kernel/include/logger.hrl").
 -include("capwap_packet.hrl").
 -include("capwap_config.hrl").
 -include("ieee80211.hrl").
@@ -30,7 +31,7 @@
 wtp_get(Path, Values)
   when is_list(Values) ->
     Settings = capwap_config:get(wtp, Path, []),
-    lager:debug("got Settings for ~p: ~p", [Path, Settings]),
+    ?LOG(debug, "got Settings for ~p: ~p", [Path, Settings]),
     lists:map(fun({K, V}) ->
 		      {K, proplists:get_value(K, Settings, V)}
 	      end, Values).
@@ -49,7 +50,7 @@ wtp_init_config(CN, _Opts) ->
 	    {broken_add_wlan_workaround, false}],
     WTP1 = wtp_get([defaults], WTP0),
     WTP2 = wtp_get([CN], WTP1),
-    lager:debug("WTP: ~p", [WTP2]),
+    ?LOG(debug, "WTP: ~p", [WTP2]),
     {ok, {CN, WTP2}}.
 
 wtp_config({_CN, Cfg}) ->
@@ -99,7 +100,7 @@ wtp_init_wlan_keymgmt(WLAN = #wtp_wlan_config{
        is_list(Value) ->
 	    lists:foldl(fun(V, W) -> wtp_init_wlan_keymgmt(W, V) end, WLAN, Value);
        true ->
-	    lager:error("WLAN Key Management: ~w is invalid", [Value]),
+	    ?LOG(error, "WLAN Key Management: ~w is invalid", [Value]),
 	    WLAN
     end.
 
@@ -141,7 +142,7 @@ wtp_init_wlan(_CN, _Radio, {group_rekey, Value}, WLAN)
   when is_integer(Value) ->
     WLAN#wtp_wlan_config{group_rekey = Value};
 wtp_init_wlan(CN, Radio, Setting, WLAN) ->
-    lager:debug("ignoring ~p on Radio (~w:~w)", [Setting, CN, Radio#wtp_radio.radio_id]),
+    ?LOG(debug, "ignoring ~p on Radio (~w:~w)", [Setting, CN, Radio#wtp_radio.radio_id]),
     WLAN.
 
 wtp_init_wlan_mf(CN, Radio, Settings, Count) ->

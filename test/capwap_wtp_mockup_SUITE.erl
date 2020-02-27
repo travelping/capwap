@@ -16,8 +16,8 @@
 -module(capwap_wtp_mockup_SUITE).
 
 -compile(export_all).
--compile({parse_transform, lager_transform}).
 
+-include_lib("kernel/include/logger.hrl").
 -include_lib("common_test/include/ct.hrl").
 
 suite() ->
@@ -64,14 +64,7 @@ load_local(Config) ->
 setup_applications() ->
     {ok, CWD} = file:get_cwd(),
     os:cmd("touch " ++ CWD ++ "/upstream"),
-    Apps = [{lager, [{handlers, [
-				 {lager_console_backend, info},
-				 {lager_file_backend, [
-						       {file, "log/error.log"}, {level, error}, {size, 10485760}, {date, "$D0"}, {count, 5}]},
-				 {lager_file_backend, [
-						       {file, "log/console.log"}, {level, debug}, {size, 10485760}, {date, "$D0"}, {count, 5}]}]}
-		    ]},
-	    asn1,
+    Apps = [asn1,
 	    crypto,
 	    public_key,
 	    ssl,
@@ -162,5 +155,5 @@ get_multi_cert_paths(MultiCertDir) ->
 
 get_config(KeyDefaults) when is_list(KeyDefaults) ->
     Conf = [application:get_env(capwap, Key, Default) || {Key, Default} <- KeyDefaults],
-    lager:debug("reading config from fake application capwap_wtp_mockup : ~p", [Conf]),
+    ?LOG(debug, "reading config from fake application capwap_wtp_mockup : ~p", [Conf]),
     Conf.

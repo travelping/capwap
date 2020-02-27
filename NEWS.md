@@ -3,6 +3,11 @@ capwap
 
 Erlang CAPWAP AC implementation.
 
+Version 3.0.0 - xx Mar 2020
+---------------------------
+
+* replace lager with kernel logger
+
 Version 2.2.0 - 24 Apr 2018
 ---------------------------
 

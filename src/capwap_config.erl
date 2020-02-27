@@ -23,6 +23,7 @@
 	 wtp_init_config_provider/1, wtp_config/1,
 	 wtp_radio_config/3]).
 
+-include_lib("kernel/include/logger.hrl").
 -include("capwap_packet.hrl").
 -include("capwap_config.hrl").
 -include("ieee80211.hrl").
@@ -35,7 +36,7 @@
 -define(APP, capwap).
 
 validate() ->
-    lager:info("CAPWAP config validte ok."),
+    ?LOG(info, "CAPWAP config validte ok."),
     ok.
 
 get(ac, Key) when is_atom(Key) ->
@@ -87,11 +88,11 @@ wtp_init_config_provider(CN, [{Provider, Opts}|T])
 wtp_init_config_provider(CN, Provider, Opts, Next) ->
     case (catch Provider:wtp_init_config(CN, Opts)) of
 	{ok, Settings} ->
-	    lager:debug("Eval config provider ~p for ~p", [Provider, CN]),
-	    lager:trace("Get wtp config for ~p => ~p", [CN, Settings]),
+	    ?LOG(debug, "Eval config provider ~p for ~p", [Provider, CN]),
+	    ?LOG(debug, "Get wtp config for ~p => ~p", [CN, Settings]),
 	    {ok, {Provider, Settings}};
 	Error ->
-	    lager:debug("Error in provider ~p with reason ~p", [Provider, Error]),
+	    ?LOG(debug, "Error in provider ~p with reason ~p", [Provider, Error]),
 	    wtp_init_config_provider(CN, Next)
     end.
 

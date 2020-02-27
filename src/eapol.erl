@@ -18,6 +18,7 @@
 -export([encode_802_11/3, packet/1, key/3, request/3, decode/1, validate_mic/2]).
 -export([phrase2psk/2, prf/5, kdf/5, pmk2ptk/6, ft_msk2ptk/11, aes_key_wrap/2, key_len/1]).
 
+-include_lib("kernel/include/logger.hrl").
 -include("eapol.hrl").
 
 -define(is_mac(MAC),(is_binary(MAC) andalso byte_size(MAC) == 6)).
@@ -153,11 +154,11 @@ validate_mic(Crypto, {Head, MIC, Tail}) ->
     case calc_hmac(Crypto, Head, Tail, byte_size(MIC)) of
 	MIC -> ok;
 	V   ->
-	    lager:debug("Algo: ~p", [Crypto#ccmp.mic_algo]),
-	    lager:debug("Head: ~s", [pbkdf2:to_hex(Head)]),
-	    lager:debug("MIC: ~s", [pbkdf2:to_hex(MIC)]),
-	    lager:debug("Tail: ~s", [pbkdf2:to_hex(Tail)]),
-	    lager:debug("invalid MIC: expected: ~s, got: ~s", [pbkdf2:to_hex(MIC), pbkdf2:to_hex(V)]),
+	    ?LOG(debug, "Algo: ~p", [Crypto#ccmp.mic_algo]),
+	    ?LOG(debug, "Head: ~s", [pbkdf2:to_hex(Head)]),
+	    ?LOG(debug, "MIC: ~s", [pbkdf2:to_hex(MIC)]),
+	    ?LOG(debug, "Tail: ~s", [pbkdf2:to_hex(Tail)]),
+	    ?LOG(debug, "invalid MIC: expected: ~s, got: ~s", [pbkdf2:to_hex(MIC), pbkdf2:to_hex(V)]),
 	    {error, invalid}
     end.
 
@@ -186,7 +187,7 @@ decode(Data = <<Version:8, ?EAPOL_PACKET_TYPE_KEY, DataLen:16, EAPOLData:DataLen
 	<<?EAPOL_KEY_802_11, KeyInfo:16, _/binary>> = EAPOLData,
 	MICAlgo = mic_algo(KeyInfo band 16#07),
 	Flags = keyinfo(KeyInfo),
-	lager:debug("KeyInfo: ~p", [Flags]),
+	?LOG(debug, "KeyInfo: ~p", [Flags]),
 	MICLen = mic_len(MICAlgo),
 
 	<< ?EAPOL_KEY_802_11, _:16, _KeyLen:16, ReplayCounter:64,
@@ -228,7 +229,7 @@ prf(Type, Key, Label, Data, WantedLength) ->
 prf(_Type, _Key, _Label, _Data, WantedLength, _N, [Last | Acc])
   when WantedLength =< 0 ->
     Keep = bit_size(Last) + WantedLength,
-    lager:debug("Size: ~p, Wanted: ~p, Keep: ~p", [bit_size(Last), WantedLength, Keep]),
+    ?LOG(debug, "Size: ~p, Wanted: ~p, Keep: ~p", [bit_size(Last), WantedLength, Keep]),
     <<B:Keep/bits, _/bits>> = Last,
     list_to_binary(lists:reverse(Acc, [B]));
 
@@ -243,7 +244,7 @@ kdf(Type, Key, Label, Data, WantedLength) ->
 kdf(_Type, _Key, _Label, _Data, WantedLength, _N, [Last | Acc])
   when WantedLength =< 0 ->
     Keep = bit_size(Last) + WantedLength,
-    lager:debug("Size: ~p, Wanted: ~p, Keep: ~p", [bit_size(Last), WantedLength, Keep]),
+    ?LOG(debug, "Size: ~p, Wanted: ~p, Keep: ~p", [bit_size(Last), WantedLength, Keep]),
     <<B:Keep/bits, _/bits>> = Last,
     list_to_binary(lists:reverse(Acc, [B]));
 
@@ -277,16 +278,16 @@ ft_msk2ptk(MSK, SNonce, ANonce, BSS, StationMAC, SSID, MDomain, R0KH, R1KH, S0KH
     %% PMK-R0Name-Salt = L(R0-Key-Data, 256, 128)
     %% PPMKR0Name = Truncate-128(SHA-256("FT-R0N" || PMK-R0Name-Salt))
 
-    lager:debug("FT XXKey: ~p", [pbkdf2:to_hex(XXKey)]),
-    lager:debug("FT: R0KH-Id: ~p", [pbkdf2:to_hex(R0KH)]),
+    ?LOG(debug, "FT XXKey: ~p", [pbkdf2:to_hex(XXKey)]),
+    ?LOG(debug, "FT: R0KH-Id: ~p", [pbkdf2:to_hex(R0KH)]),
 
     <<PMKR0:256/bits, PMKR0NameSalt:128/bits>> =
 	kdf(sha256, XXKey, "FT-R0", [byte_size(SSID), SSID, <<MDomain:16>>,
 					   byte_size(R0KH), R0KH, S0KH], 384),
     <<PMKR0Name:128/bits, _/binary>> = crypto:hash(sha256, ["FT-R0N", PMKR0NameSalt]),
 
-    lager:debug("FT PMK-R0: ~p", [pbkdf2:to_hex(PMKR0)]),
-    lager:debug("FT PMK-R0Name: ~p", [pbkdf2:to_hex(PMKR0Name)]),
+    ?LOG(debug, "FT PMK-R0: ~p", [pbkdf2:to_hex(PMKR0)]),
+    ?LOG(debug, "FT PMK-R0Name: ~p", [pbkdf2:to_hex(PMKR0Name)]),
 
     %% PMK-R1 = KDF-256(PMK-R0, "FT-R1", R1KH-ID || S1KH-ID)
     %% PMKR1Name = Truncate-128(SHA-256(“FT-R1N” || PMKR0Name || R1KH-ID || S1KH-ID))
@@ -295,15 +296,15 @@ ft_msk2ptk(MSK, SNonce, ANonce, BSS, StationMAC, SSID, MDomain, R0KH, R1KH, S0KH
 	kdf(sha256, PMKR0, "FT-R1", [R1KH, S1KH], 256),
     <<PMKR1Name:128/bits, _/binary>> = crypto:hash(sha256, ["FT-R1N", PMKR0Name, BSS, StationMAC]),
 
-    lager:debug("FT PMK-R1: ~p", [pbkdf2:to_hex(PMKR1)]),
-    lager:debug("FT PMK-R1Name: ~p", [pbkdf2:to_hex(PMKR1Name)]),
+    ?LOG(debug, "FT PMK-R1: ~p", [pbkdf2:to_hex(PMKR1)]),
+    ?LOG(debug, "FT PMK-R1Name: ~p", [pbkdf2:to_hex(PMKR1Name)]),
 
     %%PTK = KDF-PTKLen(PMK-R1, "FT-PTK", SNonce || ANonce || BSSID || STA-ADDR)
     <<KCK:128/bits, KEK:128/bits, TK:128/bits>> =
 	kdf(sha256, PMKR1, "FT-PTK", [SNonce, ANonce, BSS, StationMAC], 384),
-    lager:debug("KCK: ~p", [pbkdf2:to_hex(KCK)]),
-    lager:debug("KEK: ~p", [pbkdf2:to_hex(KEK)]),
-    lager:debug("TK: ~p", [pbkdf2:to_hex(TK)]),
+    ?LOG(debug, "KCK: ~p", [pbkdf2:to_hex(KCK)]),
+    ?LOG(debug, "KEK: ~p", [pbkdf2:to_hex(KEK)]),
+    ?LOG(debug, "TK: ~p", [pbkdf2:to_hex(TK)]),
     {KCK, KEK, TK, PMKR0Name, PMKR1Name}.
 
    %% Inputs:  Plaintext, n 64-bit values {P1, P2, ..., Pn}, and

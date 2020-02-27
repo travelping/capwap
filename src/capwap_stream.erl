@@ -20,6 +20,7 @@
 %% export for test suite
 -export([add/2]).
 
+-include_lib("kernel/include/logger.hrl").
 -include("capwap_packet.hrl").
 
 -define(MAX_FRAGMENTS, 32).
@@ -96,7 +97,7 @@ add(#fragment{fragmentid = FragmentId}, State = #stream{base = Base})
   when ((FragmentId > Base) andalso (FragmentId - Base >= 16#8000)) orelse
        ((FragmentId < Base) andalso ((FragmentId + 16#10000) - Base >= 16#8000)) ->
        %% too old, ignore
-    lager:warning("fragment ~w out of current range ~w", [FragmentId, Base]),
+    ?LOG(warning, "fragment ~w out of current range ~w", [FragmentId, Base]),
     {[], State};
 
 add(Fragment = #fragment{fragmentid = FragmentId}, State0) ->
@@ -145,13 +146,13 @@ add_fragment(Fragment = #fragment{header = Header, last = Last},
 		      end,
 	    handle_buffer_data(DataOut, Buffer1);
 	Other ->
-	    lager:warning("unable to process fragment: ~p", [Other]),
+	    ?LOG(warning, "unable to process fragment: ~p", [Other]),
 	    {more, Buffer0}
     end;
 
 add_fragment(#fragment{fragmentid = FragmentId, header = FHeader},
 	     Buffer = #buffer{header = BHeader}) ->
-    lager:error("Fragment ~w, have header: ~p, got header ~p", [FragmentId, lager:pr(FHeader, ?MODULE), lager:pr(BHeader, ?MODULE)]),
+    ?LOG(error, "Fragment ~w, have header: ~p, got header ~p", [FragmentId, FHeader, BHeader]),
     {more, Buffer}.
 
 to_part(#fragment{fstart = Start, fend = End, payload = Data}) ->
@@ -172,7 +173,7 @@ add_part(#part{pstart = FStart, pend = FEnd, payload = PayLoad}, [], Result) ->
 add_part(#part{pstart = FStart, pend = FEnd},
 	     [#part{pstart = PStart, pend = PEnd}|_], _)
   when ?overlap(PStart, PEnd, FStart, FEnd) ->
-    lager:error("overlap: ~w, ~w, ~w, ~w", [PStart, PEnd, FStart, FEnd]),
+    ?LOG(error, "overlap: ~w, ~w, ~w, ~w", [PStart, PEnd, FStart, FEnd]),
     {error, overlap};
 
 %% append to current part
