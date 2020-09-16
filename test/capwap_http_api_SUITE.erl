@@ -95,8 +95,8 @@ http_api_get_wtp_info(_Config) ->
     URL = get_test_url("/api/v1/wtp/something"),
     {ok, {_, _, Body}} = httpc:request(get, {URL, []},
 				       [], [{body_format, binary}]),
-    Response = jsx:decode(Body),
-    ?assertEqual([{<<"error">>, <<"not_found">>}], Response),
+    Response = jsx:decode(Body, [return_maps]),
+    ?assertEqual(#{<<"error">> => <<"not_found">>}, Response),
     ok.
 
 http_api_prometheus_metrics_req() ->

@@ -58,10 +58,10 @@ end_per_suite(_Config) ->
 do_json_to_rec(Config, DataFile) ->
     JSON = read_json(Config, DataFile),
     ct:pal("JSON: ~p", [JSON]),
-    Cfg = proplists:get_value(config, JSON),
-    Res = lists:map(fun capwap_config_http:transform_value/1, Cfg),
+    Cfg = maps:get(config, JSON),
+    Res = capwap_config_http:transform_values(Cfg),
     ct:pal("Res: ~p", [Res]),
-    Rec = capwap_config:'#fromlist-wtp'(Res),
+    Rec = capwap_config:'#frommap-wtp'(Res),
     ct:pal("Rec: ~s", [pretty_print(Rec)]),
     ?match(#wtp{radios = [#wtp_radio{wlans = [#wtp_wlan_config{}|_]}|_]}, Rec),
     ok.
@@ -83,7 +83,7 @@ datadir(Config) ->
 read_json(Config, FileName) ->
     {ok, Bin} = file:read_file(filename:join(datadir(Config), FileName)),
     ct:pal("Bin: ~p", [Bin]),
-    jsx:decode(Bin, [{labels, existing_atom}]).
+    jsx:decode(Bin, [return_maps, {labels, existing_atom}]).
 
 pretty_print(Record) ->
     io_lib_pretty:print(Record, fun pretty_print/2).
