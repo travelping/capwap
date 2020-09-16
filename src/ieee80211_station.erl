@@ -39,7 +39,7 @@
 -include("ieee80211_station.hrl").
 -include("eapol.hrl").
 
--import(ergw_aaa_session, [to_session/1, attr_get/2]).
+-import(ergw_aaa_session, [to_session/1]).
 
 -define(SERVER, ?MODULE).
 -define(IDLE_TIMEOUT, 30 * 1000).
@@ -80,7 +80,9 @@
 	  rekey_pending,
 	  rekey_control,
 
-	  rekey_tref
+	  rekey_tref,
+
+	  timers = #{}
 	 }).
 
 -record(auth_frame, {algo, seq_no, status, params}).
@@ -501,6 +503,9 @@ handle_event({call, From}, {take_over, AC, StationCfg =
 
     Data = update_from_cfg(StationCfg, Data0#data{ac = AC, ac_monitor = ACMonitor}),
     {next_state, initial_state(Data), Data, [{reply, From, {ok, self()}}, ?IDLE_TIMEOUT]};
+
+handle_event(info, {timeout, TRef, Ev}, connected, Data) ->
+    handle_session_timer(TRef, Ev, Data);
 
 handle_event({call, From}, delete, connected, Data) ->
     wtp_del_station(Data),
@@ -923,29 +928,19 @@ wtp_del_station(#data{ac = AC, radio_mac = BSS, mac = MAC}) ->
 wtp_send_80211(Data,  #data{ac = AC, radio_mac = BSS}) when is_binary(Data) ->
     capwap_ac:send_80211(AC, BSS, Data).
 
-accounting_update(STA, SessionOpts) ->
-    ?LOG(debug, "accounting_update: ~p, ~p", [STA, attr_get('MAC', SessionOpts)]),
-    case attr_get('MAC', SessionOpts) of
-	{ok, MAC} ->
-	    STAStats = capwap_dp:get_station(MAC),
-	    ?LOG(debug, "STA Stats: ~p", [STAStats]),
-	    {_MAC, _VLan, _RadioId, _BSS, {RcvdPkts, SendPkts, RcvdBytes, SendBytes}} = STAStats,
-	    Acc = [{'InPackets',  RcvdPkts},
-		    {'OutPackets', SendPkts},
-		    {'InOctets',   RcvdBytes},
-		    {'OutOctets',  SendBytes}],
-	    ergw_aaa_session:merge(SessionOpts, to_session(Acc));
-	_ ->
-	    SessionOpts
-    end.
+accounting_update(#data{mac = MAC}) ->
+    STAStats = capwap_dp:get_station(MAC),
+    ?LOG(debug, "STA Stats: ~p", [STAStats]),
+    {_MAC, _VLan, _RadioId, _BSS, {RcvdPkts, SendPkts, RcvdBytes, SendBytes}} = STAStats,
+    #{'InPackets'  => RcvdPkts,  'OutPackets' => SendPkts,
+      'InOctets'   => RcvdBytes, 'OutOctets'  => SendBytes}.
 
 aaa_association(Data = #data{mac = MAC, data_channel_address = WTPDataChannelAddress,
 				wtp_id = WtpId, wtp_session_id = WtpSessionId,
 				radio_mac = BSSID, ssid = SSID}) ->
     MACStr = capwap_tools:format_eui(MAC),
     BSSIDStr = capwap_tools:format_eui(BSSID),
-    SessionData0 = [{'Accouting-Update-Fun', fun accounting_update/2},
-		    {'AAA-Application-Id', capwap_station},
+    SessionData0 = [{'AAA-Application-Id', capwap_station},
 		    {'Service-Type', 'TP-CAPWAP-STA'},
 		    {'Framed-Protocol', 'TP-CAPWAP'},
 		    {'MAC', MAC},
@@ -958,11 +953,13 @@ aaa_association(Data = #data{mac = MAC, data_channel_address = WTPDataChannelAdd
     SessionData1 = add_tunnel_info(WTPDataChannelAddress, SessionData0),
     {ok, Session} = ergw_aaa_session_sup:new_session(self(), to_session(SessionData1)),
     ?LOG(info, "NEW session for ~w at ~p", [MAC, Session]),
-    ergw_aaa_session:start(Session, to_session([])),
-    Data#data{aaa_session = Session}.
+    Now = erlang:monotonic_time(),
+    SOpts = #{now => Now},
+    ergw_aaa_session:invoke(Session, #{}, start, SOpts),
+    start_session_timers(Data#data{aaa_session = Session}).
 
 aaa_disassociation(#data{aaa_session = Session}) ->
-    ergw_aaa_session:stop(Session, to_session([])),
+    ergw_aaa_session:invoke(Session, #{}, stop, #{async => true}),
     ok.
 
 %% Management
@@ -1176,45 +1173,42 @@ eap_handshake(Data, Data0) ->
     aaa_disassociation(Data),
     Data#data{eapol_state = undefined}.
 
-eap_handshake_next({authenticate, Opts}, #data{aaa_session = Session} = Data) ->
-    case ergw_aaa_session:authenticate(Session, to_session(Opts)) of
-	success ->
-	    ?LOG(info, "AuthResult: success"),
-
-	    SessionOpts = ergw_aaa_session:get(Session),
-
-	    case ergw_aaa_session:attr_get('EAP-Data', SessionOpts) of
-		{ok, EAPData} ->
+eap_handshake_next({authenticate, Opts}, #data{aaa_session = Session} = Data0) ->
+    case ergw_aaa_session:invoke(Session, to_session(Opts), authenticate, [inc_session_id]) of
+	{ok, SessionOpts, AuthSEvs} ->
+	    ?LOG(info, #{'AuthResult' => success, session => SessionOpts, events => AuthSEvs}),
+	    Data = handle_session_evs(AuthSEvs, Data0),
+	    case SessionOpts of
+		#{'EAP-Data' := EAPData} ->
 		    send_eapol(eapol:packet(EAPData), Data);
 		_ ->
 		    ok
 	    end,
 
-	    MSK = << (ergw_aaa_session:attr_get('MS-MPPE-Recv-Key', SessionOpts, <<>>))/binary,
-		     (ergw_aaa_session:attr_get('MS-MPPE-Send-Key', SessionOpts, <<>>))/binary>>,
+	    MSK = << (maps:get('MS-MPPE-Recv-Key', SessionOpts, <<>>))/binary,
+		     (maps:get('MS-MPPE-Send-Key', SessionOpts, <<>>))/binary>>,
 	    ?LOG(debug, "MSK: ~s", [capwap_tools:hexdump(MSK)]),
 	    rsna_4way_handshake({init, MSK}, Data);
 
-	challenge ->
-	    ?LOG(info, "AuthResult: challenge"),
-	    {ok, EAPData} = ergw_aaa_session:get(Session, 'EAP-Data'),
-	    <<_Code:8, Id:8, _/binary>> = EAPData,
-	    ?LOG(info, "EAP Challenge: ~p", [EAPData]),
+	{challenge, #{'EAP-Data' := EAPData} = SessionOpts, _} ->
+	    ?LOG(info, #{'AuthResult' => challenge, session => SessionOpts,
+			 challenge => EAPData}),
 
-	    send_eapol_packet(EAPData, Data#data{eapol_state = {request, Id}});
+	    <<_Code:8, Id:8, _/binary>> = EAPData,
+	    send_eapol_packet(EAPData, Data0#data{eapol_state = {request, Id}});
 
 	Other ->
 	    ?LOG(info, "AuthResult: ~p", [Other]),
 
 	    case ergw_aaa_session:get(Session, 'EAP-Data') of
 		{ok, EAPData} ->
-		    send_eapol_packet(EAPData, Data);
+		    send_eapol_packet(EAPData, Data0);
 		_ ->
 		    ok
 	    end,
-	    wtp_del_station(Data),
-	    aaa_disassociation(Data),
-	    Data#data{eapol_state = undefined}
+	    wtp_del_station(Data0),
+	    aaa_disassociation(Data0),
+	    Data0#data{eapol_state = undefined}
     end;
 
 eap_handshake_next({disassociation, _}, Data) ->
@@ -1620,3 +1614,66 @@ rekey_start(Type, Data0 = #data{rekey_running = false}) ->
     rekey_init(Type, Data);
 rekey_start(Type, Data = #data{rekey_pending = Pending}) ->
     rekey_timer_stop(Type, Data#data{rekey_pending = [Type, Pending]}).
+
+%%%===================================================================
+%%% Accounting/Charging support
+%%%===================================================================
+
+handle_session_evs([], Data) ->
+    Data;
+handle_session_evs([H|T], Data) ->
+    handle_session_ev(H, handle_session_evs(T, Data)).
+
+handle_session_ev({set, {Service, {Type, Level, Interval, Opts}}},
+		  #data{timers = Timers} = Data) ->
+    Definition = {{Type, Interval, Opts}, undefined},
+    Data#data{timers =
+		  maps:update_with(Level, maps:put(Service, Definition, _),
+				   #{Service => Definition}, Timers)};
+handle_session_ev(_, Data) ->
+    Data.
+
+start_session_timers(#data{timers = Timers} = Data) ->
+    Data#data{timers =
+		  maps:fold(fun start_session_timers/3, Timers, Timers)}.
+
+start_session_timers('IP-CAN' = K, V, M) ->
+    M#{K => maps:fold(fun start_session_timer/3, V, V)};
+start_session_timers(_, _, M) ->
+    M.
+
+stop_session_timer(Ref) when is_reference(Ref) ->
+    erlang:cancel_timer(Ref, [{async, true}, {info, false}]);
+stop_session_timer(_) ->
+    ok.
+
+start_session_timer(K, {{_, TimeOut, _} = Type, TRef}, M) ->
+    stop_session_timer(TRef),
+    M#{K => {Type, erlang:start_timer(TimeOut * 1000, self(), K)}}.
+
+handle_session_timer(TRef, {accounting, Level, _} = Ev, #data{timers = Timers0} = Data)
+  when is_map_key(Level, Timers0) ->
+    case maps:take(Level, Timers0) of
+	{#{Ev := {Timer, TRef}}, Timers} ->
+	    handle_session_timer_ev(Ev, Timer, Data#data{timers = Timers});
+	{_Value, Timers} ->
+	    {keep_state, Data#data{timers = Timers}}
+    end;
+handle_session_timer(_TRef, _Ev, _Data) ->
+    keep_state_and_data.
+
+handle_session_timer_ev({_, Level, _} = Ev, {Interval, _, _Opts} = Timer,
+			#data{aaa_session = Session, timers = Timers} = Data0) ->
+    Acc = accounting_update(Data0),
+    ergw_aaa_session:invoke(Session, Acc, interim, #{async => true}),
+
+    Data =
+	case Interval of
+	    periodic ->
+		M = maps:get(Level, Timers, #{}),
+		Data0#data{
+		  timers = Timers#{Level => start_session_timer(Ev, {Timer, undefined}, M)}};
+	    _ ->
+		Data0
+	end,
+    {keep_state, Data}.

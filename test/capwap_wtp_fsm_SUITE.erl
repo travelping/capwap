@@ -56,6 +56,14 @@ assert_mbox_match(MatchSpec, File, Line) ->
 -define(match(MatchSpec, Expr),
         ((fun () -> match(MatchSpec, Expr, ??Expr, ?FILE, ?LINE) end)())).
 
+-define(equal(Expected, Actual),
+    (fun (Expected@@@, Expected@@@) -> true;
+	 (Expected@@@, Actual@@@) ->
+	     ct:pal("MISMATCH(~s:~b, ~s)~nExpected: ~p~nActual:   ~p~n",
+		    [?FILE, ?LINE, ??Actual, Expected@@@, Actual@@@]),
+	     false
+     end)(Expected, Actual) orelse error(badmatch)).
+
 suite() ->
     [{timetrap,{minutes,5}}].
 
@@ -74,24 +82,17 @@ end_per_suite(Config) ->
 all() ->
     [wtp_fsm].
 
-check_generic_session_args(Session) ->
-    case ergw_aaa_session:attr_get('Username', Session, undefined) of
+check_auth_session_args(Session) ->
+    case maps:get('Username', Session, undefined) of
 	V when is_binary(V) ->
 	    ok;
 	V ->
 	    erlang:error(badarg, [{'Username', V}])
-    end,
-
-    case ergw_aaa_session:attr_get('Calling-Station', Session, undefined) of
-	<<"127.0.0.1">> ->
-	    ok;
-	CS ->
-	    erlang:error(badarg, [{'Calling-Station', CS}])
     end.
 
 check_session_args({Key, MatchSpec}, Session) ->
     CompiledMatchSpec = ets:match_spec_compile(MatchSpec),
-    Value = ergw_aaa_session:attr_get(Key, Session, undefined),
+    Value = maps:get(Key, Session, undefined),
 
     case ets:match_spec_run([Value], CompiledMatchSpec) of
 	[ok] ->
@@ -101,19 +102,17 @@ check_session_args({Key, MatchSpec}, Session) ->
     end.
 
 wtp_fsm(_Config) ->
-    meck:new(ergw_aaa_mock, [passthrough]),
-    meck:expect(ergw_aaa_mock, start_authentication,
-		fun(From, Session, State) ->
-			check_generic_session_args(Session),
-			meck:passthrough([From, Session, State])
-		end),
-    meck:expect(ergw_aaa_mock, start_accounting,
-		fun(From, Type = 'Interim', Session, State) ->
+    meck:new(capwap_ac, [passthrough]),
+    meck:new(ergw_aaa_session, [passthrough]),
+    meck:expect(ergw_aaa_session, invoke,
+		fun(Session, SessionOpts, authenticate, Opts) ->
+			check_auth_session_args(SessionOpts),
+			meck:passthrough([Session, SessionOpts, authenticate, Opts]);
+		   (Session, SessionOpts, interim, Opts) ->
 			IsIntOrUndefined = ets:fun2ms(fun(X) when is_integer(X) -> ok;
 							 (X) when X == undefined -> ok end),
 			IsListOrUndefined = ets:fun2ms(fun(X) when is_list(X) -> ok;
 							  (X) when X == undefined -> ok end),
-			check_generic_session_args(Session),
 			OptValues = [{'TP-CAPWAP-Radio-Id',      IsIntOrUndefined},
 				     {'TP-CAPWAP-Timestamp',     IsIntOrUndefined},
 				     {'TP-CAPWAP-WWAN-CREG',     IsIntOrUndefined},
@@ -130,10 +129,12 @@ wtp_fsm(_Config) ->
 				     {'TP-CAPWAP-GPS-Latitude',  IsListOrUndefined},
 				     {'TP-CAPWAP-GPS-Longitude', IsListOrUndefined},
 				     {'TP-CAPWAP-GPS-Timestamp', IsListOrUndefined}],
-			lists:foreach(fun(X) -> check_session_args(X, Session) end, OptValues),
-			meck:passthrough([From, Type, Session, State]);
-		   (From, Type, Session, State) ->
-			meck:passthrough([From, Type, Session, State])
+			lists:foreach(fun(X) ->
+					      check_session_args(X, SessionOpts)
+				      end, OptValues),
+			meck:passthrough([Session, SessionOpts, interim, Opts]);
+		   (Session, SessionOpts, Procedure, Opts) ->
+			meck:passthrough([Session, SessionOpts, Procedure, Opts])
 		end),
 
     {ok, WTP} = start_local_wtp(),
@@ -159,11 +160,20 @@ wtp_fsm(_Config) ->
     Match7 = ets:fun2ms(fun({ok, {Header, Msg}}) when element(1, Header) == capwap_header, element(1, Msg) == wtp_event_response -> {Header, Msg} end),
     {_Hdr7, _Msg7} = ?match(Match7, wtp_mockup_fsm:send_wwan_statistics(WTP, 40)),
 
+    %% wait 'Acct-Interim-Interval'
+    ct:sleep({seconds, 11}),
+
     catch stop_local_wtp(WTP),
 
-    meck:validate(ergw_aaa_mock),
-    meck:unload(ergw_aaa_mock),
+    ct:sleep(100),
 
+    ?equal(82, meck:num_calls(ergw_aaa_session, invoke, ['_', '_', interim, '_'])),
+
+    meck:validate(ergw_aaa_session),
+    meck:validate(capwap_ac),
+
+    meck:unload(ergw_aaa_session),
+    meck:unload(capwap_ac),
     ok.
 
 %% ------------------------------------------------------------------------------------
@@ -255,25 +265,50 @@ setup_applications() ->
 			       ]}
 			     ]}
 		     ]},
-	    {ergw_aaa, [
-                {applications, [
-                    {default,
-                        {provider, ergw_aaa_mock,
-                            [{shared_secret, <<"MySecret">>}]
-                        }
-                    },
-                    {capwap_wtp,
-                        {provider, ergw_aaa_mock,
-                            [{shared_secret, <<"MySecret">>}]
-                        }
-                    },
-                    {capwap_station,
-                        {provider, ergw_aaa_mock,
-                            [{shared_secret, <<"MySecret">>}]
-                        }
-                    }
-                ]}
-            ]}
+	    {ergw_aaa,
+	     [
+	      {handlers,
+	       [{ergw_aaa_static,
+		 [{'NAS-Identifier',        <<"NAS-Identifier">>},
+		  {'Acct-Interim-Interval', 10}
+		 ]}
+	       ]},
+	      {services,
+	       [{'Default',
+		 [{handler, 'ergw_aaa_static'},
+		  {answers,
+		   #{'RADIUS-Auth' =>
+			 #{handler => ergw_aaa_radius,
+			   'Result-Code' => 2001,
+			   'Acct-Interim-Interval' => 10,
+			   'TLS-Pre-Shared-Key' => <<"MySecret">>},
+		     'RADIUS-Acct' =>
+			 #{'Result-Code' => 2001}
+		    }
+		  }
+		 ]}
+	       ]},
+	      {apps,
+	       [{capwap_wtp,
+		 [{session, ['Default']},
+		  {procedures, [{authenticate, [{'Default', [{answer, 'RADIUS-Auth'}]}]},
+				{authorize, []},
+				{start, [{'Default', [{answer, 'RADIUS-Acct'}]}]},
+				{interim, [{'Default', [{answer, 'RADIUS-Acct'}]}]},
+				{stop, [{'Default', [{answer, 'RADIUS-Acct'}]}]}
+			       ]}
+		 ]},
+		{capwap_station,
+		 [{session, ['Default']},
+		  {procedures, [{authenticate, [{'Default', [{answer, 'RADIUS-Auth'}]}]},
+				{authorize, []},
+				{start, [{'Default', [{answer, 'RADIUS-Acct'}]}]},
+				{interim, [{'Default', [{answer, 'RADIUS-Acct'}]}]},
+				{stop, [{'Default', [{answer, 'RADIUS-Acct'}]}]}
+			       ]}
+		 ]}
+	       ]}
+	     ]}
 	   ],
     [application:load(Name) || {Name, _} <- Apps],
     meck_init(),

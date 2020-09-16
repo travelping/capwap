@@ -103,7 +103,9 @@
 	  seqno = 0,
 	  version,
 	  station_count = 0,
-	  wlans
+	  wlans,
+
+	  timers = #{}
 }).
 
 -define(IS_RUN_CONTROL_EVENT(E),
@@ -292,20 +294,18 @@ handle_event(cast, {accept, udp, Socket}, listen, Data0) ->
     Opts = [{'Username', PeerName},
 	    {'Authentication-Method', {'TLS', 'Pre-Shared-Key'}},
 	    {'Config-Provider-State', CfgProvStateInit}],
-    case ergw_aaa_session:authenticate(Session, to_session(Opts)) of
-	success ->
-	    ?LOG(info, "AuthResult: success"),
-	    {ok, CfgProvState} =
-		ergw_aaa_session:attr_get('Config-Provider-State',
-					  ergw_aaa_session:get(Session)),
+    case ergw_aaa_session:invoke(Session, to_session(Opts), authenticate, [inc_session_id]) of
+	{ok, #{'Config-Provider-State' := CfgProvState} = SOpts, Evs} ->
+	    ?LOG(info, #{'AuthResult' => success, session => SOpts, events => Evs}),
 	    Config = capwap_config:wtp_config(CfgProvState),
 	    Data1 = Data0#data{session = Session,
 			       config_provider_state = CfgProvState,
 			       config = Config,
 			       socket = {udp, Socket},
 			       id = undefined},
+	    Data2 = handle_session_evs(Evs, Data1),
 
-	    {next_state, join, Data1};
+	    {next_state, join, Data2};
 
 	Other ->
 	    ?LOG(info, "AuthResult: ~p", [Other]),
@@ -329,9 +329,7 @@ handle_event(cast, {accept, dtls, Socket}, listen, Data) ->
 	    maybe_takeover(CommonName),
 	    capwap_wtp_reg:register_args(CommonName, WTPControlChannelAddress),
 
-	    {ok, CfgProvState} =
-		ergw_aaa_session:attr_get('Config-Provider-State',
-					  ergw_aaa_session:get(Session)),
+	    {ok, CfgProvState} = ergw_aaa_session:get(Session, 'Config-Provider-State'),
 	    Config = capwap_config:wtp_config(CfgProvState),
 	    Data1 = Data#data{socket = {dtls, SslSocket},
 			      session = Session,
@@ -358,6 +356,12 @@ handle_event(enter, _OldState, join, #data{wait_join_timeout = Timeout}) ->
 handle_event(state_timeout, _, join, Data) ->
     ?LOG(info, "WaitJoin timeout in JOIN -> stop"),
     {stop, normal, Data};
+
+handle_event(cast, {session_evs, Evs}, join, Data0) ->
+    Data = handle_session_evs(Evs, Data0),
+    {keep_state, Data};
+handle_event(cast, {session_evs, _}, _, _) ->
+    {keep_state_and_data, [postpone]};
 
 handle_event(cast, {discovery_request, Seq, Elements,
 		    #capwap_header{
@@ -397,7 +401,8 @@ handle_event(cast, {join_request, Seq,
 			capwap_config:wtp_radio_config(CfgProvState, RadioId, RadioType)
 		end, get_ies(ieee_802_11_wtp_radio_information, Elements))},
 
-    StartTime = erlang:system_time(milli_seconds),
+    Now = erlang:monotonic_time(),
+    StartTime = erlang:convert_time_unit(Now + erlang:time_offset(), native, milli_seconds),
     Data1 = Data0#data{config = Config,
 			  session_id = SessionId, mac_types = MacTypes,
 			  tunnel_modes = TunnelModes, version = Version,
@@ -413,7 +418,7 @@ handle_event(cast, {join_request, Seq,
 	    #local_ipv4_address{ip_address = <<127,0,0,1>>},
 	    #result_code{result_code = 0}],
     Header = #capwap_header{radio_id = RId, wb_id = WBID, flags = Flags},
-    Data = send_response(Header, join_response, Seq, RespElements, Data1),
+    Data2 = send_response(Header, join_response, Seq, RespElements, Data1),
     SessionOpts = wtp_accounting_infos(maps:values(Elements), [{'CAPWAP-Radio-Id', RId}]),
     ?LOG(info, "WTP Session Start Opts: ~p", [SessionOpts]),
 
@@ -426,7 +431,10 @@ handle_event(cast, {join_request, Seq,
 			'Received-Fragments', 'Send-Fragments', 'Error-Invalid-Stations',
 			'Error-Fragment-Invalid', 'Error-Fragment-Too-Old']),
 
-    ergw_aaa_session:start(Session, to_session(SessionOpts)),
+    SOpts = #{now => Now},
+    ergw_aaa_session:invoke(Session, to_session(SessionOpts), start, SOpts),
+    Data = start_session_timers(Data2),
+
     {next_state, join, Data};
 
 handle_event(cast, {configuration_status_request, Seq, Elements,
@@ -547,6 +555,9 @@ handle_event({call, From}, {get_station_config, BSS}, run, Data) ->
 		{error, invalid}
 	end,
     {keep_state, Data, [{reply, From, Reply}]};
+
+handle_event(info, {timeout, TRef, Ev}, run, Data) ->
+    handle_session_timer(TRef, Ev, Data);
 
 handle_event(info, echo_timeout, run, Data) ->
     ?LOG(info, "Echo Timeout in Run"),
@@ -744,6 +755,8 @@ handle_event(info, {timeout, _, retransmit}, State, Data) ->
     resend_request(State, Data);
 handle_event(info, {'EXIT', _Pid, normal}, _State, _Data) ->
     keep_state_and_data;
+handle_event(info, {'EXIT', _Pid, shutdown}, _State, _Data) ->
+    {stop, shutdown};
 handle_event(info, Info, State, _Data) ->
     ?LOG(warning, "in state ~p unexpected Info: ~p", [State, Info]),
     keep_state_and_data.
@@ -755,7 +768,7 @@ terminate(Reason, State,
 			  [State, Data, Reason]),
     AcctValues = stop_wtp(State, Data),
     if Session /= undefined ->
-	    ergw_aaa_session:stop(Session, to_session(AcctValues)),
+	    ergw_aaa_session:invoke(Session, AcctValues, stop, #{async => true}),
 
 	    exometer:update([capwap, wtp, CommonName, station_count], 0),
 	    StopTime = erlang:system_time(milli_seconds),
@@ -917,10 +930,10 @@ maybe_takeover(CommonName) ->
 handle_wtp_event(Elements, Header, Data = #data{session = Session}) ->
     IEs = maps:values(Elements),
     SessionOptsList = handle_wtp_stats_event(IEs, Header, []),
-    if length(SessionOptsList) /= 0 ->
-	    ergw_aaa_session:interim_batch(Session, SessionOptsList);
-       true -> ok
-    end,
+    lists:foreach(
+      fun(Ev) ->
+	      ergw_aaa_session:invoke(Session, Ev, interim, #{async => true})
+      end, SessionOptsList),
     handle_wtp_action_event(IEs, Header, Data).
 
 handle_wtp_action_event(IEs, Header, Data)
@@ -1535,18 +1548,19 @@ user_lookup(srp, Username, _UserData) ->
     UserPassHash = crypto:hash(sha, [Salt, crypto:hash(sha, [Username, <<$:>>, <<"secret">>])]),
     {ok, {srp_1024, Salt, UserPassHash}};
 
-user_lookup(psk, Username, Session) ->
+user_lookup(psk, Username, {WTP, Session}) ->
     ?LOG(debug, "user_lookup: Username: ~p", [Username]),
     {ok, CfgProvStateInit} = capwap_config:wtp_init_config_provider(Username),
     Opts = [{'Username', Username},
 	    {'Authentication-Method', {'TLS', 'Pre-Shared-Key'}},
 	    {'Config-Provider-State', CfgProvStateInit}],
-    case ergw_aaa_session:authenticate(Session, to_session(Opts)) of
-	success ->
-	    ?LOG(info, "AuthResult: success"),
-	    case ergw_aaa_session:get(Session, 'TLS-Pre-Shared-Key') of
-		{ok, PSK} ->
+    case ergw_aaa_session:invoke(Session, to_session(Opts), authenticate, [inc_session_id]) of
+	{ok, SOpts, Evs} ->
+	    ?LOG(info, #{'AuthResult' => success, session => SOpts}),
+	    case SOpts of
+		#{'TLS-Pre-Shared-Key' := PSK} ->
 		    ?LOG(info, "AuthResult: PSK: ~p", [PSK]),
+		    gen_statem:cast(WTP, {session_evs, Evs}),
 		    {ok, PSK};
 		_ ->
 		    ?LOG(info, "AuthResult: NO PSK"),
@@ -1580,17 +1594,18 @@ verify_cert(#'OTPCertificate'{
 	_    -> {fail, "not a valid WTP certificate"}
     end.
 
-verify_cert_auth_cn(CommonName, Session) ->
+verify_cert_auth_cn(CommonName, {WTP, Session}) ->
     ?LOG(info, "AuthResult: attempt for ~p", [CommonName]),
     {ok, CfgProvStateInit} = capwap_config:wtp_init_config_provider(CommonName),
     Opts = [{'Username', CommonName},
 	    {'Authentication-Method', {'TLS', 'X509-Subject-CN'}},
 	    {'Config-Provider-State', CfgProvStateInit}],
-    case ergw_aaa_session:authenticate(Session, to_session(Opts)) of
-	success ->
+    case ergw_aaa_session:invoke(Session, to_session(Opts), authenticate, [inc_session_id]) of
+	{ok, _, Evs} ->
 	    ?LOG(info, "AuthResult: success for ~p", [CommonName]),
+	    gen_statem:cast(WTP, {session_evs, Evs}),
 	    {valid, Session};
-	{fail, Reason} ->
+	{{fail, Reason}, _, _} ->
 	    ?LOG(info, "AuthResult: fail, ~p for ~p", [Reason, CommonName]),
 	    {fail, Reason};
 	Other ->
@@ -1605,6 +1620,7 @@ mk_ssl_opts(Session) ->
 	      _ ->
 		  filename:join([code:lib_dir(capwap), "priv", "certs"])
 	  end,
+    UserState = {self(), Session},
 
     [{active, false},
      {mode, binary},
@@ -1629,11 +1645,11 @@ mk_ssl_opts(Session) ->
 	       {psk, aes_256_cbc,sha}]},
 
      {verify, verify_peer},
-     {verify_fun, {fun verify_cert/3, Session}},
+     {verify_fun, {fun verify_cert/3, UserState}},
      {fail_if_no_peer_cert, true},
 
      {psk_identity, "CAPWAP"},
-     {user_lookup_fun, {fun user_lookup/3, Session}},
+     {user_lookup_fun, {fun user_lookup/3, UserState}},
      %% {ciphers,[{srp_dss, aes_256_cbc, sha}]},
      %% {ciphers, [{srp_anon, aes_256_cbc, sha}]},
 
@@ -1650,35 +1666,15 @@ tunnel_medium({_,_,_,_}) ->
 tunnel_medium({_,_,_,_,_,_,_,_}) ->
     'IPv6'.
 
-accounting_update(WTP, SessionOpts) ->
-    case get_data_channel_address(WTP) of
-	{ok, WTPDataChannelAddress} ->
-	    WTPStats = capwap_dp:get_wtp(WTPDataChannelAddress),
-	    ?LOG(debug, "WTP: ~p, ~p, ~p", [WTP, WTPDataChannelAddress, WTPStats]),
-	    ?LOG(debug, "WTP SessionOpts: ~p", [SessionOpts]),
-	    {_, _WLANs, _STAs, _RefCnt, _MTU, Stats} = WTPStats,
-	    Acc = wtp_stats_to_accouting(Stats),
-
-	    CommonName = maps:get('Username', SessionOpts, <<"unknown">>),
-	    lists:foreach(fun ({Key, Value}) ->
-				  exometer:update([capwap, wtp, CommonName, Key], Value)
-			  end, Acc),
-
-	    ergw_aaa_session:merge(SessionOpts, to_session(Acc));
-	_ ->
-	    SessionOpts
-    end.
-
 start_session(Socket, _Data) ->
     {ok, {Address, _Port}} = capwap_udp:peername(Socket),
-    SessionOpts = [{'Accouting-Update-Fun', fun accounting_update/2},
-		   {'AAA-Application-Id', capwap_wtp},
-		    {'Service-Type', 'TP-CAPWAP-WTP'},
-		    {'Framed-Protocol', 'TP-CAPWAP'},
-		    {'Calling-Station', ip2str(Address)},
-		    {'Tunnel-Type', 'CAPWAP'},
-		    {'Tunnel-Medium-Type', tunnel_medium(Address)},
-		    {'Tunnel-Client-Endpoint', ip2str(Address)}],
+    SessionOpts = [{'AAA-Application-Id', capwap_wtp},
+		   {'Service-Type', 'TP-CAPWAP-WTP'},
+		   {'Framed-Protocol', 'TP-CAPWAP'},
+		   {'Calling-Station', ip2str(Address)},
+		   {'Tunnel-Type', 'CAPWAP'},
+		   {'Tunnel-Medium-Type', tunnel_medium(Address)},
+		   {'Tunnel-Client-Endpoint', ip2str(Address)}],
     ergw_aaa_session_sup:new_session(self(), to_session(SessionOpts)).
 
 get_ies(Key, Elements) ->
@@ -2438,17 +2434,29 @@ finish_gtk_rekey_result(WlanIdent, Code, _Arg, Data) ->
 wtp_stats_to_accouting({RcvdPkts, SendPkts, RcvdBytes, SendBytes,
 			RcvdFragments, SendFragments,
 			ErrInvalidStation, ErrFragmentInvalid, ErrFragmentTooOld}) ->
-    [{'InPackets',  RcvdPkts},
-     {'OutPackets', SendPkts},
-     {'InOctets',   RcvdBytes},
-     {'OutOctets',  SendBytes},
-     {'Received-Fragments',     RcvdFragments},
-     {'Send-Fragments',         SendFragments},
-     {'Error-Invalid-Stations', ErrInvalidStation},
-     {'Error-Fragment-Invalid', ErrFragmentInvalid},
-     {'Error-Fragment-Too-Old', ErrFragmentTooOld}];
+    #{'InPackets'  => RcvdPkts,
+      'OutPackets' => SendPkts,
+      'InOctets'   => RcvdBytes,
+      'OutOctets'  => SendBytes,
+      'Received-Fragments'     => RcvdFragments,
+      'Send-Fragments'         => SendFragments,
+      'Error-Invalid-Stations' => ErrInvalidStation,
+      'Error-Fragment-Invalid' => ErrFragmentInvalid,
+      'Error-Fragment-Too-Old' => ErrFragmentTooOld};
 wtp_stats_to_accouting(_) ->
-    [].
+    #{}.
+
+accounting_update(#data{session = Session, data_channel_address = WTPDataChannelAddress}) ->
+    CommonName = ergw_aaa_session:get(Session, 'Username', <<"unknown">>),
+    WTPStats = capwap_dp:get_wtp(WTPDataChannelAddress),
+    ?LOG(debug, "WTP: ~p, ~p", [WTPDataChannelAddress, WTPStats]),
+    {_, _WLANs, _STAs, _RefCnt, _MTU, Stats} = WTPStats,
+    Acc = wtp_stats_to_accouting(Stats),
+
+    maps:fold(fun(Key, Value, _) ->
+		      exometer:update([capwap, wtp, CommonName, Key], Value)
+	      end, ok, Acc),
+    Acc.
 
 stop_wtp(run, #data{data_channel_address = WTPDataChannelAddress}) ->
     ?LOG(error, "STOP_WTP in run"),
@@ -2458,11 +2466,11 @@ stop_wtp(run, #data{data_channel_address = WTPDataChannelAddress}) ->
 	    wtp_stats_to_accouting(Stats);
 	Other ->
 	    ?LOG(debug, "WTP del failed with: ~p", [Other]),
-	    []
+	    #{}
     end;
 stop_wtp(State, Data) ->
     ?LOG(error, "STOP_WTP in ~p with ~p", [State, Data]),
-    [].
+    #{}.
 
 response_notify(NotifyFun, Code, Arg, Data)
   when is_function(NotifyFun, 3) ->
@@ -2481,3 +2489,66 @@ internal_add_station_response(From, Code, _, Data) ->
     ?LOG(warning, "Station Configuration failed with ~w", [Code]),
     gen_statem:reply(From, {error, Code}),
     Data.
+
+%%%===================================================================
+%%% Accounting/Charging support
+%%%===================================================================
+
+handle_session_evs([], Data) ->
+    Data;
+handle_session_evs([H|T], Data) ->
+    handle_session_ev(H, handle_session_evs(T, Data)).
+
+handle_session_ev({set, {Service, {Type, Level, Interval, Opts}}},
+		  #data{timers = Timers} = Data) ->
+    Definition = {{Type, Interval, Opts}, undefined},
+    Data#data{timers =
+		  maps:update_with(Level, maps:put(Service, Definition, _),
+				   #{Service => Definition}, Timers)};
+handle_session_ev(_, Data) ->
+    Data.
+
+start_session_timers(#data{timers = Timers} = Data) ->
+    Data#data{timers =
+		  maps:fold(fun start_session_timers/3, Timers, Timers)}.
+
+start_session_timers('IP-CAN' = K, V, M) ->
+    M#{K => maps:fold(fun start_session_timer/3, V, V)};
+start_session_timers(_, _, M) ->
+    M.
+
+stop_session_timer(Ref) when is_reference(Ref) ->
+    erlang:cancel_timer(Ref, [{async, true}, {info, false}]);
+stop_session_timer(_) ->
+    ok.
+
+start_session_timer(K, {{_, TimeOut, _} = Type, TRef}, M) ->
+    stop_session_timer(TRef),
+    M#{K => {Type, erlang:start_timer(TimeOut * 1000, self(), K)}}.
+
+handle_session_timer(TRef, {accounting, Level, _} = Ev, #data{timers = Timers0} = Data)
+  when is_map_key(Level, Timers0) ->
+    case maps:take(Level, Timers0) of
+	{#{Ev := {Timer, TRef}}, Timers} ->
+	    handle_session_timer_ev(Ev, Timer, Data#data{timers = Timers});
+	{_Value, Timers} ->
+	    {keep_state, Data#data{timers = Timers}}
+    end;
+handle_session_timer(_TRef, _Ev, _Data) ->
+    keep_state_and_data.
+
+handle_session_timer_ev({_, Level, _} = Ev, {Interval, _, _Opts} = Timer,
+			#data{session = Session, timers = Timers} = Data0) ->
+    Acc = accounting_update(Data0),
+    ergw_aaa_session:invoke(Session, Acc, interim, #{async => true}),
+
+    Data =
+	case Interval of
+	    periodic ->
+		M = maps:get(Level, Timers, #{}),
+		Data0#data{
+		  timers = Timers#{Level => start_session_timer(Ev, {Timer, undefined}, M)}};
+	    _ ->
+		Data0
+	end,
+    {keep_state, Data}.
