@@ -236,26 +236,40 @@ setup_applications() ->
                                ]}
                              ]}
                      ]},
-            {ergw_aaa, [
-                        {applications, [
-                                        {default,
-                                         {provider, ergw_aaa_mock,
-                                          [{shared_secret, <<"MySecret">>}]
-                                         }
-                                        },
-                                        {capwap_wtp,
-                                         {provider, ergw_aaa_mock,
-                                          [{shared_secret, <<"MySecret">>}]
-                                         }
-                                        },
-                                        {capwap_station,
-                                         {provider, ergw_aaa_mock,
-                                          [{shared_secret, <<"MySecret">>}]
-                                         }
-                                        }
-                                       ]}
-                       ]}
-           ],
+	    {ergw_aaa,
+	     [
+	      {handlers,
+	       [{ergw_aaa_static,
+		 [{'NAS-Identifier',        <<"NAS-Identifier">>},
+		  {'Acct-Interim-Interval', 600}
+		 ]}
+	       ]},
+	      {services,
+	       [{'Default',
+		 [{handler, 'ergw_aaa_static'},
+		  {answers,
+		   #{'RADIUS-Auth' =>
+			 #{'Result-Code' => 2001,
+			   'TLS-Pre-Shared-Key' => <<"MySecret">>},
+		     'RADIUS-Acct' =>
+			 #{'Result-Code' => 2001}
+		    }
+		  }
+		 ]}
+	       ]},
+	      {apps,
+	       [{default,
+		 [{session, ['Default']},
+		  {procedures, [{authenticate, [{'Default', [{answer, 'RADIUS-Auth'}]}]},
+				{authorize, []},
+				{start, [{'Default', [{answer, 'RADIUS-Acct'}]}]},
+				{interim, [{'Default', [{answer, 'RADIUS-Acct'}]}]},
+				{stop, [{'Default', [{answer, 'RADIUS-Acct'}]}]}
+			       ]}
+		 ]}
+	       ]}
+	     ]}
+	   ],
     [application:load(Name) || {Name, _} <- Apps],
     lists:flatten([setup_application(A) || A <- Apps]).
 

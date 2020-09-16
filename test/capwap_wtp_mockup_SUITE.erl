@@ -76,7 +76,6 @@ setup_applications() ->
 	    {capwap, [{server_ip, {127, 0, 0, 1}},
 		      {enforce_dtls_control, false},
 		      {http_api, [{port, 0}]},
-		      {ergw_aaa_provider, {ergw_aaa_mock, [{secret, <<"MySecret">>}]}},
 		      {server_socket_opts, [{recbuf, 1048576}, {sndbuf, 1048576}]}
 		     ]}
 	   ],
