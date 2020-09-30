@@ -952,13 +952,15 @@ aaa_association(Data = #data{mac = MAC, data_channel_address = WTPDataChannelAdd
 		    {'CAPWAP-Session-Id', <<WtpSessionId:128>>}],
     SessionData1 = add_tunnel_info(WTPDataChannelAddress, SessionData0),
     {ok, Session} = ergw_aaa_session_sup:new_session(self(), to_session(SessionData1)),
-    ?LOG(info, "NEW session for ~w at ~p", [MAC, Session]),
+    ?LOG(info, #{obj => session, ev => new, mac => MAC, session => Session,
+		 opts => to_session(SessionData1), data => Data}),
     Now = erlang:monotonic_time(),
     SOpts = #{now => Now},
     ergw_aaa_session:invoke(Session, #{}, start, SOpts),
     start_session_timers(Data#data{aaa_session = Session}).
 
 aaa_disassociation(#data{aaa_session = Session}) ->
+    ?LOG(info, #{obj => session, ev => stop, session => Session}),
     ergw_aaa_session:invoke(Session, #{}, stop, #{async => true}),
     ok.
 
@@ -1174,9 +1176,12 @@ eap_handshake(Data, Data0) ->
     Data#data{eapol_state = undefined}.
 
 eap_handshake_next({authenticate, Opts}, #data{aaa_session = Session} = Data0) ->
+    ?LOG(info, #{obj => session, ev => authenticate, session => Session,
+		 opts => to_session(Opts)}),
     case ergw_aaa_session:invoke(Session, to_session(Opts), authenticate, [inc_session_id]) of
 	{ok, SessionOpts, AuthSEvs} ->
-	    ?LOG(info, #{'AuthResult' => success, session => SessionOpts, events => AuthSEvs}),
+	    ?LOG(info, #{obj => session, ev => authenticate, 'AuthResult' => success,
+			 session => SessionOpts, events => AuthSEvs}),
 	    Data = handle_session_evs(AuthSEvs, Data0),
 	    case SessionOpts of
 		#{'EAP-Data' := EAPData} ->
@@ -1191,14 +1196,14 @@ eap_handshake_next({authenticate, Opts}, #data{aaa_session = Session} = Data0) -
 	    rsna_4way_handshake({init, MSK}, Data);
 
 	{challenge, #{'EAP-Data' := EAPData} = SessionOpts, _} ->
-	    ?LOG(info, #{'AuthResult' => challenge, session => SessionOpts,
-			 challenge => EAPData}),
+	    ?LOG(info, #{obj => session, ev => authenticate, 'AuthResult' => challenge,
+			 session => SessionOpts, challenge => EAPData}),
 
 	    <<_Code:8, Id:8, _/binary>> = EAPData,
 	    send_eapol_packet(EAPData, Data0#data{eapol_state = {request, Id}});
 
 	Other ->
-	    ?LOG(info, "AuthResult: ~p", [Other]),
+	    ?LOG(info, #{obj => session, ev => authenticate, 'AuthResult' => Other}),
 
 	    case ergw_aaa_session:get(Session, 'EAP-Data') of
 		{ok, EAPData} ->
