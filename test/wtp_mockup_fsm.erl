@@ -18,6 +18,8 @@
 -behaviour(gen_statem).
 
 -include_lib("kernel/include/logger.hrl").
+-include("../include/ieee80211.hrl").
+-include("../include/capwap_config.hrl").
 -include("../include/capwap_packet.hrl").
 
 %% API
@@ -108,8 +110,8 @@ add_station(WTP_FSM, Mac) ->
 	wait_for_wifi ->
 	    timer:sleep(100),
 	    add_station(WTP_FSM, Mac);
-	ok ->
-	    ok
+	{ok, Msg} = Result ->
+	    Result
     end.
 
 %%%===================================================================
@@ -282,7 +284,20 @@ handle_event({call, From}, {add_station, Mac}, run,
     SA = Mac,
     BSS = WTPMac,
     SequenceControl = get_seqno(Data),
-    Frame = <<0:8>>,
+
+    RSN = #wtp_wlan_rsn{
+	     version = 1,
+	     capabilities = 0,
+	     group_cipher_suite = ?IEEE_802_1_CIPHER_SUITE_AES,
+	     cipher_suites = [?IEEE_802_1_CIPHER_SUITE_AES],
+	     akm_suites = ['PSK']
+	    },
+    IEs = [<<16#0432:16/little, 0:16>>,
+	   capwap_ac:ieee_802_11_ie(?WLAN_EID_SSID, <<"DEV CAPWAP WIFI">>),
+	   capwap_ac:ieee_802_11_ie(?WLAN_EID_SUPP_RATES, <<2, 4, 11, 22, 12, 18, 24, 36>>),
+	   capwap_ac:rsn_ie(RSN, false),
+	   capwap_ac:ieee_802_11_ie(?WLAN_EID_EXT_SUPP_RATES, <<48, 72, 96, 108>>)],
+    Frame = iolist_to_binary(IEs),
     Payload = <<FrameControl:2/bytes,
 		Duration:16, DA:6/bytes, SA:6/bytes, BSS:6/bytes,
 		SequenceControl:16/little-integer, Frame/binary>>,
@@ -467,7 +482,13 @@ do_transition(Data = #data{remote_mode = RemoteMode,
 	    {data, bump_seqno(Data1), Timer};
 	{data, _, req} ->
 	    {data, Data1, Timer}
-    end.
+    end;
+do_transition(Data = #data{remote_mode = RemoteMode,
+			   request_pending= RP},
+	      Type, {packet, Packet},
+	      Mode, RespSeq, UserCallback) ->
+    ct:pal("RequestPending: ~p", [RP]),
+    ct:fail(here).
 
 create_default_ies() ->
     [#ieee_802_11_wtp_radio_information{radio_type = ['802.11g','802.11b']},

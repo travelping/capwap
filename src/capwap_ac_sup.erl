@@ -23,6 +23,10 @@
 %% Supervisor callbacks
 -export([init/1]).
 
+-ifdef(TEST).
+-export([clear/0]).
+-endif.
+
 -include_lib("kernel/include/logger.hrl").
 
 -define(SERVER, ?MODULE).
@@ -39,6 +43,11 @@ new_wtp(Peer) ->
     R = supervisor:start_child(?SERVER, [Peer]),
     ?LOG(debug, "Result: ~p", [R]),
     R.
+
+-ifdef(TEST).
+clear() ->
+    [exit(Pid, shutdown) || {_, Pid, _, _} <- supervisor:which_children(?SERVER)].
+-endif.
 
 %%%===================================================================
 %%% Supervisor callbacks

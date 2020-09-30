@@ -252,6 +252,7 @@ decode_cipher_suite(16#000FAC0A) -> 'CCMP-256';
 decode_cipher_suite(16#000FAC0B) -> 'BIP-GMAC-128';
 decode_cipher_suite(16#000FAC0C) -> 'BIP-GMAC-256';
 decode_cipher_suite(16#000FAC0D) -> 'BIP-CMAC-256';
+decode_cipher_suite(<<X:32>>) -> decode_cipher_suite(X);
 decode_cipher_suite(X) -> X.
 
 decode_akm_suite(16#000FAC01) -> '802.1x';
