@@ -24,7 +24,7 @@
 	 station_detaching/1, gtk_rekey_done/1]).
 
 %% Extern API
--export([get_state/1,
+-export([get_state/1, get_info/1,
 	 firmware_download/3,
 	 set_ssid/4,
 	 stop_radio/2]).
@@ -104,6 +104,7 @@
 	  version,
 	  station_count = 0,
 	  wlans,
+	  last_gps_pos,
 
 	  timers = #{}
 }).
@@ -224,6 +225,9 @@ get_state(CN) ->
 	Other ->
 	    Other
     end.
+
+get_info(Pid) when is_pid(Pid) ->
+    gen_statem:call(Pid, get_info).
 
 firmware_download(CN, DownloadLink, Sha) ->
     with_cn(CN, gen_statem:cast(_, {firmware_download, DownloadLink, Sha})).
@@ -669,6 +673,24 @@ handle_event(cast, {Msg, Seq, Elements, Header}, State, _Data) ->
 handle_event({call, From}, get_state, _State, Data) ->
     {keep_state_and_data, [{reply, From, {ok, Data}}]};
 
+handle_event({call, From}, get_info, _State, Data) ->
+    #data{
+       version = Version,
+       location = Location,
+       board_data = BoardData,
+       descriptor = Descriptor,
+       name = Name,
+       start_time = StartTime,
+       last_gps_pos = LastPos} = Data,
+    Info = #{version => Version,
+	     location => Location,
+	     board_data => BoardData,
+	     descriptor => Descriptor,
+	     name => Name,
+	     start_time => StartTime,
+	     last_gps_pos => LastPos},
+    {keep_state_and_data, [{reply, From, {ok, Info}}]};
+
 handle_event({call, From}, {set_ssid, {RadioId, WlanId} = WlanIdent, SSID, SuppressSSID},
 	     run, #data{id = CommonName, config = Config0} = Data0) ->
     Settings = [{ssid, SSID}, {suppress_ssid, SuppressSSID}],
@@ -927,14 +949,39 @@ maybe_takeover(CommonName) ->
 	    ok
     end.
 
-handle_wtp_event(Elements, Header, Data = #data{session = Session}) ->
+handle_wtp_event(Elements, Header, Data0 = #data{session = Session}) ->
     IEs = maps:values(Elements),
     SessionOptsList = handle_wtp_stats_event(IEs, Header, []),
     lists:foreach(
       fun(Ev) ->
 	      ergw_aaa_session:invoke(Session, Ev, interim, #{async => true})
       end, SessionOptsList),
-    handle_wtp_action_event(IEs, Header, Data).
+    Data = handle_wtp_action_event(IEs, Header, Data0),
+    update_last_gps_position(IEs, Data).
+
+update_last_gps_position(IEs, #data{last_gps_pos = LastPos} = Data) ->
+    Data#data{last_gps_pos = update_last_gps_position_1(IEs, LastPos)}.
+
+update_last_gps_position_1(IEs, LastPos)
+  when is_list(IEs) ->
+    lists:foldl(fun update_last_gps_position_1/2, LastPos, IEs);
+update_last_gps_position_1(#gps_last_acquired_position{gpsatc = GpsString}, LastPos) ->
+    case [string:strip(V) || V <- string:tokens(binary_to_list(GpsString), ",:")] of
+	[_, GPSTime, Latitude, Longitude, Hdop, Altitude, _Fix, _Cog, _Spkm, _Spkn, GPSDate, _Nsat] ->
+	    case {gpsutc_to_iso(GPSTime, GPSDate), LastPos} of
+		{GPSTimestamp, undefined} ->
+		    {GPSTimestamp, Latitude, Longitude, Altitude, Hdop};
+		{GPSTimestamp, {LastEvTs, _, _, _, _}}
+		  when GPSTimestamp > LastEvTs ->
+		    {GPSTimestamp, Latitude, Longitude, Altitude, Hdop};
+		_ ->
+		    LastPos
+	    end;
+	_ ->
+	    LastPos
+    end;
+update_last_gps_position_1(_, LastPos) ->
+    LastPos.
 
 handle_wtp_action_event(IEs, Header, Data)
   when is_list(IEs) ->

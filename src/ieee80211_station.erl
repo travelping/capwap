@@ -911,6 +911,44 @@ add_tunnel_info({Address, _Port}, SessionData) ->
      {'Tunnel-Client-Endpoint', ip2str(Address)}
      |SessionData].
 
+add_ac_location(#data{ac = AC}, SessionData) ->
+    Location =
+	try capwap_ac:get_info(AC) of
+	    {ok, #{last_gps_pos := {GPSTimestamp, Latitude, Longitude, Altitude, Hdop}}} ->
+		[{'CAPWAP-GPS-Timestamp', GPSTimestamp},
+		 {'CAPWAP-GPS-Latitude', Latitude},
+		 {'CAPWAP-GPS-Longitude', Longitude},
+		 {'CAPWAP-GPS-Altitude', Altitude},
+		 {'CAPWAP-GPS-Hdop', Hdop}];
+	    _O ->
+		?LOG(debug, "Location Info: ~p", [_O]),
+		[]
+	catch
+	    Class:Error:ST ->
+		?LOG(debug, "location info failure: ~p:~p with ~0p", [Class, Error, ST]),
+		[]
+	end,
+    lists:keymerge(1, lists:keysort(1, Location), lists:keysort(1, SessionData)).
+
+add_wlan_info(#data{capabilities =
+			#sta_cap{
+			   rsn = #wtp_wlan_rsn{
+				    cipher_suites = [Pairwise|_],
+				    group_cipher_suite = GroupCipher,
+				    group_mgmt_cipher_suite = GroupMgmtCipher,
+				    akm_suites = [AKM]
+				   }}},
+	      SessionData) ->
+    WLAN = [{'WLAN-Authentication-Mode', secured},
+	    {'WLAN-Pairwise-Cipher', capwap_packet:decode_cipher_suite(Pairwise)},
+	    {'WLAN-Group-Cipher', capwap_packet:decode_cipher_suite(GroupCipher)},
+	    {'WLAN-AKM-Suite', AKM},
+	    {'WLAN-Group-Mgmt-Cipher', capwap_packet:decode_cipher_suite(GroupMgmtCipher)}],
+    lists:keymerge(1, lists:keysort(1, WLAN), lists:keysort(1, SessionData));
+add_wlan_info(_, SessionData) ->
+    WLAN = [{'WLAN-Authentication-Mode', open}],
+    lists:keymerge(1, lists:keysort(1, WLAN), lists:keysort(1, SessionData)).
+
 wtp_add_station(#data{ac = AC, radio_mac = BSS, mac = MAC, capabilities = Caps,
 		       wpa_config = #wpa_config{privacy = Privacy},
 		       cipher_state = CipherData} = Data) ->
@@ -951,9 +989,11 @@ aaa_association(Data = #data{mac = MAC, data_channel_address = WTPDataChannelAdd
 		    {'SSID', SSID},
 		    {'CAPWAP-Session-Id', <<WtpSessionId:128>>}],
     SessionData1 = add_tunnel_info(WTPDataChannelAddress, SessionData0),
-    {ok, Session} = ergw_aaa_session_sup:new_session(self(), to_session(SessionData1)),
+    SessionData2 = add_wlan_info(Data, SessionData1),
+    SessionData3 = add_ac_location(Data, SessionData2),
+    {ok, Session} = ergw_aaa_session_sup:new_session(self(), to_session(SessionData3)),
     ?LOG(info, #{obj => session, ev => new, mac => MAC, session => Session,
-		 opts => to_session(SessionData1), data => Data}),
+		 opts => to_session(SessionData3), data => Data}),
     Now = erlang:monotonic_time(),
     SOpts = #{now => Now},
     ergw_aaa_session:invoke(Session, #{}, start, SOpts),
@@ -1669,8 +1709,9 @@ handle_session_timer(_TRef, _Ev, _Data) ->
 
 handle_session_timer_ev({_, Level, _} = Ev, {Interval, _, _Opts} = Timer,
 			#data{aaa_session = Session, timers = Timers} = Data0) ->
-    Acc = accounting_update(Data0),
-    ergw_aaa_session:invoke(Session, Acc, interim, #{async => true}),
+    SOpts0 = accounting_update(Data0),
+    SOpts = add_ac_location(Data0, SOpts0),
+    ergw_aaa_session:invoke(Session, SOpts, interim, #{async => true}),
 
     Data =
 	case Interval of

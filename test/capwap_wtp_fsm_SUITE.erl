@@ -19,6 +19,9 @@
 
 -include_lib("common_test/include/ct.hrl").
 -include_lib("stdlib/include/ms_transform.hrl").
+-include_lib("capwap/include/capwap_packet.hrl").
+
+-define(MAC, <<1,2,3,4,5,6>>).
 
 match(MatchSpec, Actual, Expr, File, Line) ->
     CompiledMatchSpec = ets:match_spec_compile(MatchSpec),
@@ -74,13 +77,22 @@ init_per_suite(Config0) ->
     Config.
 
 end_per_suite(Config) ->
-    meck_unload(),
     Apps = proplists:get_value(apps, Config),
     [ application:stop(App) || App <- Apps ],
     ok.
 
+init_per_testcase(_, Config) ->
+    meck_init(),
+    dp_mockup:clear(),
+    capwap_ac_sup:clear(),
+    Config.
+
+end_per_testcase(_, Config) ->
+    meck_unload(),
+    Config.
+
 all() ->
-    [wtp_fsm].
+    [wtp_fsm, sta_fsm].
 
 check_auth_session_args(Session) ->
     case maps:get('Username', Session, undefined) of
@@ -102,8 +114,6 @@ check_session_args({Key, MatchSpec}, Session) ->
     end.
 
 wtp_fsm(_Config) ->
-    meck:new(capwap_ac, [passthrough]),
-    meck:new(ergw_aaa_session, [passthrough]),
     meck:expect(ergw_aaa_session, invoke,
 		fun(Session, SessionOpts, authenticate, Opts) ->
 			check_auth_session_args(SessionOpts),
@@ -167,13 +177,76 @@ wtp_fsm(_Config) ->
 
     ct:sleep(100),
 
-    ?equal(82, meck:num_calls(ergw_aaa_session, invoke, ['_', '_', interim, '_'])),
+    ?equal(83, meck:num_calls(ergw_aaa_session, invoke, ['_', '_', interim, '_'])),
 
     meck:validate(ergw_aaa_session),
     meck:validate(capwap_ac),
+    ok.
 
-    meck:unload(ergw_aaa_session),
-    meck:unload(capwap_ac),
+sta_fsm(_Config) ->
+    meck:expect(ergw_aaa_session, invoke,
+		fun(Session, SessionOpts, authenticate, Opts) ->
+			check_auth_session_args(SessionOpts),
+			meck:passthrough([Session, SessionOpts, authenticate, Opts]);
+		   (Session, SessionOpts, interim, Opts) ->
+			IsIntOrUndefined = ets:fun2ms(fun(X) when is_integer(X) -> ok;
+							 (X) when X == undefined -> ok end),
+			IsListOrUndefined = ets:fun2ms(fun(X) when is_list(X) -> ok;
+							  (X) when X == undefined -> ok end),
+			OptValues = [{'TP-CAPWAP-Radio-Id',      IsIntOrUndefined},
+				     {'TP-CAPWAP-Timestamp',     IsIntOrUndefined},
+				     {'TP-CAPWAP-WWAN-CREG',     IsIntOrUndefined},
+				     {'TP-CAPWAP-WWAN-Cell-Id',  IsIntOrUndefined},
+				     {'TP-CAPWAP-WWAN-Id',       IsIntOrUndefined},
+				     {'TP-CAPWAP-WWAN-LAC',      IsIntOrUndefined},
+				     {'TP-CAPWAP-WWAN-Latency',  IsIntOrUndefined},
+				     {'TP-CAPWAP-WWAN-MCC',      IsIntOrUndefined},
+				     {'TP-CAPWAP-WWAN-MNC',      IsIntOrUndefined},
+				     {'TP-CAPWAP-WWAN-RAT',      IsIntOrUndefined},
+				     {'TP-CAPWAP-WWAN-RSSi',     IsIntOrUndefined},
+				     {'TP-CAPWAP-GPS-Altitude',  IsListOrUndefined},
+				     {'TP-CAPWAP-GPS-Hdop',      IsListOrUndefined},
+				     {'TP-CAPWAP-GPS-Latitude',  IsListOrUndefined},
+				     {'TP-CAPWAP-GPS-Longitude', IsListOrUndefined},
+				     {'TP-CAPWAP-GPS-Timestamp', IsListOrUndefined}],
+			lists:foreach(fun(X) ->
+					      check_session_args(X, SessionOpts)
+				      end, OptValues),
+			meck:passthrough([Session, SessionOpts, interim, Opts]);
+		   (Session, SessionOpts, Procedure, Opts) ->
+			meck:passthrough([Session, SessionOpts, Procedure, Opts])
+		end),
+
+    {ok, WTP} = start_local_wtp(),
+
+    {ok, _} = wtp_mockup_fsm:send_discovery(WTP),
+    {ok, _} = wtp_mockup_fsm:send_join(WTP),
+    {ok, _} = wtp_mockup_fsm:send_config_status(WTP),
+    {ok, _} = wtp_mockup_fsm:send_change_state_event(WTP),
+    receive
+	{#capwap_header{}, Msg} when element(1, Msg) == ieee_802_11_wlan_configuration_request ->
+	    ok
+    after
+	1000 ->
+	    ct:fail(timeout)
+    end,
+    {ok, _} = wtp_mockup_fsm:send_wwan_statistics(WTP),
+
+    {ok, _} =  wtp_mockup_fsm:add_station(WTP, ?MAC),
+
+    ?equal(1, length(capwap_station_reg:list_stations())),
+
+    %% wait 'Acct-Interim-Interval'
+    ct:sleep({seconds, 11}),
+
+    catch stop_local_wtp(WTP),
+
+    ct:sleep(100),
+
+    ?equal(3, meck:num_calls(ergw_aaa_session, invoke, ['_', '_', interim, '_'])),
+
+    meck:validate(ergw_aaa_session),
+    meck:validate(capwap_ac),
     ok.
 
 %% ------------------------------------------------------------------------------------
@@ -188,23 +261,12 @@ stop_local_wtp(WTP) ->
     wtp_mockup_fsm:stop(WTP).
 
 meck_init() ->
-    ok = meck:new(capwap_dp, [non_strict, no_link]),
-    ok = meck:expect(capwap_dp, start_link,
-		     fun() ->
-			     {ok, self()}
-		     end),
-    ok = meck:expect(capwap_dp, add_wtp,
-		     fun(_WTPDataChannelAddress, _MTU) ->
-			     ok
-		     end),
-    ok = meck:expect(capwap_dp, sendto,
-		     fun(_WTPDataChannelAddress, _Packet) ->
-			     ok
-		     end),
-    ok.
+    meck:new(capwap_ac, [passthrough]),
+    meck:new(ergw_aaa_session, [passthrough]).
 
 meck_unload() ->
-    meck:unload(capwap_dp).
+    meck:unload(ergw_aaa_session),
+    meck:unload(capwap_ac).
 
 setup_applications() ->
     {ok, CWD} = file:get_cwd(),
@@ -311,7 +373,7 @@ setup_applications() ->
 	     ]}
 	   ],
     [application:load(Name) || {Name, _} <- Apps],
-    meck_init(),
+    dp_mockup:new(),
     lists:flatten([setup_application(A) || A <- Apps]).
 
 setup_application({Name, Env}) ->
