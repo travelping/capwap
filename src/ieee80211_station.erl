@@ -976,8 +976,8 @@ accounting_update(#data{mac = MAC}) ->
 aaa_association(Data = #data{mac = MAC, data_channel_address = WTPDataChannelAddress,
 				wtp_id = WtpId, wtp_session_id = WtpSessionId,
 				radio_mac = BSSID, ssid = SSID}) ->
-    MACStr = capwap_tools:format_eui(MAC),
-    BSSIDStr = capwap_tools:format_eui(BSSID),
+    MACStr = iolist_to_binary(capwap_tools:format_eui(MAC)),
+    BSSIDStr = iolist_to_binary(capwap_tools:format_eui(BSSID)),
     SessionData0 = [{'AAA-Application-Id', capwap_station},
 		    {'Service-Type', 'TP-CAPWAP-STA'},
 		    {'Framed-Protocol', 'TP-CAPWAP'},
@@ -996,6 +996,7 @@ aaa_association(Data = #data{mac = MAC, data_channel_address = WTPDataChannelAdd
 		 opts => to_session(SessionData3), data => Data}),
     Now = erlang:monotonic_time(),
     SOpts = #{now => Now},
+    ergw_aaa_session:invoke(Session, to_session(SessionData3), authenticate, [inc_session_id]),
     ergw_aaa_session:invoke(Session, #{}, start, SOpts),
     start_session_timers(Data#data{aaa_session = Session}).
 
