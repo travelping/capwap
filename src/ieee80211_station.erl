@@ -731,7 +731,7 @@ update_sta_from_mgmt_frame(_FrameType, _Frame, Data) ->
 
 update_sta_from_mgmt_frame_ies(IEs, #data{aid = AID, capabilities = Cap0} = Data0) ->
     Data1 = Data0#data{capabilities = Cap0#sta_cap{aid = AID}},
-    ListIE = [ {Id, Data} || <<Id:8, Len:8, Data:Len/bytes>> <= IEs ],
+    ListIE = [ {Id, Value} || <<Id:8, Len:8, Value:Len/bytes>> <= IEs ],
     Data = lists:foldl(fun update_sta_from_mgmt_frame_ie/2, Data1, ListIE),
 
     ?LOG(debug, "New Station Caps: ~p", [Data#data.capabilities]),
@@ -806,14 +806,14 @@ decode_rsne(_, <<>>, RSN) ->
     RSN;
 decode_rsne(group_cipher_suite, <<GroupCipherSuite:4/bytes, Next/binary>>, RSN) ->
     decode_rsne(pairwise_cipher_suite, Next, RSN#wtp_wlan_rsn{group_cipher_suite = GroupCipherSuite});
-decode_rsne(pairwise_cipher_suite, <<Count:16/little, Data/binary>>, RSN) ->
+decode_rsne(pairwise_cipher_suite, <<Count:16/little, Rest/binary>>, RSN) ->
     Length = Count * 4,
-    <<Suites:Length/bytes, Next/binary>> = Data,
+    <<Suites:Length/bytes, Next/binary>> = Rest,
     decode_rsne(auth_key_management, Next,
 		RSN#wtp_wlan_rsn{cipher_suites = [ Id || <<Id:4/bytes>> <= Suites ]});
-decode_rsne(auth_key_management, <<Count:16/little, Data/binary>>, RSN) ->
+decode_rsne(auth_key_management, <<Count:16/little, Rest/binary>>, RSN) ->
     Length = Count * 4,
-    <<Suites:Length/bytes, Next/binary>> = Data,
+    <<Suites:Length/bytes, Next/binary>> = Rest,
     decode_rsne(rsn_capabilities, Next,
 		RSN#wtp_wlan_rsn{akm_suites =
 				     [ capwap_packet:decode_akm_suite(Id) || <<Id:32>> <= Suites ]});
@@ -821,9 +821,9 @@ decode_rsne(rsn_capabilities, <<RSNCaps:16/little, Next/binary>>, RSN) ->
     decode_rsne(pmkid, Next, RSN#wtp_wlan_rsn{capabilities = RSNCaps});
 decode_rsne(pmkid, <<0:16/little, Next/binary>>, RSN) ->
     decode_rsne(group_management_cipher, Next, RSN);
-decode_rsne(pmkid, <<Count:16/little, Data/binary>>, RSN) ->
+decode_rsne(pmkid, <<Count:16/little, Rest/binary>>, RSN) ->
     Length = Count * 16,
-    <<PMKIds:Length/bytes, Next/binary>> = Data,
+    <<PMKIds:Length/bytes, Next/binary>> = Rest,
     decode_rsne(group_management_cipher, Next, RSN#wtp_wlan_rsn{pmk_ids = [ Id || <<Id:16/bytes>> <= PMKIds ]});
 decode_rsne(group_management_cipher, <<GroupMgmtCipherSuite:32>>, RSN)
   when (RSN#wtp_wlan_rsn.capabilities band 16#0080) /= 0 ->
@@ -874,7 +874,7 @@ decode_fte(<<_:8, _Count:8, MIC:16/bytes, ANonce:32/bytes, SNonce:32/bytes, Opt/
     FT = #fte{mic = MIC,
 	      anonce = ANonce,
 	      snonce = SNonce},
-    OptList = [ {Id, Data} || <<Id:8, Len:8, Data:Len/bytes>> <= Opt ],
+    OptList = [ {Id, Value} || <<Id:8, Len:8, Value:Len/bytes>> <= Opt ],
     lists:foldl(fun decode_fte_opt/2, FT, OptList).
 
 decode_fte_opt({1, R1KH}, FT) ->
@@ -963,8 +963,8 @@ wtp_add_station(#data{ac = AC, radio_mac = BSS, mac = MAC, capabilities = Caps,
 wtp_del_station(#data{ac = AC, radio_mac = BSS, mac = MAC}) ->
     capwap_ac:del_station(AC, BSS, MAC).
 
-wtp_send_80211(Data,  #data{ac = AC, radio_mac = BSS}) when is_binary(Data) ->
-    capwap_ac:send_80211(AC, BSS, Data).
+wtp_send_80211(Frame, #data{ac = AC, radio_mac = BSS}) when is_binary(Frame) ->
+    capwap_ac:send_80211(AC, BSS, Frame).
 
 accounting_update(#data{mac = MAC}) ->
     STAStats = capwap_dp:get_station(MAC),
@@ -1181,15 +1181,15 @@ init_eapol(#data{capabilities = #sta_cap{rsn = #wtp_wlan_rsn{akm_suites = [AKM]}
 					 eapol_state = {request, Id},
 					 eapol_retransmit = 0}).
 
-eap_handshake({start, _Data},
+eap_handshake({start, _HsData},
 	      #data{eapol_state = {request, _}} = Data0) ->
     %% restart the handshake
     Data = stop_eapol_timer(Data0),
     init_eapol(Data);
 
-eap_handshake(Data = {response, Id, EAPData, Response},
+eap_handshake(HandShake = {response, Id, EAPData, Response},
 	      #data{eapol_state = {request, Id}} = Data0) ->
-    ?LOG(debug, "EAP Handshake: ~p", [Data]),
+    ?LOG(debug, "EAP Handshake: ~p", [HandShake]),
     Data = stop_eapol_timer(Data0),
     Next =
 	case Response of
@@ -1209,8 +1209,8 @@ eap_handshake(Data = {response, Id, EAPData, Response},
 	end,
     eap_handshake_next(Next, Data);
 
-eap_handshake(Data, Data0) ->
-    ?LOG(warning, "unexpected EAP Handshake: ~p", [Data]),
+eap_handshake(HandShake, Data0) ->
+    ?LOG(warning, "unexpected EAP Handshake: ~p", [HandShake]),
     Data = stop_eapol_timer(Data0),
     wtp_del_station(Data),
     aaa_disassociation(Data),
