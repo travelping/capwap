@@ -141,6 +141,12 @@ handle_call({get_wtp, WTP}, _From, State) ->
     Reply = {WTP, Ws, STAs, 1, 1500, WTPCnts},
     {reply, Reply, State};
 
+handle_call({get_station, STA}, _From, State) ->
+    %% only fill values required for test case
+    Stats = {STA, 'VLan', 'RadioId', 'BSS',
+	     {_RcvdPkts = 1, _SendPkts = 2, _RcvdBytes = 3, _SendBytes = 4}},
+    {reply, Stats, State};
+
 handle_call({clear}, _From, _State) ->
     {reply, ok, #{}};
 

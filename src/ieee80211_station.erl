@@ -906,29 +906,26 @@ tunnel_medium({_,_,_,_,_,_,_,_}) ->
     'IPv6'.
 
 add_tunnel_info({Address, _Port}, SessionData) ->
-    [{'Tunnel-Type', 'CAPWAP'},
-     {'Tunnel-Medium-Type', tunnel_medium(Address)},
-     {'Tunnel-Client-Endpoint', ip2str(Address)}
-     |SessionData].
+    SessionData#{'Tunnel-Type' => 'CAPWAP',
+		 'Tunnel-Medium-Type' => tunnel_medium(Address),
+		 'Tunnel-Client-Endpoint' => ip2str(Address)}.
 
 add_ac_location(#data{ac = AC}, SessionData) ->
-    Location =
-	try capwap_ac:get_info(AC) of
-	    {ok, #{last_gps_pos := {GPSTimestamp, Latitude, Longitude, Altitude, Hdop}}} ->
-		[{'CAPWAP-GPS-Timestamp', GPSTimestamp},
-		 {'CAPWAP-GPS-Latitude', Latitude},
-		 {'CAPWAP-GPS-Longitude', Longitude},
-		 {'CAPWAP-GPS-Altitude', Altitude},
-		 {'CAPWAP-GPS-Hdop', Hdop}];
-	    _O ->
-		?LOG(debug, "Location Info: ~p", [_O]),
-		[]
-	catch
-	    Class:Error:ST ->
-		?LOG(debug, "location info failure: ~p:~p with ~0p", [Class, Error, ST]),
-		[]
-	end,
-    lists:keymerge(1, lists:keysort(1, Location), lists:keysort(1, SessionData)).
+    try capwap_ac:get_info(AC) of
+	{ok, #{last_gps_pos := {GPSTimestamp, Latitude, Longitude, Altitude, Hdop}}} ->
+	    SessionData#{'CAPWAP-GPS-Timestamp' => GPSTimestamp,
+			 'CAPWAP-GPS-Latitude' => Latitude,
+			 'CAPWAP-GPS-Longitude' => Longitude,
+			 'CAPWAP-GPS-Altitude' => Altitude,
+			 'CAPWAP-GPS-Hdop' => Hdop};
+	_O ->
+	    ?LOG(debug, "Location Info: ~p", [_O]),
+	    SessionData
+    catch
+	Class:Error:ST ->
+	    ?LOG(debug, "location info failure: ~p:~p with ~0p", [Class, Error, ST]),
+	    SessionData
+	end.
 
 add_wlan_info(#data{capabilities =
 			#sta_cap{
@@ -939,15 +936,14 @@ add_wlan_info(#data{capabilities =
 				    akm_suites = [AKM]
 				   }}},
 	      SessionData) ->
-    WLAN = [{'WLAN-Authentication-Mode', secured},
-	    {'WLAN-Pairwise-Cipher', capwap_packet:decode_cipher_suite(Pairwise)},
-	    {'WLAN-Group-Cipher', capwap_packet:decode_cipher_suite(GroupCipher)},
-	    {'WLAN-AKM-Suite', AKM},
-	    {'WLAN-Group-Mgmt-Cipher', capwap_packet:decode_cipher_suite(GroupMgmtCipher)}],
-    lists:keymerge(1, lists:keysort(1, WLAN), lists:keysort(1, SessionData));
+    SessionData#{'WLAN-Authentication-Mode' => secured,
+		 'WLAN-Pairwise-Cipher' => capwap_packet:decode_cipher_suite(Pairwise),
+		 'WLAN-Group-Cipher' => capwap_packet:decode_cipher_suite(GroupCipher),
+		 'WLAN-AKM-Suite' => AKM,
+		 'WLAN-Group-Mgmt-Cipher' => capwap_packet:decode_cipher_suite(GroupMgmtCipher)
+		};
 add_wlan_info(_, SessionData) ->
-    WLAN = [{'WLAN-Authentication-Mode', open}],
-    lists:keymerge(1, lists:keysort(1, WLAN), lists:keysort(1, SessionData)).
+    SessionData#{'WLAN-Authentication-Mode' => open}.
 
 wtp_add_station(#data{ac = AC, radio_mac = BSS, mac = MAC, capabilities = Caps,
 		       wpa_config = #wpa_config{privacy = Privacy},
@@ -973,32 +969,36 @@ accounting_update(#data{mac = MAC}) ->
     #{'InPackets'  => RcvdPkts,  'OutPackets' => SendPkts,
       'InOctets'   => RcvdBytes, 'OutOctets'  => SendBytes}.
 
-aaa_association(Data = #data{mac = MAC, data_channel_address = WTPDataChannelAddress,
+aaa_association(Data0 = #data{mac = MAC, data_channel_address = WTPDataChannelAddress,
 				wtp_id = WtpId, wtp_session_id = WtpSessionId,
 				radio_mac = BSSID, ssid = SSID}) ->
     MACStr = iolist_to_binary(capwap_tools:format_eui(MAC)),
     BSSIDStr = iolist_to_binary(capwap_tools:format_eui(BSSID)),
-    SessionData0 = [{'AAA-Application-Id', capwap_station},
-		    {'Service-Type', 'TP-CAPWAP-STA'},
-		    {'Framed-Protocol', 'TP-CAPWAP'},
-		    {'MAC', MAC},
-		    {'Username', MACStr},
-		    {'Calling-Station-Id', MACStr},
-		    {'Location-Id', WtpId},
-		    {'BSSID', BSSIDStr},
-		    {'SSID', SSID},
-		    {'CAPWAP-Session-Id', <<WtpSessionId:128>>}],
+    SessionData0 =
+	#{'AAA-Application-Id' => capwap_station,
+	  'Service-Type' => 'TP-CAPWAP-STA',
+	  'Framed-Protocol' => 'TP-CAPWAP',
+	  'MAC' => MAC,
+	  'Username' => MACStr,
+	  'Calling-Station-Id' => MACStr,
+	  'Location-Id' => WtpId,
+	  'BSSID' => BSSIDStr,
+	  'SSID' => SSID,
+	  'CAPWAP-Session-Id' => <<WtpSessionId:128>>
+	 },
     SessionData1 = add_tunnel_info(WTPDataChannelAddress, SessionData0),
-    SessionData2 = add_wlan_info(Data, SessionData1),
-    SessionData3 = add_ac_location(Data, SessionData2),
+    SessionData2 = add_wlan_info(Data0, SessionData1),
+    SessionData3 = add_ac_location(Data0, SessionData2),
     {ok, Session} = ergw_aaa_session_sup:new_session(self(), to_session(SessionData3)),
     ?LOG(info, #{obj => session, ev => new, mac => MAC, session => Session,
-		 opts => to_session(SessionData3), data => Data}),
+		 opts => to_session(SessionData3), data => Data0}),
     Now = erlang:monotonic_time(),
     SOpts = #{now => Now},
-    ergw_aaa_session:invoke(Session, to_session(SessionData3), authenticate, [inc_session_id]),
+    {ok, _SessionOpts, AuthSEvs} =
+	ergw_aaa_session:invoke(Session, to_session(SessionData3), authenticate, [inc_session_id]),
+    Data1 = handle_session_evs(AuthSEvs, Data0#data{aaa_session = Session}),
     ergw_aaa_session:invoke(Session, #{}, start, SOpts),
-    start_session_timers(Data#data{aaa_session = Session}).
+    start_session_timers(Data1).
 
 aaa_disassociation(#data{aaa_session = Session}) ->
     ?LOG(info, #{obj => session, ev => stop, session => Session}),
@@ -1223,7 +1223,9 @@ eap_handshake_next({authenticate, Opts}, #data{aaa_session = Session} = Data0) -
 	{ok, SessionOpts, AuthSEvs} ->
 	    ?LOG(info, #{obj => session, ev => authenticate, 'AuthResult' => success,
 			 session => SessionOpts, events => AuthSEvs}),
-	    Data = handle_session_evs(AuthSEvs, Data0),
+	    Data1 = handle_session_evs(AuthSEvs, Data0),
+	    Data = start_session_timers(Data1),
+
 	    case SessionOpts of
 		#{'EAP-Data' := EAPData} ->
 		    send_eapol(eapol:packet(EAPData), Data);
@@ -1676,7 +1678,7 @@ handle_session_ev({set, {Service, {Type, Level, Interval, Opts}}},
     Data#data{timers =
 		  maps:update_with(Level, maps:put(Service, Definition, _),
 				   #{Service => Definition}, Timers)};
-handle_session_ev(_, Data) ->
+handle_session_ev(_Other, Data) ->
     Data.
 
 start_session_timers(#data{timers = Timers} = Data) ->
