@@ -236,17 +236,20 @@ sta_fsm(_Config) ->
 
     ?equal(1, length(capwap_station_reg:list_stations())),
 
-    %% wait 'Acct-Interim-Interval'
-    ct:sleep({seconds, 11}),
+    %% wait 2x 'Acct-Interim-Interval'
+    ct:sleep({seconds, 21}),
 
     catch stop_local_wtp(WTP),
 
     ct:sleep(100),
 
-    ?equal(3, meck:num_calls(ergw_aaa_session, invoke, ['_', '_', interim, '_'])),
+    ?equal(6, meck:num_calls(ergw_aaa_session, invoke, ['_', '_', interim, '_'])),
+    ?equal(2, meck:num_calls(ieee80211_station, handle_event,
+			     [info, {timeout, '_', {accounting, 'IP-CAN', periodic}}, connected, '_'])),
 
     meck:validate(ergw_aaa_session),
     meck:validate(capwap_ac),
+    meck:validate(ieee80211_station),
     ok.
 
 %% ------------------------------------------------------------------------------------
@@ -262,10 +265,12 @@ stop_local_wtp(WTP) ->
 
 meck_init() ->
     meck:new(capwap_ac, [passthrough]),
+    meck:new(ieee80211_station, [passthrough]),
     meck:new(ergw_aaa_session, [passthrough]).
 
 meck_unload() ->
     meck:unload(ergw_aaa_session),
+    meck:unload(ieee80211_station),
     meck:unload(capwap_ac).
 
 setup_applications() ->
