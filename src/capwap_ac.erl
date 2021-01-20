@@ -2546,12 +2546,19 @@ handle_session_evs([], Data) ->
 handle_session_evs([H|T], Data) ->
     handle_session_ev(H, handle_session_evs(T, Data)).
 
+update_timer_svc_def(Service, Definition, Map) ->
+    maps:update_with(Service,
+		     fun({_, TRef}) -> {Definition, TRef} end,
+		     {Definition, undefined}, Map).
+
+update_timer(Level, Service, Definition, Timers) ->
+    maps:update_with(Level, update_timer_svc_def(Service, Definition, _),
+		     #{Service => {Definition, undefined}}, Timers).
+
 handle_session_ev({set, {Service, {Type, Level, Interval, Opts}}},
 		  #data{timers = Timers} = Data) ->
-    Definition = {{Type, Interval, Opts}, undefined},
-    Data#data{timers =
-		  maps:update_with(Level, maps:put(Service, Definition, _),
-				   #{Service => Definition}, Timers)};
+    Definition = {Type, Interval, Opts},
+    Data#data{timers = update_timer(Level, Service, Definition, Timers)};
 handle_session_ev(_, Data) ->
     Data.
 
@@ -2578,8 +2585,8 @@ handle_session_timer(TRef, {accounting, Level, _} = Ev, #data{timers = Timers0} 
     case maps:take(Level, Timers0) of
 	{#{Ev := {Timer, TRef}}, Timers} ->
 	    handle_session_timer_ev(Ev, Timer, Data#data{timers = Timers});
-	{_Value, Timers} ->
-	    {keep_state, Data#data{timers = Timers}}
+	_ ->
+	    keep_state_and_data
     end;
 handle_session_timer(_TRef, _Ev, _Data) ->
     keep_state_and_data.
