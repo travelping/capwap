@@ -1,8 +1,9 @@
 capwap - Erlang CAPWAP AC implementation
 ========================================
-[![Build Status][travis badge]][travis]
+[![Build Status][gh badge]][gh]
 [![Coverage Status][coveralls badge]][coveralls]
-[![Erlang Versions][erlang version badge]][travis]
+[![Erlang Versions][erlang version badge]][gh]
+[![Docker][docker badge]][docker]
 
 Erlang CAPWAP AC implementation.
 
@@ -24,8 +25,10 @@ Using rebar:
     # rebar3 compile
 
 <!-- Badges -->
-[travis]: https://travis-ci.com/travelping/capwap
-[travis badge]: https://img.shields.io/travis/com/travelping/capwap/master.svg?style=flat-square
+[gh]: https://github.com/travelping/capwap/actions/workflows/main.yml
+[gh badge]: https://img.shields.io/github/workflow/status/travelping/capwap/CI?style=flat-square
 [coveralls]: https://coveralls.io/github/travelping/capwap
 [coveralls badge]: https://img.shields.io/coveralls/travelping/capwap/master.svg?style=flat-square
-[erlang version badge]: https://img.shields.io/badge/erlang-R20.3%20to%2021.2-blue.svg?style=flat-square
+[erlang version badge]: https://img.shields.io/badge/erlang-20.3%20to%2021.2-blue.svg?style=flat-square
+[docker]: https://github.com/travelping/capwap/actions/workflows/docker.yaml
+[docker badge]: https://github.com/travelping/capwap/actions/workflows/docker.yaml/badge.svg
