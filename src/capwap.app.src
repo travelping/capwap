@@ -1,6 +1,6 @@
 {application, capwap, [
     {description, "CAPWAP AC Server"},
-    {vsn, "1.0.0"},
+    {vsn, semver},
     {registered, []},
     {applications, [
 	kernel,
