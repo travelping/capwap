@@ -82,7 +82,7 @@ handle_request_text(Req, State) ->
     end.
 
 handle_request_wtp(<<"GET">>, [], Req, State) ->
-    WTPs = lists:map(fun format_wtp/1, capwap:list_wtps()),
+    WTPs = [format_wtp(WTP) || WTP = {_, E} <- capwap:list_wtps(), E =/= undefined],
     {jsx:encode(WTPs), Req, State};
 handle_request_wtp(<<"GET">>, [ _ ], Req, State) ->
     CN = cowboy_req:binding(id, Req),
