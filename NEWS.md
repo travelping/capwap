@@ -3,9 +3,33 @@ capwap
 
 Erlang CAPWAP AC implementation.
 
-Version 3.0.0 - xx Mar 2020
+Version 3.1.0 - 5 Mar 2021
 ---------------------------
 
+**Bugfixes** :bug:
+* [#36](https://github.com/travelping/capwap/pull/36) Bug: Internal Server Error (500) upon using `/api/v1/wtp`
+* [#30](https://github.com/travelping/capwap/pull/30) Fix sintax error in `dev.config`
+* [#33](https://github.com/travelping/capwap/pull/33) FIx failed to boot `recon`
+
+**Dependencies** :gear:
+* [#32](https://github.com/travelping/capwap/pull/32) Update `rebar.lock`
+
+**Features** :rocket:
+* [#35](https://github.com/travelping/capwap/pull/35) Add GH actions
+* [#34](https://github.com/travelping/capwap/pull/34) Start use `SemVer`
+
+Version 3.0.0 - 27 Oct 2020
+---------------------------
+
+* bump ergw_aaa for vendor_dicts fix
+* Fix Docker entrypoint file
+* add more session information into AAA requests
+* change AAA event logs to reports
+* switch to newer ergw_aaa
+* update dependencies
+* switch to maps in JSON decode
+* drop gen_socket dependency
+* replace get_stacktrace/0 in try/catch clause
 * replace lager with kernel logger
 
 Version 2.2.0 - 24 Apr 2018
