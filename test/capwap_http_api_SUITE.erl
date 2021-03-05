@@ -15,6 +15,7 @@
 all() ->
     [http_api_version_req,
      http_api_list_wtps,
+     http_api_list_wtps_with_undefined,
      http_api_get_wtp_info,
      http_api_prometheus_metrics_req,
      http_api_prometheus_metrics_sub_req,
@@ -72,6 +73,28 @@ http_api_list_wtps() ->
     [{doc, "Check /api/v1/wtp API"}].
 http_api_list_wtps(_Config) ->
     capwap_wtp_reg:register_args(<<"test-wtp">>, {{127,0,0,1}, 0}),
+
+    URL = get_test_url("/api/v1/wtp"),
+    {ok, {_, _, Body}} = httpc:request(get, {URL, []},
+				       [], [{body_format, binary}]),
+    Res = jsx:decode(Body, [return_maps]),
+    ?assertEqual([#{<<"id">> => <<"test-wtp">>,
+                    <<"endpoint">> => #{
+                      <<"ip">> => <<"127.0.0.1">>,
+                      <<"port">> => 0
+                    } }], Res),
+    capwap_wtp_reg:unregister(),
+    {ok, {_, _, Body1}} = httpc:request(get, {URL, []},
+				       [], [{body_format, binary}]),
+    Res1 = jsx:decode(Body1, [return_maps]),
+    ?assertEqual([], Res1),
+    ok.
+
+http_api_list_wtps_with_undefined() ->
+    [{doc, "Check /api/v1/wtp API with undefined endpoint"}].
+http_api_list_wtps_with_undefined(_Config) ->
+    capwap_wtp_reg:register_args(<<"test-wtp">>, {{127,0,0,1}, 0}),
+    capwap_wtp_reg:register_args(<<"test-wtp-undefined">>, undefined),
 
     URL = get_test_url("/api/v1/wtp"),
     {ok, {_, _, Body}} = httpc:request(get, {URL, []},
