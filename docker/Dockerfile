@@ -1,7 +1,7 @@
 # -- build-environment --
 # see https://docs.docker.com/engine/userguide/eng-image/multistage-build/
 
-FROM erlang:22.2.7-alpine AS build-env
+FROM erlang:22.3.4.16-alpine AS build-env
 
 ARG     BUILD_PROFILE=prod
 WORKDIR /build
@@ -31,7 +31,7 @@ RUN     export BUILD_PROFILE=$(echo $BUILD_PROFILE | sed 's/+/,/g') && \
 
 # -- runtime image --
 
-FROM    alpine:3.11
+FROM    alpine:3.13
 
 ARG     BUILD_PROFILE=prod
 WORKDIR /
