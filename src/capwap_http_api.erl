@@ -49,7 +49,7 @@ start_link() ->
             {"/api/v1/spec/ui/[...]", cowboy_static, {priv_dir, capwap, "static"}}
 		]}
 	]),
-    TransOpts = [{port, Port}, {ip, IP}, INet, {num_acceptors, AcceptorsNum}],
+    TransOpts = #{num_acceptors => AcceptorsNum, socket_opts => [{port, Port}, {ip, IP}, INet]},
     ProtoOpts = #{env => #{dispatch => Dispatch}},
     cowboy:start_clear(capwap_http_api, TransOpts, ProtoOpts).
 
