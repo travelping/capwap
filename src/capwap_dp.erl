@@ -32,7 +32,7 @@
          terminate/2, code_change/3]).
 
 %% dev API
--export([run/1]).
+-export([run/1, get_node/0]).
 
 -include_lib("kernel/include/logger.hrl").
 -include("include/capwap_packet.hrl").

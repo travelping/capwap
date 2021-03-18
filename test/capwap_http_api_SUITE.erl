@@ -21,7 +21,9 @@ all() ->
      http_api_prometheus_metrics_sub_req,
      http_api_metrics_req,
      http_api_metrics_sub_req,
-     http_api_bad_command
+     http_api_bad_command,
+     http_api_dp_wtp_list_error,
+     http_api_dp_status_error
     ].
 
 init_per_suite(Config0) ->
@@ -187,6 +189,26 @@ http_api_bad_command(_Config) ->
     {ok, {_, _, Body0}} = httpc:request(get, {URL0, []},
 				       [], [{body_format, binary}]),
     ?assertEqual(<<>>, Body0),
+    ok.
+
+http_api_dp_wtp_list_error() ->
+    [{doc, "Check /api/v1/dp/wtp-list API with capwap-dp node down"}].
+http_api_dp_wtp_list_error(_Config) ->
+    URL = get_test_url("/api/v1/dp/wtp-list"),
+    {ok, {_, _, Body}} = httpc:request(get, {URL, []},
+				       [], [{body_format, binary}]),
+    Res = jsx:decode(Body, [return_maps]),
+    ?assertEqual(<<"error">>, maps:get(<<"type">>, Res)),
+    ok.
+
+http_api_dp_status_error() ->
+    [{doc, "Check /api/v1/dp/status API with capwap-dp node down"}].
+http_api_dp_status_error(_Config) ->
+    URL = get_test_url("/api/v1/dp/stats"),
+    {ok, {_, _, Body}} = httpc:request(get, {URL, []},
+				       [], [{body_format, binary}]),
+    Res = jsx:decode(Body, [return_maps]),
+    ?assertEqual(<<"error">>, maps:get(<<"type">>, Res)),
     ok.
 
 %%%===================================================================

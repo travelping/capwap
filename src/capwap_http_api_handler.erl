@@ -23,7 +23,7 @@
          handle_request_json/2,
          handle_request_text/2,
          allowed_methods/2,
-         content_types_accepted/2]).
+         content_types_accepted/2,fmt_dp_wtp/2]).
 
 -record(s, {
     verbose = false :: boolean(),
@@ -174,26 +174,33 @@ handle_request_station(_, _, Req, State) ->
 
 handle_request_dp(<<"GET">>, [<<"wtp-list">>], Req,
                   State = #s{verbose = Verbose}) ->
-    WTPs = capwap_dp:list_wtp(),
-    Res = [fmt_dp_wtp(Verbose, WTP) || WTP <- WTPs],
-    {jsx:encode(Res), Req, State};
+    case catch capwap_dp:list_wtp() of
+        WTPs when is_list(WTPs) ->
+            Res = [fmt_dp_wtp(Verbose, WTP) || WTP <- WTPs],
+            {jsx:encode(Res), Req, State};
+        _ ->
+            {stop, dp_error_response(Req), State}
+    end;
 handle_request_dp(<<"GET">>, [<<"stats">>], Req,
                   State = #s{verbose = Verbose}) ->
-    StatsIn = capwap_dp:get_stats(),
-    [H | _] = StatsIn,
-    {_, Totals, Res} = lists:foldl(fun(Stats, {Cnt, Sum, Acc}) ->
-        S = tuple_to_list(Stats),
-        NewAcc = case Verbose of
-            true ->
-                Label = bin_fmt("thread_~w", [Cnt]),
-                fmt_worker_stats(Label, S, Acc);
-            _  ->
-                Acc
-        end,
-        {Cnt + 1, lists:zipwith(fun(X, Y) -> X + Y end, S, Sum), NewAcc}
-    end, {1, lists:duplicate(size(H), 0), []}, StatsIn),
-    Res1 = fmt_worker_stats(<<"total">>, Totals, Res),
-    {jsx:encode(Res1), Req, State};
+    case catch capwap_dp:get_stats() of
+        [H | _] = StatsIn ->
+            {_, Totals, Res} = lists:foldl(fun(Stats, {Cnt, Sum, Acc}) ->
+                S = tuple_to_list(Stats),
+                NewAcc = case Verbose of
+                    true ->
+                        Label = bin_fmt("thread_~w", [Cnt]),
+                        fmt_worker_stats(Label, S, Acc);
+                    _  ->
+                        Acc
+                end,
+                {Cnt + 1, lists:zipwith(fun(X, Y) -> X + Y end, S, Sum), NewAcc}
+            end, {1, lists:duplicate(size(H), 0), []}, StatsIn),
+            Res1 = fmt_worker_stats(<<"total">>, Totals, Res),
+            {jsx:encode(Res1), Req, State};
+        _ ->
+            {stop, dp_error_response(Req), State}
+        end;
 handle_request_dp(_, _, Req, State) ->
     {jsx:encode([{error, bad_command}]), Req, State}.
 
@@ -258,11 +265,11 @@ fmt_dp_wtp_stats(true, {RcvdPkts, SendPkts, RcvdBytes, SendBytes,
                {fragment_too_old, ErrFragmentTooOld}]} | Acc];
 fmt_dp_wtp_stats(_, _, Acc) -> Acc.
 
-fmt_dp_wtp_stas(false, {MAC, _RadioId, _BSS, _Stats}) ->
-    [{mac, capwap_tools:format_eui(MAC)}];
-fmt_dp_wtp_stas(true, {MAC, _RadioId, _BSS, Stats}) ->
+fmt_dp_wtp_stas(false, {MAC, _VLAN, _RadioId, _BSSId, _Stats}) ->
+    [{mac, list_to_binary(capwap_tools:format_eui(MAC))}];
+fmt_dp_wtp_stas(true, {MAC, _VLAN, _RadioId, _BSSId, Stats}) ->
     {RcvdPkts, SendPkts, RcvdBytes, SendBytes} = Stats,
-    [{mac, capwap_tools:format_eui(MAC)},
+    [{mac, list_to_binary(capwap_tools:format_eui(MAC))},
      {input, [{bytes, RcvdBytes},
               {packets, RcvdPkts}]},
      {output, [{bytes, SendBytes},
@@ -467,3 +474,13 @@ make_metric_name(Path) ->
     NameList = lists:join($_, lists:map(fun ioize/1, Path)),
     NameBin = iolist_to_binary(NameList),
     re:replace(NameBin, "-|\\.", "_", [global, {return,binary}]).
+
+dp_error_response(Req) ->
+    Node = capwap_dp:get_node(),
+    Body = jsx:encode(#{
+        type => <<"error">>,
+        message => <<"Something is wrong with 'capwap-dp'">>,
+        dp_node => list_to_binary(atom_to_list(Node)),
+        ping_status => list_to_binary(atom_to_list(net_adm:ping(Node)))
+    }),
+    cowboy_req:reply(500, #{}, Body, Req).
