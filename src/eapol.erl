@@ -104,14 +104,14 @@ mic_algo(3) -> 'AES-128-CMAC';
 mic_algo(X) when is_integer(X) -> unknown.
 
 calc_hmac(#ccmp{mic_algo = 'HMAC-SHA1-128', kck = KCK}, EAPOL, Data, MICLen) ->
-    C1 = crypto:hmac_init(sha, KCK),
-    C2 = crypto:hmac_update(C1, EAPOL),
-    C3 = crypto:hmac_update(C2, binary:copy(<<0>>, MICLen)),
-    C4 = crypto:hmac_update(C3, Data),
-    crypto:hmac_final_n(C4, MICLen);
+    C1 = crypto:mac_init(hmac, sha, KCK),
+    C2 = crypto:mac_update(C1, EAPOL),
+    C3 = crypto:mac_update(C2, binary:copy(<<0>>, MICLen)),
+    C4 = crypto:mac_update(C3, Data),
+    crypto:mac_finalN(C4, MICLen);
 
 calc_hmac(#ccmp{mic_algo = 'AES-128-CMAC', kck = KCK}, EAPOL, Data, MICLen) ->
-    aes_cmac:aes_cmac(KCK, <<EAPOL/binary, 0:(MICLen * 8), Data/binary>>).
+    crypto:mac(cmac, aes_128_cbc, KCK, <<EAPOL/binary, 0:(MICLen * 8), Data/binary>>).
 
 packet(Data) ->
     DataLen = size(Data),
@@ -234,7 +234,7 @@ prf(_Type, _Key, _Label, _Data, WantedLength, _N, [Last | Acc])
     list_to_binary(lists:reverse(Acc, [B]));
 
 prf(Type, Key, Label, Data, WantedLength, N, Acc) ->
-    Bin = crypto:hmac(Type, Key, [Label, 0, Data, N]),
+    Bin = crypto:mac(hmac, Type, Key, [Label, 0, Data, N]),
     prf(Type, Key, Label, Data, WantedLength - bit_size(Bin), N + 1, [Bin|Acc]).
 
 %% IEEE 802.11-2012, Sect. 11.6.1.7.2, KDF
@@ -249,7 +249,7 @@ kdf(_Type, _Key, _Label, _Data, WantedLength, _N, [Last | Acc])
     list_to_binary(lists:reverse(Acc, [B]));
 
 kdf(Type, Key, Label, Data, WantedLength, N, Acc) ->
-    Bin = crypto:hmac(Type, Key, [<<N:16/little>>, Label, Data]),
+    Bin = crypto:mac(hmac, Type, Key, [<<N:16/little>>, Label, Data]),
     kdf(Type, Key, Label, Data, WantedLength - bit_size(Bin), N + 1, [Bin|Acc]).
 
 
@@ -334,7 +334,12 @@ ft_msk2ptk(MSK, SNonce, ANonce, BSS, StationMAC, SSID, MDomain, R0KH, R1KH, S0KH
 aes_key_wrap(KEK, PlainText) ->
     IV = binary:copy(<<16#A6>>, 8),
     Text = [X || <<X:8/bytes>> <= PlainText],
-    aes_key_wrap(KEK, IV, Text, 1, 0).
+    Algo = case byte_size(KEK) of
+	       16 -> aes_128_ecb;
+	       24 -> aes_192_ecb;
+	       32 -> aes_256_ecb
+	   end,
+    aes_key_wrap({Algo, KEK}, IV, Text, 1, 0).
 
 aes_key_wrap(_KEK, IV, Text, _Cnt, 6) ->
     iolist_to_binary([IV | Text]);
@@ -344,8 +349,7 @@ aes_key_wrap(KEK, IV0, Text0, Cnt0, Round) ->
 
 aes_key_wrap0(_KEK, IV, [], Wrapped, Cnt) ->
     {IV, lists:reverse(Wrapped), Cnt};
-aes_key_wrap0(KEK, IV0, [Text | Next], Wrapped, Cnt) ->
-    <<MSB:8/bytes, LSB:8/bytes, _/binary>> = crypto:block_encrypt(aes_ecb, KEK, [IV0, Text]),
+aes_key_wrap0({Algo, Key} = KEK, IV0, [Text | Next], Wrapped, Cnt) ->
+    <<MSB:8/bytes, LSB:8/bytes, _/binary>> = crypto:crypto_one_time(Algo, Key, [IV0, Text], true),
     IV1 = crypto:exor(MSB, <<Cnt:64>>),
     aes_key_wrap0(KEK, IV1, Next, [LSB | Wrapped], Cnt + 1).
-
