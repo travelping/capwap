@@ -160,7 +160,7 @@ handle_info({packet_in, tap, VlanId, Packet}, State) ->
 
 handle_info({capwap_in, WTPDataChannelAddress, Msg}, State) ->
     ?LOG(warning, "CAPWAP from ~p: ~p", [WTPDataChannelAddress, Msg]),
-    capwap_ac:handle_data(self(), WTPDataChannelAddress, Msg),
+    erlang:spawn(capwap_ac, handle_data, [self(), WTPDataChannelAddress, Msg]),
     {noreply, State};
 
 handle_info({wtp_down, WTP}, State) ->
