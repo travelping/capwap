@@ -566,13 +566,6 @@ handle_event({call, From}, {get_station_config, BSS}, run, Data) ->
 	end,
     {keep_state, Data, [{reply, From, Reply}]};
 
-handle_event(info, {timeout, TRef, Ev}, run, Data) ->
-    handle_session_timer(TRef, Ev, Data);
-
-handle_event(info, echo_timeout, run, Data) ->
-    ?LOG(info, "Echo Timeout in Run"),
-    {stop, normal, Data};
-
 handle_event(cast, {echo_request, Seq, Elements,
 		    #capwap_header{
 		       radio_id = RadioId, wb_id = WBID, flags = Flags}},
@@ -779,8 +772,16 @@ handle_event(info, {ssl, Socket, Packet}, State, Data = #data{socket = {_, Socke
     ?LOG(debug, "in state ~p got DTLS: ~p", [State, Packet]),
     handle_capwap_packet(Packet, Data);
 
-handle_event(info, {timeout, _, retransmit}, State, Data) ->
+handle_event(info, {timeout, TRef, retransmit}, State, #data{retransmit_timer = TRef} = Data) ->
     resend_request(State, Data);
+
+handle_event(info, {timeout, TRef, Ev}, run, Data) ->
+    handle_session_timer(TRef, Ev, Data);
+
+handle_event(info, echo_timeout, run, Data) ->
+    ?LOG(info, "Echo Timeout in Run"),
+    {stop, normal, Data};
+
 handle_event(info, {'EXIT', _Pid, normal}, _State, _Data) ->
     keep_state_and_data;
 handle_event(info, {'EXIT', _Pid, shutdown}, _State, _Data) ->
