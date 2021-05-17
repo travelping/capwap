@@ -124,7 +124,7 @@
 	    #capwap_header{radio_id = RadioId, wb_id = WBID} = Header,
 	    ?LOG(info, "~s: ~s(Seq: ~w, R-Id: ~w, WB-Id: ~w): ~s",
 		 [Id, capwap_packet:msg_description(MsgType), SeqNo, RadioId, WBID,
-		  lists:join(", ", [capwap_packet:pretty_print(E) || E <- maps:values(Elements)])])
+		  log_fmt_capwap_ies(Elements)])
 	catch
 	    _:_ -> ok
 	end).
@@ -133,11 +133,17 @@
 	try
 	    #capwap_header{radio_id = RadioId, wb_id = WBID} = Header,
 	    ?LOG(info, "~s: Keep-Alive(R-Id: ~w, WB-Id: ~w): ~s",
-		 [Id, RadioId, WBID,
-		  lists:join(", ", [capwap_packet:pretty_print(E) || E <- PayLoad])])
+		 [Id, RadioId, WBID, log_fmt_capwap_ies(PayLoad)])
 	catch
 	    _:_ -> ok
 	end).
+
+log_fmt_capwap_ies(IEs) when is_map(IEs) ->
+    lists:join(", ", [capwap_packet:pretty_print(E) || E <- maps:values(IEs)]);
+log_fmt_capwap_ies(IEs) when is_list(IEs) ->
+    lists:join(", ", [capwap_packet:pretty_print(E) || E <- IEs]);
+log_fmt_capwap_ies(IEs) ->
+    io_lib:format("~p", [IEs]).
 
 %%%===================================================================
 %%% API
