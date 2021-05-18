@@ -271,7 +271,7 @@ callback_mode() ->
 init([WTPControlChannelAddress]) ->
     process_flag(trap_exit, true),
     logger:set_process_metadata(#{control_channel_address => WTPControlChannelAddress}),
-    exometer:update([capwap, ac, wtp_count], 1),
+    prometheus_gauge:inc(capwap_ac_wtps),
     capwap_wtp_reg:register(WTPControlChannelAddress),
     MTU = capwap_config:get(ac, mtu, 1500),
     {ok, listen, #data{ctrl_channel_address = WTPControlChannelAddress,
@@ -350,7 +350,7 @@ handle_event(cast, {accept, dtls, Socket}, listen, Data) ->
 	    {next_state, join, Data1};
 	{error, {tls_alert,"certificate expired"}} ->
 	    ?LOG(warning, "ssl_accept failed: certificate expired"),
-	    exometer:update([capwap, ac, ssl_expired_certs_count], 1),
+	    prometheus_counter:inc(capwap_ac_ssl_expired_certs_total),
 	    {stop, normal, Data#data{session=Session}};
 	Other ->
 	    ?LOG(error, "ssl_accept failed: ~p", [Other]),
@@ -432,14 +432,7 @@ handle_event(cast, {join_request, Seq,
     SessionOpts = wtp_accounting_infos(maps:values(Elements), [{'CAPWAP-Radio-Id', RId}]),
     ?LOG(info, "WTP Session Start Opts: ~p", [SessionOpts]),
 
-    exometer:update_or_create([capwap, wtp, CommonName, start_time], StartTime, gauge, []),
-    exometer:update_or_create([capwap, wtp, CommonName, stop_time], 0, gauge, []),
-    exometer:update_or_create([capwap, wtp, CommonName, station_count], 0, gauge, []),
-    lists:foreach(fun(X) ->
-			  exometer:update_or_create([capwap, wtp, CommonName, X], 0, gauge, [])
-		  end, ['InPackets', 'OutPackets', 'InOctets', 'OutOctets',
-			'Received-Fragments', 'Send-Fragments', 'Error-Invalid-Stations',
-			'Error-Fragment-Invalid', 'Error-Fragment-Too-Old']),
+    prometheus_gauge:set(capwap_wtp_stations, [CommonName], 0),
 
     SOpts = #{now => Now},
     ergw_aaa_session:invoke(Session, to_session(SessionOpts), start, SOpts),
@@ -659,8 +652,7 @@ handle_event(cast, station_detaching, _State, Data=#data{id = WtpId, station_cou
 	    ?LOG(error, "Station counter and stations got out of sync", []),
 	    keep_state_and_data;
        true ->
-	    exometer:update([capwap, ac, station_count], -1),
-	    exometer:update([capwap, wtp, WtpId, station_count], SC - 1),
+	    prometheus_gauge:dec(capwap_wtp_stations, [WtpId]),
 	    {keep_state, Data#data{station_count = SC - 1}}
     end;
 
@@ -791,22 +783,17 @@ handle_event(info, Info, State, _Data) ->
     keep_state_and_data.
 
 terminate(Reason, State,
-	  Data = #data{socket = Socket, session = Session,
-			 id = CommonName, station_count = StationCount}) ->
+	  Data = #data{socket = Socket, session = Session, id = CommonName}) ->
     error_logger:info_msg("AC session terminating in state ~p with state ~p with reason ~p~n",
 			  [State, Data, Reason]),
     AcctValues = stop_wtp(State, Data),
     if Session /= undefined ->
-	    ergw_aaa_session:invoke(Session, AcctValues, stop, #{async => true}),
-
-	    exometer:update([capwap, wtp, CommonName, station_count], 0),
-	    StopTime = erlang:system_time(milli_seconds),
-	    exometer:update_or_create([capwap, wtp, CommonName, stop_time], StopTime, gauge, []);
+	    ergw_aaa_session:invoke(Session, AcctValues, stop, #{async => true});
        true -> ok
     end,
 
-    exometer:update([capwap, ac, station_count], -StationCount),
-    exometer:update([capwap, ac, wtp_count], -1),
+    prometheus_gauge:set(capwap_wtp_stations, [CommonName], 0),
+    prometheus_gauge:dec(capwap_ac_wtps),
     socket_close(Socket),
     ok.
 
@@ -1483,10 +1470,9 @@ control_addresses() ->
     [control_address(A) || A <- resolve_ips(Addrs)].
 
 get_wtp_count() ->
-    case exometer:get_value([capwap, ac, wtp_count]) of
-	{ok, {value, Value}}
-	  when is_integer(Value)
-	       -> Value;
+    case prometheus_gauge:value(capwap_ac_wtps) of
+	Value when is_integer(Value)
+		   -> Value;
 	_ -> 0
     end.
 
@@ -2216,8 +2202,7 @@ internal_new_station(Wlan = #wlan{}, StationMAC, BSS,
     ?LOG(debug, "search for station ~p", [{self(), StationMAC}]),
     case capwap_station_reg:lookup(self(), BSS, StationMAC) of
 	not_found ->
-	    exometer:update([capwap, ac, station_count], 1),
-	    exometer:update([capwap, wtp, WtpId, station_count], StationCount + 1),
+	    prometheus_gauge:inc(capwap_wtp_stations, [WtpId]),
 	    StationCfg = get_station_cfg(Wlan, BSS, Data),
 	    Reply =
 		case capwap_station_reg:lookup(StationMAC) of
@@ -2508,9 +2493,19 @@ accounting_update(#data{session = Session, data_channel_address = WTPDataChannel
     Acc = wtp_stats_to_accouting(Stats),
 
     maps:fold(fun(Key, Value, _) ->
-		      exometer:update([capwap, wtp, CommonName, Key], Value)
+		      prometheus_counter:inc(metric(Key), [CommonName], Value)
 	      end, ok, Acc),
     Acc.
+
+metric('InPackets') -> capwap_wtp_in_packets_total;
+metric('OutPackets') -> capwap_wtp_out_packets_total;
+metric('InOctets') -> capwap_wtp_in_octets_total;
+metric('OutOctets') -> capwap_wtp_out_octets_total;
+metric('Received-Fragments') -> capwap_wtp_received_fragments_total;
+metric('Send-Fragments') -> capwap_wtp_send_fragments_total;
+metric('Error-Invalid-Stations') -> capwap_wtp_error_invalid_stations_total;
+metric('Error-Fragment-Invalid') -> capwap_wtp_error_fragment_invalid_total;
+metric('Error-Fragment-Too-Old') -> capwap_wtp_error_fragment_too_old_total.
 
 stop_wtp(run, #data{data_channel_address = WTPDataChannelAddress}) ->
     ?LOG(error, "STOP_WTP in run"),

@@ -10,9 +10,9 @@
 	pcapng,
 	ssl,
 	regine,
-	exometer_core,
+	prometheus,
 	ergw_aaa,
-	cowboy,
+	cowboy, prometheus_cowboy,
 	pbkdf2,
 	hackney,
 	jsx

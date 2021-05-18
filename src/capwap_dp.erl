@@ -289,8 +289,22 @@ wtp_stats_to_accouting(_) ->
 exo_report_stats(Thread, ProcessStats) ->
     Acc = wtp_stats_to_accouting(ProcessStats),
     lists:foreach(fun ({Key, Value}) ->
-			  exometer:update_or_create([capwap, dp, Thread, Key], Value, gauge, [])
+			  prometheus_counter:inc(metric(Key), [Thread], Value)
 		  end, Acc).
+
+metric('InPackets') -> capwap_dp_in_packets_total;
+metric('OutPackets') -> capwap_dp_out_packets_total;
+metric('InOctets') -> capwap_dp_in_octets_total;
+metric('OutOctets') -> capwap_dp_out_octets_total;
+metric('Received-Fragments') -> capwap_dp_received_fragments_total;
+metric('Send-Fragments') -> capwap_dp_send_fragments_total;
+metric('Error-Invalid-Stations') -> capwap_dp_error_invalid_stations_total;
+metric('Error-Fragment-Invalid') -> capwap_dp_error_fragment_invalid_total;
+metric('Error-Fragment-Too-Old') -> capwap_dp_error_fragment_too_old_total;
+metric('Error-Invalid-WTP') -> capwap_dp_error_invalid_wtp;
+metric('Error-Header-Length-Invalid') -> capwap_dp_error_header_length_invalid;
+metric('Error-Too-Short') -> capwap_dp_error_too_short;
+metric('Rate-Limit-Unknown-WTP') -> capwap_dp_rate_limit_unknown_wtp.
 
 report_stats(ProcessStats, {Cnt, Sum}) ->
     exo_report_stats(integer_to_list(Cnt), ProcessStats),

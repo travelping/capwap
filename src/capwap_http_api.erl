@@ -29,8 +29,7 @@ start_link() ->
     AcceptorsNum = proplists:get_value(acceptors_num, HttpConfig, ?ACCEPTORS_NUM),
     Dispatch = cowboy_router:compile([
 		{'_', [
-            {"/metrics",        capwap_http_api_handler, []},
-            {"/metrics/[...]",  capwap_http_api_handler, []},
+	    {"/metrics/[:registry]", prometheus_cowboy2_handler, []},
             {"/api/v1/version", capwap_http_api_handler, []},
 
             {"/api/v1/wtp",                           capwap_http_api_handler, []},

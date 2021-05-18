@@ -18,9 +18,6 @@ all() ->
      http_api_list_wtps_with_undefined,
      http_api_get_wtp_info,
      http_api_prometheus_metrics_req,
-     http_api_prometheus_metrics_sub_req,
-     http_api_metrics_req,
-     http_api_metrics_sub_req,
      http_api_bad_command,
      http_api_dp_wtp_list_error,
      http_api_dp_status_error
@@ -31,28 +28,6 @@ init_per_suite(Config0) ->
     inets:start(),
     Apps = setup_applications(),
     Config = [ {apps, Apps} | Config0 ],
-
-    %% fake exometer entries
-    DataPointG = [capwap, dp, "0", 'Error-Fragment-Invalid'],
-    DataPointH = [capwap, wtp, <<"wtp-test">>, 'IpPackets'],
-    DataPointS = [capwap, dp, "all", 'Error-To-Short'],
-    DataPointF = [socket, 'gtp-c', irx, pt, v1, function_test],
-    DataPointIP4 = [path, some_metric, {127,0,0,1}, contexts],
-    DataPointIP6 = [path, irx, {0,0,0,0,0,0,0,1}, contexts],
-    exometer:new(DataPointG, gauge, []),
-    exometer:new(DataPointH, histogram, [{time_span, 300 * 1000}]),
-    exometer:new(DataPointS, spiral, [{time_span, 300 * 1000}]),
-    exometer:new(DataPointF, {function, ?MODULE, exo_function}, []),
-    exometer:new(DataPointIP4, gauge, []),
-    exometer:new(DataPointIP6, gauge, []),
-    lists:foreach(
-      fun(_) ->
-	      Value = rand:uniform(1000),
-	      exometer:update(DataPointG, Value + 0.001),
-	      exometer:update(DataPointH, Value),
-	      exometer:update(DataPointS, Value)
-      end, lists:seq(1, 100)),
-
     Config.
 
 end_per_suite(Config) ->
@@ -128,58 +103,16 @@ http_api_prometheus_metrics_req() ->
     [{doc, "Check Prometheus API Endpoint"}].
 http_api_prometheus_metrics_req(_Config) ->
     URL = get_test_url("/metrics"),
-    Accept = "application/vnd.google.protobuf;proto=io.prometheus.client.MetricFamily;encoding=delimited;q=0.7,"
-             ++ "text/plain;version=0.0.4;q=0.3,*/*;q=0.1",
+    Accept = "text/plain;version=0.0.4;q=0.3,*/*;q=0.1",
     {ok, {_, _, Body}} = httpc:request(get, {URL, [{"Accept", Accept}]},
 				       [], [{body_format, binary}]),
     Lines = binary:split(Body, <<"\n">>, [global]),
     Result =
-        lists:filter(
-          fun(<<"capwap_ac_station_count", _/binary>>) -> true;
-             (_) -> false
-          end, Lines),
+	lists:filter(
+	  fun(<<"capwap_ac_wtps", _/binary>>) -> true;
+	     (_) -> false
+	  end, Lines),
     ?assertEqual(1, length(Result)),
-    ok.
-
-http_api_prometheus_metrics_sub_req() ->
-    [{doc, "Check /metrics/... Prometheus API endpoint"}].
-http_api_prometheus_metrics_sub_req(_Config) ->
-    Accept = "application/vnd.google.protobuf;proto=io.prometheus.client.MetricFamily;encoding=delimited;q=0.7,"
-             ++ "text/plain;version=0.0.4;q=0.3,*/*;q=0.1",
-    URL0 = get_test_url("/metrics/capwap/ac/station_count"),
-    {ok, {_, _, Body}} = httpc:request(get, {URL0, [{"Accept", Accept}]},
-				       [], [{body_format, binary}]),
-    Lines = binary:split(Body, <<"\n">>, [global]),
-    Result =
-        lists:filter(fun(<<"capwap_ac_station_count", _/binary>>) ->
-                             true;
-                        (_) -> false
-                     end, Lines),
-    ?assertEqual(1, length(Result)),
-    ok.
-
-http_api_metrics_req() ->
-    [{doc, "Check /metrics API"}].
-http_api_metrics_req(_Config) ->
-    URL = get_test_url("/metrics"),
-    {ok, {_, _, Body}} = httpc:request(get, {URL, []},
-				       [], [{body_format, binary}]),
-    Res = jsx:decode(Body, [return_maps]),
-    ?assertMatch(#{<<"value">> := 0},
-                 maps:get(<<"station_count">>,
-                    maps:get(<<"ac">>,
-                        maps:get(<<"capwap">>, Res)))
-                ),
-    ok.
-
-http_api_metrics_sub_req() ->
-    [{doc, "Check /metrics/... API"}].
-http_api_metrics_sub_req(_Config) ->
-    URL0 = get_test_url("/metrics/capwap/ac/station_count"),
-    {ok, {_, _, Body0}} = httpc:request(get, {URL0, []},
-				       [], [{body_format, binary}]),
-    Res0 = jsx:decode(Body0, [return_maps]),
-    ?assertMatch(#{<<"value">> := 0}, Res0),
     ok.
 
 http_api_bad_command() ->

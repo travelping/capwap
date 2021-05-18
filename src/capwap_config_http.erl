@@ -49,7 +49,7 @@ request(Path, Opts) ->
             {ok, Body} = hackney:body(ClientRef),
             jsx:decode(Body, [return_maps, {labels, existing_atom}]);
         _ ->
-            exometer:update([capwap, ac, error_wtp_http_config_count], 1),
+	    prometheus_counter:inc(capwap_ac_error_wtp_http_config_count),
             throw({error, get_http_config_wtp})
     end.
 
