@@ -6,7 +6,7 @@
  {<<"cut">>,{pkg,<<"cut">>,<<"1.0.3">>},0},
  {<<"dtlsex">>,
   {git,"git://github.com/RoadRunnr/dtlsex.git",
-       {ref,"6cb9e52ff00ab0e5f33e0c4b54bf46eacddeb8e7"}},
+       {ref,"99d8841d2b5eed259dfca6c9f799e3e972d9b858"}},
   0},
  {<<"eradius">>,{pkg,<<"eradius">>,<<"2.2.1">>},1},
  {<<"ergw_aaa">>,
