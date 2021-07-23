@@ -31,7 +31,7 @@ RUN     export BUILD_PROFILE=$(echo $BUILD_PROFILE | sed 's/+/,/g') && \
 
 # -- runtime image --
 
-FROM    alpine:3.13
+FROM    alpine:3.14
 
 ARG     BUILD_PROFILE=prod
 WORKDIR /
