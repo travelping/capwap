@@ -13,7 +13,7 @@
 %% You should have received a copy of the GNU Affero General Public License
 %% along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
--module(capwap_wtp_fsm_SUITE).
+-module(capwap_wtp_fsm_loc_SUITE).
 
 -compile(export_all).
 
@@ -68,15 +68,22 @@ assert_mbox_match(MatchSpec, File, Line) ->
      end)(Expected, Actual) orelse error(badmatch)).
 
 suite() ->
-    [{timetrap,{minutes,5}}].
+    [{timetrap,{seconds,20}}].
 
 init_per_suite(Config0) ->
     Apps = setup_applications(),
-    Config = [ {apps, Apps} | Config0 ],
     logger:update_primary_config(#{level => all}),
-    Config.
+    Dispatch = cowboy_router:compile([
+        {'_', [{"/[...]", test_loc_handler, []}]}
+    ]),
+    {ok, _} = cowboy:start_clear(test_loc_handler,
+        [{port, 9999}],
+        #{env => #{dispatch => Dispatch}}
+    ),
+		[ {apps, Apps} | Config0 ].
 
 end_per_suite(Config) ->
+		cowboy:stop_listener(test_loc_handler),
     Apps = proplists:get_value(apps, Config),
     [ application:stop(App) || App <- Apps ],
 		dp_mockup:unload(),
@@ -89,7 +96,8 @@ init_per_testcase(_, Config) ->
     Config.
 
 end_per_testcase(_, Config) ->
-    meck_unload(),
+    Unloaded = meck_unload(),
+		ct:log("Unloaded: ~p~n", [Unloaded]),
     Config.
 
 all() ->
@@ -117,6 +125,9 @@ check_session_args({Key, MatchSpec}, Session) ->
 wtp_fsm(_Config) ->
     meck:expect(ergw_aaa_session, invoke,
 		fun(Session, SessionOpts, authenticate, Opts) ->
+			ct:pal("Session: ~p~n", [Session]),
+			ct:pal("Opts: ~p~n", [Opts]),
+			ct:pal("SessionOpts: ~p~n", [SessionOpts]),
 			check_auth_session_args(SessionOpts),
 			meck:passthrough([Session, SessionOpts, authenticate, Opts]);
 		   (Session, SessionOpts, interim, Opts) ->
@@ -124,6 +135,7 @@ wtp_fsm(_Config) ->
 							 (X) when X == undefined -> ok end),
 			IsListOrUndefined = ets:fun2ms(fun(X) when is_list(X) -> ok;
 							  (X) when X == undefined -> ok end),
+			IsList = ets:fun2ms(fun(X) when is_list(X) -> ok end),
 			OptValues = [{'TP-CAPWAP-Radio-Id',      IsIntOrUndefined},
 				     {'TP-CAPWAP-Timestamp',     IsIntOrUndefined},
 				     {'TP-CAPWAP-WWAN-CREG',     IsIntOrUndefined},
@@ -140,6 +152,9 @@ wtp_fsm(_Config) ->
 				     {'TP-CAPWAP-GPS-Latitude',  IsListOrUndefined},
 				     {'TP-CAPWAP-GPS-Longitude', IsListOrUndefined},
 				     {'TP-CAPWAP-GPS-Timestamp', IsListOrUndefined}],
+			ct:pal("Session: ~p~n", [Session]),
+			ct:pal("Opts: ~p~n", [Opts]),
+			ct:pal("SessionOpts: ~p~n", [SessionOpts]),
 			lists:foreach(fun(X) ->
 					      check_session_args(X, SessionOpts)
 				      end, OptValues),
@@ -187,6 +202,9 @@ wtp_fsm(_Config) ->
 sta_fsm(_Config) ->
     meck:expect(ergw_aaa_session, invoke,
 		fun(Session, SessionOpts, authenticate, Opts) ->
+			ct:pal("Session: ~p~n", [Session]),
+			ct:pal("Opts: ~p~n", [Opts]),
+			ct:pal("SessionOpts: ~p~n", [SessionOpts]),
 			check_auth_session_args(SessionOpts),
 			meck:passthrough([Session, SessionOpts, authenticate, Opts]);
 		   (Session, SessionOpts, interim, Opts) ->
@@ -194,6 +212,7 @@ sta_fsm(_Config) ->
 							 (X) when X == undefined -> ok end),
 			IsListOrUndefined = ets:fun2ms(fun(X) when is_list(X) -> ok;
 							  (X) when X == undefined -> ok end),
+			IsList = ets:fun2ms(fun(X) when is_list(X) -> ok end),
 			OptValues = [{'TP-CAPWAP-Radio-Id',      IsIntOrUndefined},
 				     {'TP-CAPWAP-Timestamp',     IsIntOrUndefined},
 				     {'TP-CAPWAP-WWAN-CREG',     IsIntOrUndefined},
@@ -270,9 +289,14 @@ meck_init() ->
     meck:new(ergw_aaa_session, [passthrough]).
 
 meck_unload() ->
-    meck:unload(ergw_aaa_session),
-    meck:unload(ieee80211_station),
-    meck:unload(capwap_ac).
+		lists:foldl(fun(Mod, Acc) ->
+			try
+					meck:unload(Mod),
+					[Mod | Acc]
+			catch error:{not_mocked, Mod} ->
+					Acc
+			end
+		end, [], [ergw_aaa_session, ieee80211_station, capwap_ac]).
 
 setup_applications() ->
     {ok, CWD} = file:get_cwd(),
@@ -339,7 +363,8 @@ setup_applications() ->
 	       [{ergw_aaa_static,
 		 [{'NAS-Identifier',        <<"NAS-Identifier">>},
 		  {'Acct-Interim-Interval', 10}
-		 ]}
+		 ]},
+		       {capwap_http_loc, []}
 	       ]},
 	      {services,
 	       [{'Default',
@@ -354,25 +379,31 @@ setup_applications() ->
 			 #{'Result-Code' => 2001}
 		    }
 		  }
-		 ]}
+		 ]},
+		       {'Load-Location', [
+        {timeout, 5000},
+        {uri, "http://127.0.0.1:9999/api/v1/sOmEtOkEn/attributes"},
+        {keys, [{lat_key, "TB_Telemetry_Latitude"}, {long_key, "TB_Telemetry_Longitude"}]},
+				{default_location, "Lat:0;Long:0"},
+        {handler, capwap_http_loc}]}
 	       ]},
 	      {apps,
 	       [{capwap_wtp,
 		 [{session, ['Default']},
-		  {procedures, [{authenticate, [{'Default', [{answer, 'RADIUS-Auth'}]}]},
+		  {procedures, [{authenticate, ['Load-Location', {'Default', [{answer, 'RADIUS-Auth'}]}]},
 				{authorize, []},
-				{start, [{'Default', [{answer, 'RADIUS-Acct'}]}]},
-				{interim, [{'Default', [{answer, 'RADIUS-Acct'}]}]},
-				{stop, [{'Default', [{answer, 'RADIUS-Acct'}]}]}
+				{start, ['Load-Location', {'Default', [{answer, 'RADIUS-Acct'}]}]},
+				{interim, ['Load-Location', {'Default', [{answer, 'RADIUS-Acct'}]}]},
+				{stop, ['Load-Location', {'Default', [{answer, 'RADIUS-Acct'}]}]}
 			       ]}
 		 ]},
 		{capwap_station,
 		 [{session, ['Default']},
-		  {procedures, [{authenticate, [{'Default', [{answer, 'RADIUS-Auth'}]}]},
+		  {procedures, [{authenticate, ['Load-Location', {'Default', [{answer, 'RADIUS-Auth'}]}]},
 				{authorize, []},
-				{start, [{'Default', [{answer, 'RADIUS-Acct'}]}]},
-				{interim, [{'Default', [{answer, 'RADIUS-Acct'}]}]},
-				{stop, [{'Default', [{answer, 'RADIUS-Acct'}]}]}
+				{start, ['Load-Location', {'Default', [{answer, 'RADIUS-Acct'}]}]},
+				{interim, ['Load-Location', {'Default', [{answer, 'RADIUS-Acct'}]}]},
+				{stop, ['Load-Location', {'Default', [{answer, 'RADIUS-Acct'}]}]}
 			       ]}
 		 ]}
 	       ]}
