@@ -86,7 +86,7 @@ invoke(_Service, init, Session, Events, _Opts, _State) ->
     {ok, Session, Events, #{}};
 
 % Retrieving attributes as per https://thingsboard.io/docs/reference/http-api/
-invoke(_Service, Step, Session0 = #{dev_name := Name}, Events0, Config = #{timeout := Timeout,
+invoke(_Service, Step, Session0, Events0, Config = #{dev_name := Name, timeout := Timeout,
        uri := URI, keys := #{lat_key := LatKey, long_key := LongKey}, token := Token,
        default_location := DefLoc}, State0) when
         Step == start;
@@ -112,7 +112,7 @@ invoke(_Service, Step, Session0 = #{dev_name := Name}, Events0, Config = #{timeo
         _ when is_list(Host) -> Host
     end,
     % Add keys to query
-    KeysListVal = LatKey ++ "," ++ LongKey,
+    KeysListVal = <<LatKey/binary, ",", LongKey/binary>>,
     KeysQuery = uri_string:compose_query([{"keys", KeysListVal}]),
     % TODO Check if binary is needed
     LatKeyBin = unicode:characters_to_binary(LatKey),
@@ -162,24 +162,23 @@ send_location_req(#{timeout := _Timeout, uri := URI = #{path := UriPath}, token 
 		%% conn_opts => #{protocols => [http2]},
 		%% http2_opts => #{keepalive => infinity},
 	%	scope => ?MODULE},
-    DevNamePath = <<UriPath/binary, "/tenant/devices?deviceName=", Name/binary>>,
-    DevNameUri = URI#{path => DevNamePath},
+    UriPathBin = unicode:characters_to_binary(UriPath),
+    DevNamePath = <<UriPathBin/binary, "/tenant/devices">>,
+    DevNameQuery = uri_string:compose_query([{"deviceName", Name}]),
+    DevNameUri = URI#{path => DevNamePath, query => DevNameQuery},
     % {"id":{"entityType":"DEVICE","id":"a1ce4f30-b4cc-11e7-9cbf-d33fd42c8630"}
 
-    {ok, {#{<<"id">> := #{<<"entityType">> := <<"DEVICE">>, <<"id">> := Id}}, ClientRef}} =
+    {ok, {#{<<"id">> := #{<<"entityType">> := <<"DEVICE">>, <<"id">> := Id}}, _}} =
         send_get_hackney(uri_string:recompose(DevNameUri), [JsonHeader, AuthHeader], []),
     % {ok, StreamRef} = send_get_gun(Host, Port, Path, Headers, ReqOpts),
     % get_response(#{timeout => Timeout,
 	% 	   stream_ref => StreamRef,
 	%	   acc => <<>>}).
     % 'https://rms.hbw.cennso.com/api/plugins/telemetry/DEVICE/a1ce4f30-b4cc-11e7-9cbf-d33fd42c8630/values/timeseries?keys=TB_Telemetry_Latitude,TB_Telemetry_Longitude'
-    TelemetryPath = <<UriPath/binary, "/plugins/telemetry/DEVICE/", Id/binary, "/values/timeseries?keys=TB_Telemetry_Latitude,TB_Telemetry_Longitude">>,
+    TelemetryPath = <<UriPathBin/binary, "/plugins/telemetry/DEVICE/", Id/binary, "/values/timeseries">>,
     TelemetryUri = URI#{path => TelemetryPath},
     
-    {ok, Res, ClientRef} =
-        send_get_hackney(uri_string:recompose(TelemetryUri), [JsonHeader, AuthHeader], []),
-
-    Res.
+    send_get_hackney(uri_string:recompose(TelemetryUri), [JsonHeader, AuthHeader], []).
 
 send_get_hackney(Http, Headers, Opts) ->
     case hackney:request(get, Http, Headers, <<>>, Opts) of

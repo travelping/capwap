@@ -791,13 +791,13 @@ handle_event(info, Info, State, _Data) ->
     keep_state_and_data.
 
 terminate(Reason, State,
-	  Data = #data{socket = Socket, session = Session,
+	  Data = #data{socket = Socket, session = Session, name = DevName,
 			 id = CommonName, station_count = StationCount}) ->
     error_logger:info_msg("AC session terminating in state ~p with state ~p with reason ~p~n",
 			  [State, Data, Reason]),
     AcctValues = stop_wtp(State, Data),
     if Session /= undefined ->
-	    ergw_aaa_session:invoke(Session, AcctValues, stop, #{async => true}),
+	    ergw_aaa_session:invoke(Session, AcctValues, stop, #{async => true, dev_name => DevName}),
 
 	    exometer:update([capwap, wtp, CommonName, station_count], 0),
 	    StopTime = erlang:system_time(milli_seconds),
@@ -956,12 +956,12 @@ maybe_takeover(CommonName) ->
 	    ok
     end.
 
-handle_wtp_event(Elements, Header, Data0 = #data{session = Session}) ->
+handle_wtp_event(Elements, Header, Data0 = #data{session = Session, name = DevName}) ->
     IEs = maps:values(Elements),
     SessionOptsList = handle_wtp_stats_event(IEs, Header, []),
     lists:foreach(
       fun(Ev) ->
-	      ergw_aaa_session:invoke(Session, Ev, interim, #{async => true})
+	      ergw_aaa_session:invoke(Session, Ev, interim, #{async => true, dev_name => DevName})
       end, SessionOptsList),
     Data = handle_wtp_action_event(IEs, Header, Data0),
     update_last_gps_position(IEs, Data).
@@ -2599,9 +2599,9 @@ handle_session_timer(_TRef, _Ev, _Data) ->
     keep_state_and_data.
 
 handle_session_timer_ev({_, Level, _} = Ev, {Interval, _, _Opts} = Timer,
-			#data{session = Session, timers = Timers} = Data0) ->
+			#data{session = Session, timers = Timers, name = DevName} = Data0) ->
     Acc = accounting_update(Data0),
-    ergw_aaa_session:invoke(Session, Acc, interim, #{async => true}),
+    ergw_aaa_session:invoke(Session, Acc, interim, #{async => true, dev_name => DevName}),
 
     Data =
 	case Interval of
