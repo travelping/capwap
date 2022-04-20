@@ -1,7 +1,7 @@
 # -- build-environment --
 # see https://docs.docker.com/engine/userguide/eng-image/multistage-build/
 
-FROM quay.io/travelping/alpine-erlang:23.3.4 AS build-env
+FROM quay.io/travelping/alpine-erlang:23.3.4.12 AS build-env
 
 ARG     BUILD_PROFILE=prod
 WORKDIR /build
@@ -31,7 +31,7 @@ RUN     export BUILD_PROFILE=$(echo $BUILD_PROFILE | sed 's/+/,/g') && \
 
 # -- runtime image --
 
-FROM    alpine:3.13
+FROM    alpine:3.15.2
 
 ARG     BUILD_PROFILE=prod
 WORKDIR /
