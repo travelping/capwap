@@ -68,7 +68,7 @@ assert_mbox_match(MatchSpec, File, Line) ->
      end)(Expected, Actual) orelse error(badmatch)).
 
 suite() ->
-    [{timetrap,{seconds,20}}].
+    [{timetrap,{minutes,5}}].
 
 init_per_suite(Config0) ->
     Apps = setup_applications(),
