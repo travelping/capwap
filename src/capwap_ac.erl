@@ -441,7 +441,7 @@ handle_event(cast, {join_request, Seq,
 			'Received-Fragments', 'Send-Fragments', 'Error-Invalid-Stations',
 			'Error-Fragment-Invalid', 'Error-Fragment-Too-Old']),
 
-    SOpts = #{now => Now},
+    SOpts = #{now => Now, dev_name => Name},
     ergw_aaa_session:invoke(Session, to_session(SessionOpts), start, SOpts),
     Data = start_session_timers(Data2),
 

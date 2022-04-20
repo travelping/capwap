@@ -65,9 +65,13 @@ validate_option(uri, Value) when is_binary(Value) ->
     Value;
 validate_option(uri, Value) when is_list(Value) ->
     Value;
-validate_option(default_location, Value) when is_list(Value) ->
+validate_option(default_location, Value) when is_binary(Value) ->
     Value;
 validate_option(timeout, Value) when is_integer(Value) ->
+    Value;
+validate_option(token, Value) when is_binary(Value) ->
+    Value;
+validate_option(token, Value) when is_list(Value) ->
     Value;
 validate_option(keys, Value = #{lat_key := _, long_key := _}) ->
     Value;
@@ -81,11 +85,10 @@ invoke(_Service, init, Session, Events, _Opts, _State) ->
     ?LOG(debug, "calling invoke init for capwap_loc_handler: ~p", [{_Service, Session, Events, _Opts, _State}]),
     {ok, Session, Events, #{}};
 
-
 % Retrieving attributes as per https://thingsboard.io/docs/reference/http-api/
-invoke(_Service, Step, Session0, Events0, Config = #{timeout := Timeout, uri := URI, keys := #{lat_key := LatKey, long_key := LongKey}, default_location := DefLoc},
-       State0) when
-        Step == authenticate;
+invoke(_Service, Step, Session0 = #{dev_name := Name}, Events0, Config = #{timeout := Timeout,
+       uri := URI, keys := #{lat_key := LatKey, long_key := LongKey}, token := Token,
+       default_location := DefLoc}, State0) when
         Step == start;
         Step == interim;
         Step == stop ->
@@ -97,8 +100,12 @@ invoke(_Service, Step, Session0, Events0, Config = #{timeout := Timeout, uri := 
         _ when is_list(URI) -> uri_string:parse(URI)
         % _ when is_list(URI) -> uri_string:parse(unicode:characters_to_binary(URI))
     end,
-    % http(s)://host:port/api/v1/$ACCESS_TOKEN/attributes?clientKeys=attribute1,attribute2&sharedKeys=shared1,shared2
-    % TODO is it necessary to build the URI? For the moment we'll just 
+    % Two queries are needed:
+    % https://rms.hbw.cennso.com/api/tenant/devices?deviceName=00112B015BA5
+    % {"id":{"entityType":"DEVICE","id":"a1ce4f30-b4cc-11e7-9cbf-d33fd42c8630"}
+    % https://rms.hbw.cennso.com/api/device/e27a48a0-635b-11ea-aec0-e5764cf599e9
+    % curl 'https://rms.hbw.cennso.com/api/plugins/telemetry/DEVICE/a1ce4f30-b4cc-11e7-9cbf-d33fd42c8630/values/timeseries?keys=TB_Telemetry_Latitude,TB_Telemetry_Longitude'
+    %
     #{host := Host} = ParsedURI,
     StringHost = case Host of
         _ when is_binary(Host) -> unicode:characters_to_list(Host);
@@ -110,13 +117,18 @@ invoke(_Service, Step, Session0, Events0, Config = #{timeout := Timeout, uri := 
     % TODO Check if binary is needed
     LatKeyBin = unicode:characters_to_binary(LatKey),
     LongKeyBin = unicode:characters_to_binary(LongKey),
-    Opts = #{timeout => Timeout, uri => ParsedURI#{host => StringHost, query => KeysQuery}},
+    Opts = #{timeout => Timeout, uri => ParsedURI#{host => StringHost, query => KeysQuery}, token => Token, dev_name => Name},
     ?LOG(debug, "Passing options: ~p", [Opts]),
     case send_location_req(Opts) of
         {ok, {Response = #{LatKeyBin := [#{?VALUE_KEY := LatVal}], LongKeyBin := [#{?VALUE_KEY := LongVal}]}, LocReqState}} ->
             ?LOG(debug, "Got response: ~p", [{Response, LocReqState}]),
             Session = Session0#{
                 'IM_LI_Location' => iolist_to_binary(io_lib:format("Lat:~s;Lon:~s", [LatVal, LongVal]))},
+            {ok, Session, Events0, State0};
+        {ok, {Response, LocReqState}} ->
+            ?LOG(debug, "Got non-matching response: ~p, using default ~p", [{Response, DefLoc}]),
+            Session = Session0#{
+                'IM_LI_Location' => iolist_to_binary(DefLoc)},
             {ok, Session, Events0, State0};
         {error, Error} ->
             ?LOG(error, "Error retrieving location: ~p, using default ~p", [Error, DefLoc]),
@@ -142,18 +154,32 @@ get_state_atom(_State) ->
 %%% ============================================================================
 
 % The location_req already includes the keys in the path
-send_location_req(#{timeout := _Timeout, uri := URI }) ->
+send_location_req(#{timeout := _Timeout, uri := URI = #{path := UriPath}, token := Token, dev_name := Name}) ->
     JsonHeader = {<<"Content-Type">>, <<"application/json">>},
+    AuthHeader = {<<"x-authorization">>, <<"Bearer ", Token/binary>>},
 
     % ReqOpts = #{start_pool_if_missing => true,
 		%% conn_opts => #{protocols => [http2]},
 		%% http2_opts => #{keepalive => infinity},
 	%	scope => ?MODULE},
-    send_get_hackney(uri_string:recompose(URI), [JsonHeader], []).
+    DevNamePath = <<UriPath/binary, "/tenant/devices?deviceName=", Name/binary>>,
+    DevNameUri = URI#{path => DevNamePath},
+    % {"id":{"entityType":"DEVICE","id":"a1ce4f30-b4cc-11e7-9cbf-d33fd42c8630"}
+
+    {ok, {#{<<"id">> := #{<<"entityType">> := <<"DEVICE">>, <<"id">> := Id}}, ClientRef}} =
+        send_get_hackney(uri_string:recompose(DevNameUri), [JsonHeader, AuthHeader], []),
     % {ok, StreamRef} = send_get_gun(Host, Port, Path, Headers, ReqOpts),
     % get_response(#{timeout => Timeout,
 	% 	   stream_ref => StreamRef,
 	%	   acc => <<>>}).
+    % 'https://rms.hbw.cennso.com/api/plugins/telemetry/DEVICE/a1ce4f30-b4cc-11e7-9cbf-d33fd42c8630/values/timeseries?keys=TB_Telemetry_Latitude,TB_Telemetry_Longitude'
+    TelemetryPath = <<UriPath/binary, "/plugins/telemetry/DEVICE/", Id/binary, "/values/timeseries?keys=TB_Telemetry_Latitude,TB_Telemetry_Longitude">>,
+    TelemetryUri = URI#{path => TelemetryPath},
+    
+    {ok, Res, ClientRef} =
+        send_get_hackney(uri_string:recompose(TelemetryUri), [JsonHeader, AuthHeader], []),
+
+    Res.
 
 send_get_hackney(Http, Headers, Opts) ->
     case hackney:request(get, Http, Headers, <<>>, Opts) of
