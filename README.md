@@ -18,7 +18,7 @@ Erlang CAPWAP AC implementation.
 BUILDING
 --------
 
-*The minimum supported Erlang version is 20.0.*
+*The minimum supported Erlang version is 24.2.*
 
 Using rebar:
 
@@ -29,6 +29,6 @@ Using rebar:
 [gh badge]: https://img.shields.io/github/workflow/status/travelping/capwap/CI?style=flat-square
 [coveralls]: https://coveralls.io/github/travelping/capwap
 [coveralls badge]: https://img.shields.io/coveralls/travelping/capwap/master.svg?style=flat-square
-[erlang version badge]: https://img.shields.io/badge/erlang-20.3%20to%2021.2-blue.svg?style=flat-square
+[erlang version badge]: https://img.shields.io/badge/erlang-24.2%20to%2024.3-blue.svg?style=flat-square
 [docker]: https://github.com/travelping/capwap/actions/workflows/docker.yaml
 [docker badge]: https://github.com/travelping/capwap/actions/workflows/docker.yaml/badge.svg
