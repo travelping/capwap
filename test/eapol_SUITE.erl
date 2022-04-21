@@ -111,7 +111,7 @@ test_kdf(_Config) ->
 do_psk_hashing([]) ->
     ok;
 do_psk_hashing([{Phrase, SSID, Expected} | Next]) ->
-    {ok, PSK} = eapol:phrase2psk(Phrase, SSID),
+    PSK = eapol:phrase2psk(Phrase, SSID),
     ?equal(Expected, PSK),
     do_psk_hashing(Next).
 

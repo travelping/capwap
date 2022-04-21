@@ -155,10 +155,10 @@ validate_mic(Crypto, {Head, MIC, Tail}) ->
 	MIC -> ok;
 	V   ->
 	    ?LOG(debug, "Algo: ~p", [Crypto#ccmp.mic_algo]),
-	    ?LOG(debug, "Head: ~s", [pbkdf2:to_hex(Head)]),
-	    ?LOG(debug, "MIC: ~s", [pbkdf2:to_hex(MIC)]),
-	    ?LOG(debug, "Tail: ~s", [pbkdf2:to_hex(Tail)]),
-	    ?LOG(debug, "invalid MIC: expected: ~s, got: ~s", [pbkdf2:to_hex(MIC), pbkdf2:to_hex(V)]),
+	    ?LOG(debug, "Head: ~s", [binary:encode_hex(Head)]),
+	    ?LOG(debug, "MIC: ~s", [binary:encode_hex(MIC)]),
+	    ?LOG(debug, "Tail: ~s", [binary:encode_hex(Tail)]),
+	    ?LOG(debug, "invalid MIC: expected: ~s, got: ~s", [binary:encode_hex(MIC), binary:encode_hex(V)]),
 	    {error, invalid}
     end.
 
@@ -255,7 +255,7 @@ kdf(Type, Key, Label, Data, WantedLength, N, Acc) ->
 
 phrase2psk(Phrase, SSID)
   when is_binary(Phrase), is_binary(SSID) ->
-    pbkdf2:pbkdf2(sha, Phrase, SSID, 4096, 32);
+    crypto:pbkdf2_hmac(sha, Phrase, SSID, 4096, 32);
 phrase2psk(Phrase, SSID)
   when is_list(Phrase) ->
     phrase2psk(iolist_to_binary(Phrase), SSID);
@@ -278,16 +278,16 @@ ft_msk2ptk(MSK, SNonce, ANonce, BSS, StationMAC, SSID, MDomain, R0KH, R1KH, S0KH
     %% PMK-R0Name-Salt = L(R0-Key-Data, 256, 128)
     %% PPMKR0Name = Truncate-128(SHA-256("FT-R0N" || PMK-R0Name-Salt))
 
-    ?LOG(debug, "FT XXKey: ~p", [pbkdf2:to_hex(XXKey)]),
-    ?LOG(debug, "FT: R0KH-Id: ~p", [pbkdf2:to_hex(R0KH)]),
+    ?LOG(debug, "FT XXKey: ~p", [binary:encode_hex(XXKey)]),
+    ?LOG(debug, "FT: R0KH-Id: ~p", [binary:encode_hex(R0KH)]),
 
     <<PMKR0:256/bits, PMKR0NameSalt:128/bits>> =
 	kdf(sha256, XXKey, "FT-R0", [byte_size(SSID), SSID, <<MDomain:16>>,
 					   byte_size(R0KH), R0KH, S0KH], 384),
     <<PMKR0Name:128/bits, _/binary>> = crypto:hash(sha256, ["FT-R0N", PMKR0NameSalt]),
 
-    ?LOG(debug, "FT PMK-R0: ~p", [pbkdf2:to_hex(PMKR0)]),
-    ?LOG(debug, "FT PMK-R0Name: ~p", [pbkdf2:to_hex(PMKR0Name)]),
+    ?LOG(debug, "FT PMK-R0: ~p", [binary:encode_hex(PMKR0)]),
+    ?LOG(debug, "FT PMK-R0Name: ~p", [binary:encode_hex(PMKR0Name)]),
 
     %% PMK-R1 = KDF-256(PMK-R0, "FT-R1", R1KH-ID || S1KH-ID)
     %% PMKR1Name = Truncate-128(SHA-256(“FT-R1N” || PMKR0Name || R1KH-ID || S1KH-ID))
@@ -296,15 +296,15 @@ ft_msk2ptk(MSK, SNonce, ANonce, BSS, StationMAC, SSID, MDomain, R0KH, R1KH, S0KH
 	kdf(sha256, PMKR0, "FT-R1", [R1KH, S1KH], 256),
     <<PMKR1Name:128/bits, _/binary>> = crypto:hash(sha256, ["FT-R1N", PMKR0Name, BSS, StationMAC]),
 
-    ?LOG(debug, "FT PMK-R1: ~p", [pbkdf2:to_hex(PMKR1)]),
-    ?LOG(debug, "FT PMK-R1Name: ~p", [pbkdf2:to_hex(PMKR1Name)]),
+    ?LOG(debug, "FT PMK-R1: ~p", [binary:encode_hex(PMKR1)]),
+    ?LOG(debug, "FT PMK-R1Name: ~p", [binary:encode_hex(PMKR1Name)]),
 
     %%PTK = KDF-PTKLen(PMK-R1, "FT-PTK", SNonce || ANonce || BSSID || STA-ADDR)
     <<KCK:128/bits, KEK:128/bits, TK:128/bits>> =
 	kdf(sha256, PMKR1, "FT-PTK", [SNonce, ANonce, BSS, StationMAC], 384),
-    ?LOG(debug, "KCK: ~p", [pbkdf2:to_hex(KCK)]),
-    ?LOG(debug, "KEK: ~p", [pbkdf2:to_hex(KEK)]),
-    ?LOG(debug, "TK: ~p", [pbkdf2:to_hex(TK)]),
+    ?LOG(debug, "KCK: ~p", [binary:encode_hex(KCK)]),
+    ?LOG(debug, "KEK: ~p", [binary:encode_hex(KEK)]),
+    ?LOG(debug, "TK: ~p", [binary:encode_hex(TK)]),
     {KCK, KEK, TK, PMKR0Name, PMKR1Name}.
 
    %% Inputs:  Plaintext, n 64-bit values {P1, P2, ..., Pn}, and

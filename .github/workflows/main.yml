@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        otp: [22.3.4.18, 23.3.4]
+        otp: [24.3]
     container:
       image: quay.io/travelping/alpine-erlang:${{ matrix.otp }}
     steps:
