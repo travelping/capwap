@@ -35,7 +35,14 @@ FROM    alpine:3.15
 
 ARG     BUILD_PROFILE=prod
 WORKDIR /
-RUN     apk add --no-cache -U zlib ncurses-libs libcrypto1.1 lksctp-tools tini
+RUN     apk add --no-cache -U \
+		zlib \
+		ncurses-libs \
+		libcrypto1.1 \
+		lksctp-tools \
+		libgcc \
+		libstdc++ \
+		tini
 COPY    docker/docker-entrypoint.sh /
 COPY    config/ergw-capwap-node.config /etc/ergw-capwap-node/
 
