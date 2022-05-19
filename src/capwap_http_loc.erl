@@ -86,7 +86,7 @@ invoke(_Service, init, Session, Events, _Opts, _State) ->
     {ok, Session, Events, #{}};
 
 % Retrieving attributes as per https://thingsboard.io/docs/reference/http-api/
-invoke(_Service, Step, Session0, Events0, Config = #{dev_name := Name, timeout := Timeout,
+invoke(_Service, Step, Session0 = #{'Location-Id' := Name}, Events0, Config = #{timeout := Timeout,
        uri := URI, keys := #{lat_key := LatKey, long_key := LongKey}, token := Token,
        default_location := DefLoc}, State0) when
         Step == start;
