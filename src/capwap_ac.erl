@@ -304,6 +304,7 @@ handle_event(cast, {accept, udp, Socket}, listen, Data0) ->
     Opts = [{'Username', PeerName},
 	    {'Authentication-Method', {'TLS', 'Pre-Shared-Key'}},
 	    {'Config-Provider-State', CfgProvStateInit}],
+    ?LOG(debug, "Invoking AAA: ~p", [{Session, Opts}]),
     case ergw_aaa_session:invoke(Session, to_session(Opts), authenticate, [inc_session_id]) of
 	{ok, #{'Config-Provider-State' := CfgProvState} = SOpts, Evs} ->
 	    ?LOG(info, #{'AuthResult' => success, session => SOpts, events => Evs}),
@@ -442,6 +443,7 @@ handle_event(cast, {join_request, Seq,
 			'Error-Fragment-Invalid', 'Error-Fragment-Too-Old']),
 
     SOpts = #{now => Now, dev_name => Name},
+    ?LOG(debug, "Invoking AAA: ~p", [{Session, SessionOpts, SOpts}]),
     ergw_aaa_session:invoke(Session, to_session(SessionOpts), start, SOpts),
     Data = start_session_timers(Data2),
 
@@ -797,6 +799,7 @@ terminate(Reason, State,
 			  [State, Data, Reason]),
     AcctValues = stop_wtp(State, Data),
     if Session /= undefined ->
+	    ?LOG(debug, "Invoking AAA: ~p", [{Session, AcctValues, DevName}]),
 	    ergw_aaa_session:invoke(Session, AcctValues, stop, #{async => true, dev_name => DevName}),
 
 	    exometer:update([capwap, wtp, CommonName, station_count], 0),
@@ -961,7 +964,8 @@ handle_wtp_event(Elements, Header, Data0 = #data{session = Session, name = DevNa
     SessionOptsList = handle_wtp_stats_event(IEs, Header, []),
     lists:foreach(
       fun(Ev) ->
-	      ergw_aaa_session:invoke(Session, Ev, interim, #{async => true, dev_name => DevName})
+	    ?LOG(debug, "Invoking AAA: ~p", [{Session, Ev, DevName}]),
+	    ergw_aaa_session:invoke(Session, Ev, interim, #{async => true, dev_name => DevName})
       end, SessionOptsList),
     Data = handle_wtp_action_event(IEs, Header, Data0),
     update_last_gps_position(IEs, Data).
@@ -1608,6 +1612,7 @@ user_lookup(psk, Username, {WTP, Session}) ->
     Opts = [{'Username', Username},
 	    {'Authentication-Method', {'TLS', 'Pre-Shared-Key'}},
 	    {'Config-Provider-State', CfgProvStateInit}],
+    ?LOG(debug, "Invoking AAA: ~p", [{Session, Opts}]),
     case ergw_aaa_session:invoke(Session, to_session(Opts), authenticate, [inc_session_id]) of
 	{ok, SOpts, Evs} ->
 	    ?LOG(info, #{'AuthResult' => success, session => SOpts}),
@@ -1654,6 +1659,7 @@ verify_cert_auth_cn(CommonName, {WTP, Session}) ->
     Opts = [{'Username', CommonName},
 	    {'Authentication-Method', {'TLS', 'X509-Subject-CN'}},
 	    {'Config-Provider-State', CfgProvStateInit}],
+    ?LOG(debug, "Invoking AAA: ~p", [{Session, Opts}]),
     case ergw_aaa_session:invoke(Session, to_session(Opts), authenticate, [inc_session_id]) of
 	{ok, _, Evs} ->
 	    ?LOG(info, "AuthResult: success for ~p", [CommonName]),
@@ -2601,6 +2607,7 @@ handle_session_timer(_TRef, _Ev, _Data) ->
 handle_session_timer_ev({_, Level, _} = Ev, {Interval, _, _Opts} = Timer,
 			#data{session = Session, timers = Timers, name = DevName} = Data0) ->
     Acc = accounting_update(Data0),
+    ?LOG(debug, "Invoking AAA: ~p", [{Session, Acc}]),
     ergw_aaa_session:invoke(Session, Acc, interim, #{async => true, dev_name => DevName}),
 
     Data =
