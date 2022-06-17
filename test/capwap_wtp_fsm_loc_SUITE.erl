@@ -73,6 +73,7 @@ suite() ->
 init_per_suite(Config0) ->
     Apps = setup_applications(),
     logger:update_primary_config(#{level => all}),
+		% logger:update_formatter_config(),
     Dispatch = cowboy_router:compile([
         {'_', [{"/[...]", test_loc_handler, []}]}
     ]),
@@ -364,7 +365,13 @@ setup_applications() ->
 		 [{'NAS-Identifier',        <<"NAS-Identifier">>},
 		  {'Acct-Interim-Interval', 10}
 		 ]},
-		       {capwap_http_loc, []}
+		       {capwap_http_loc, [
+						 {timeout, 5000},
+				     {token, <<"sometoken">>},
+					   {refresh, 300000},
+             {uri, "http://127.0.0.1:9999/api"},
+             {keys, [{lat_key, <<"TB_Telemetry_Latitude">>}, {long_key, <<"TB_Telemetry_Longitude">>}]}
+					 ]}
 	       ]},
 	      {services,
 	       [{'Default',
@@ -381,10 +388,6 @@ setup_applications() ->
 		  }
 		 ]},
 		       {'Load-Location', [
-        {timeout, 5000},
-				{token, <<"sometoken">>},
-        {uri, "http://127.0.0.1:9999/api"},
-        {keys, [{lat_key, <<"TB_Telemetry_Latitude">>}, {long_key, <<"TB_Telemetry_Longitude">>}]},
 				{default_location, <<"Lat:0;Long:0">>},
         {handler, capwap_http_loc}]}
 	       ]},
