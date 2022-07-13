@@ -38,11 +38,14 @@ get_id(Device) ->
   end.
 
 get_loc(Device) ->
-  Id = get_id(Device),
-  case ets:lookup(?CW_DEV_CACHE_LOC, Id) of
-    [{Id, Loc = {location, Lat, Long}}] -> {Lat, Long};
-    % [{Id, error}] -> error;
-    [] -> gen_server:call(?MODULE, {cache_dev_loc, Id})
+  case get_id(Device) of
+    error -> error;
+    Id ->
+      case ets:lookup(?CW_DEV_CACHE_LOC, Id) of
+        [{Id, Loc = {location, Lat, Long}}] -> {Lat, Long};
+        % [{Id, error}] -> error;
+        [] -> gen_server:call(?MODULE, {cache_dev_loc, Id})
+      end
   end.
 
 %% gen_server impl
