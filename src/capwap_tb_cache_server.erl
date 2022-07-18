@@ -42,7 +42,7 @@ get_loc(Device) ->
     error -> error;
     Id ->
       case ets:lookup(?CW_DEV_CACHE_LOC, Id) of
-        [{Id, Loc = {location, Lat, Long}}] -> {Lat, Long};
+        [{Id, Loc = {location, Lat, Long}}] -> Loc;
         % [{Id, error}] -> error;
         [] -> gen_server:call(?MODULE, {cache_dev_loc, Id})
       end
@@ -119,7 +119,7 @@ local_get_id(URI, Token, Device, IdTab) ->
 
 local_get_loc(URI, Token, RefreshTime, LatKey, LongKey, Id, LocTab) ->
   case ets:lookup(LocTab, Id) of
-    [{Id, Loc = {location, Lat, Long}}] -> {Lat, Long};
+    [{Id, Loc = {location, Lat, Long}}] -> Loc;
     [] -> 
       case send_location_req(URI, Token, LatKey, LongKey, Id) of
         error -> error;
