@@ -971,7 +971,7 @@ accounting_update(#data{mac = MAC}) ->
 
 aaa_association(Data0 = #data{mac = MAC, data_channel_address = WTPDataChannelAddress,
 				wtp_id = WtpId, wtp_session_id = WtpSessionId,
-				radio_mac = BSSID, ssid = SSID}) ->
+				radio_mac = BSSID, ssid = SSID, ac = AC}) ->
     MACStr = iolist_to_binary(capwap_tools:format_eui(MAC)),
     BSSIDStr = iolist_to_binary(capwap_tools:format_eui(BSSID)),
     SessionData0 =
@@ -997,12 +997,12 @@ aaa_association(Data0 = #data{mac = MAC, data_channel_address = WTPDataChannelAd
     {ok, _SessionOpts, AuthSEvs} =
 	ergw_aaa_session:invoke(Session, to_session(SessionData3), authenticate, [inc_session_id]),
     Data1 = handle_session_evs(AuthSEvs, Data0#data{aaa_session = Session}),
-    ergw_aaa_session:invoke(Session, #{}, start, SOpts),
+    ergw_aaa_session:invoke(Session, add_location(AC, #{}), start, SOpts),
     start_session_timers(Data1).
 
-aaa_disassociation(#data{aaa_session = Session}) ->
+aaa_disassociation(#data{aaa_session = Session, ac = AC}) ->
     ?LOG(info, #{obj => session, ev => stop, session => Session}),
-    ergw_aaa_session:invoke(Session, #{}, stop, #{async => true}),
+    ergw_aaa_session:invoke(Session, add_location(AC, #{}), stop, #{async => true}),
     ok.
 
 %% Management
@@ -1718,9 +1718,9 @@ handle_session_timer(_TRef, _Ev, _Data) ->
     keep_state_and_data.
 
 handle_session_timer_ev({_, Level, _} = Ev, {Interval, _, _Opts} = Timer,
-			#data{aaa_session = Session, timers = Timers} = Data0) ->
+			#data{aaa_session = Session, timers = Timers, ac = AC} = Data0) ->
     SOpts0 = accounting_update(Data0),
-    SOpts = add_ac_location(Data0, SOpts0),
+    SOpts = add_location(AC, add_ac_location(Data0, SOpts0)),
     ergw_aaa_session:invoke(Session, SOpts, interim, #{async => true}),
 
     Data =
@@ -1733,3 +1733,25 @@ handle_session_timer_ev({_, Level, _} = Ev, {Interval, _, _Opts} = Timer,
 		Data0
 	end,
     {keep_state, Data}.
+
+add_location(AC, Map) when is_binary(AC) ->
+    ?LOG(debug, "Getting location for: ~p", [AC]),
+    try capwap_ac:get_info(AC) of
+	{ok, #{name := Name}} ->
+	        AVPName = capwap_config:get(ac, location_avp, undefined),
+	        case capwap_loc_provider:get_loc(Name, false) of
+	            {location, LatVal, LongVal} ->
+	                ?LOG(debug, "Successful location: ~p", [{LatVal, LongVal}]),
+	                Map#{AVPName => iolist_to_binary(io_lib:format("Lat:~s;Lon:~s", [LatVal, LongVal]))};
+	            {error, Cause} ->
+	                ?LOG(error, "Error retrieving location: ~p", [Cause]),
+	                Map
+	        end
+    catch
+	Class:Error:ST ->
+	    ?LOG(warning, "Getting location failed: ~p:~p with ~0p", [Class, Error, ST]),
+	    Map
+	end;
+add_location(AC, Map) ->
+    ?LOG(notice, "AC provided is not a binary, avoiding location retrieval: ~p", [AC]),
+    Map.

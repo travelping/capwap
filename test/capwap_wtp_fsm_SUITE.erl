@@ -73,10 +73,24 @@ suite() ->
 init_per_suite(Config0) ->
     Apps = setup_applications(),
     Config = [ {apps, Apps} | Config0 ],
+    %% Not really needed in this suite, just in case a custom response is needed
+    meck:new(test_loc_handler, [no_link, passthrough]),
     logger:update_primary_config(#{level => all}),
-    Config.
+    Dispatch = cowboy_router:compile([
+        {'_', [{"/[...]", test_loc_handler, []}]}
+    ]),
+    {ok, _} = cowboy:start_clear(test_loc_handler,
+        [{port, 9990}],
+        #{env => #{dispatch => Dispatch}}
+    ),
+    LocSuiteCfg = #{test_loc_name => test_loc_handler},
+    [{loc_cfg, LocSuiteCfg} | Config].
 
 end_per_suite(Config) ->
+    {value, {loc_cfg, #{test_loc_name := TestLocName}}} =
+        lists:keysearch(loc_cfg, 1, Config),
+    meck:unload(test_loc_handler),
+    cowboy:stop_listener(TestLocName),
     Apps = proplists:get_value(apps, Config),
     [ application:stop(App) || App <- Apps ],
     ok.
@@ -87,12 +101,25 @@ init_per_testcase(_, Config) ->
     capwap_ac_sup:clear(),
     Config.
 
+
+start_loc_server() ->
+    Dispatch = cowboy_router:compile([
+        {'_', [{"/[...]", test_loc_handler, []}]}
+    ]),
+    {ok, _} = cowboy:start_clear(test_loc_handler,
+        [{port, 9990}],
+        #{env => #{dispatch => Dispatch}}
+    ).
+stop_loc_server() ->
+    cowboy:stop_listener(test_loc_handler).
+
+
 end_per_testcase(_, Config) ->
     meck_unload(),
     Config.
 
 all() ->
-    [wtp_fsm, sta_fsm].
+    [wtp_fsm, sta_fsm, location].
 
 check_auth_session_args(Session) ->
     case maps:get('Username', Session, undefined) of
@@ -252,6 +279,61 @@ sta_fsm(_Config) ->
     meck:validate(ieee80211_station),
     ok.
 
+location(_Config) ->
+    meck:expect(ergw_aaa_session, invoke,
+		fun(Session, SessionOpts, interim, Opts) ->
+			#{'IM_LI_Location' := Loc} = SessionOpts,
+			%% TODO check location values
+			ct:pal("Sent location (interim): ~p~n", [Loc]),
+			meck:passthrough([Session, SessionOpts, interim, Opts]);
+		   (Session, SessionOpts, start, Opts) ->
+			#{'IM_LI_Location' := Loc} = SessionOpts,
+			%% TODO check location values
+			ct:pal("Sent location (start): ~p~n", [Loc]),
+			meck:passthrough([Session, SessionOpts, start, Opts]);
+		   (Session, SessionOpts, stop, Opts) ->
+			#{'IM_LI_Location' := Loc} = SessionOpts,
+			%% TODO check location values
+			ct:pal("Sent location (stop): ~p~n", [Loc]),
+			meck:passthrough([Session, SessionOpts, stop, Opts]);
+		   (Session, SessionOpts, Procedure, Opts) ->
+			meck:passthrough([Session, SessionOpts, Procedure, Opts])
+		end),
+
+    {ok, WTP} = start_local_wtp(),
+
+    Match1 = ets:fun2ms(fun({ok, {Header, Msg}}) when element(1, Header) == capwap_header, element(1, Msg) == discovery_response -> {Header, Msg} end),
+    {_Hdr1, _Msg1} = ?match(Match1, wtp_mockup_fsm:send_discovery(WTP)),
+
+    Match2 = ets:fun2ms(fun({ok, {Header, Msg}}) when element(1, Header) == capwap_header, element(1, Msg) == join_response -> {Header, Msg} end),
+    {_Hdr2, _Msg2} = ?match(Match2, wtp_mockup_fsm:send_join(WTP)),
+
+    Match3 = ets:fun2ms(fun({ok, {Header, Msg}}) when element(1, Header) == capwap_header, element(1, Msg) == configuration_status_response -> {Header, Msg} end),
+    {_Hdr3, _Msg3} = ?match(Match3, wtp_mockup_fsm:send_config_status(WTP)),
+
+    Match4 = ets:fun2ms(fun({ok, {Header, Msg}}) when element(1, Header) == capwap_header, element(1, Msg) == change_state_event_response -> {Header, Msg} end),
+    {_Hdr4, _Msg4} = ?match(Match4, wtp_mockup_fsm:send_change_state_event(WTP)),
+
+    Match5 = ets:fun2ms(fun({Header, Msg}) when element(1, Header) == capwap_header, element(1, Msg) == ieee_802_11_wlan_configuration_request -> {Header, Msg} end),
+    {_Hdr5, _Msg5} = ?assert_mbox_match(Match5),
+
+    Match6 = ets:fun2ms(fun({ok, {Header, Msg}}) when element(1, Header) == capwap_header, element(1, Msg) == wtp_event_response -> {Header, Msg} end),
+    {_Hdr6, _Msg6} = ?match(Match6, wtp_mockup_fsm:send_wwan_statistics(WTP)),
+
+    %% wait 'Acct-Interim-Interval'
+    ct:sleep({seconds, 11}),
+
+    catch stop_local_wtp(WTP),
+
+    ct:sleep(100),
+
+    ?equal(3, meck:num_calls(ergw_aaa_session, invoke, ['_', '_', interim, '_'])),
+
+    meck:validate(ergw_aaa_session),
+    meck:validate(capwap_ac),
+    ok.
+
+
 %% ------------------------------------------------------------------------------------
 %% helper
 %% ------------------------------------------------------------------------------------
@@ -281,6 +363,7 @@ setup_applications() ->
 		      {server_socket_opts, [{recbuf, 1048576}, {sndbuf, 1048576}]},
 		      {limit, 200},
 		      {max_wtp, 100},
+		      {location_avp, 'IM_LI_Location'},
 		      {security, ['x509']},
 		      {versions, [{hardware, <<"SCG">>},
 				  {software, <<"SCG">>}]},
@@ -330,7 +413,14 @@ setup_applications() ->
 				   ]}
 				 ]}
 			       ]}
-			     ]}
+			     ]},
+			  {location_provider, #{
+			    providers => [
+			        {capwap_loc_provider_http, #{uri => "http://127.0.0.1:9990", timeout => 3000}},
+			        {capwap_loc_provider_default, #{default_loc => {location, <<"456">>, <<"789">>}}}
+		            ],
+		            refresh => 1000}
+			  }
 		     ]},
 	    {ergw_aaa,
 	     [
