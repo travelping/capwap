@@ -442,7 +442,7 @@ handle_event(cast, {join_request, Seq,
 			'Error-Fragment-Invalid', 'Error-Fragment-Too-Old']),
 
     SOpts = #{now => Now},
-    ergw_aaa_session:invoke(Session, to_session(SessionOpts), start, SOpts),
+    ergw_aaa_session:invoke(Session, add_location(Name, to_session(SessionOpts)), start, SOpts),
     Data = start_session_timers(Data2),
 
     {next_state, join, Data};
@@ -792,12 +792,13 @@ handle_event(info, Info, State, _Data) ->
 
 terminate(Reason, State,
 	  Data = #data{socket = Socket, session = Session,
-			 id = CommonName, station_count = StationCount}) ->
+			 id = CommonName, name = Name, station_count = StationCount}) ->
     error_logger:info_msg("AC session terminating in state ~p with state ~p with reason ~p~n",
 			  [State, Data, Reason]),
     AcctValues = stop_wtp(State, Data),
     if Session /= undefined ->
-	    ergw_aaa_session:invoke(Session, AcctValues, stop, #{async => true}),
+	    AcctValuesLoc = add_location(Name, AcctValues),
+	    ergw_aaa_session:invoke(Session, AcctValuesLoc, stop, #{async => true}),
 
 	    exometer:update([capwap, wtp, CommonName, station_count], 0),
 	    StopTime = erlang:system_time(milli_seconds),
@@ -956,12 +957,13 @@ maybe_takeover(CommonName) ->
 	    ok
     end.
 
-handle_wtp_event(Elements, Header, Data0 = #data{session = Session}) ->
+handle_wtp_event(Elements, Header, Data0 = #data{session = Session, name = Name}) ->
     IEs = maps:values(Elements),
     SessionOptsList = handle_wtp_stats_event(IEs, Header, []),
     lists:foreach(
       fun(Ev) ->
-	      ergw_aaa_session:invoke(Session, Ev, interim, #{async => true})
+	      EvLoc = add_location(Name, Ev),
+	      ergw_aaa_session:invoke(Session, EvLoc, interim, #{async => true})
       end, SessionOptsList),
     Data = handle_wtp_action_event(IEs, Header, Data0),
     update_last_gps_position(IEs, Data).
@@ -2599,9 +2601,10 @@ handle_session_timer(_TRef, _Ev, _Data) ->
     keep_state_and_data.
 
 handle_session_timer_ev({_, Level, _} = Ev, {Interval, _, _Opts} = Timer,
-			#data{session = Session, timers = Timers} = Data0) ->
+			#data{session = Session, timers = Timers, name = Name} = Data0) ->
     Acc = accounting_update(Data0),
-    ergw_aaa_session:invoke(Session, Acc, interim, #{async => true}),
+    AccLoc = add_location(Name, Acc),
+    ergw_aaa_session:invoke(Session, AccLoc, interim, #{async => true}),
 
     Data =
 	case Interval of
@@ -2613,3 +2616,18 @@ handle_session_timer_ev({_, Level, _} = Ev, {Interval, _, _Opts} = Timer,
 		Data0
 	end,
     {keep_state, Data}.
+
+add_location(Name, Map) when is_binary(Name) ->
+    ?LOG(debug, "Getting location for: ~p", [Name]),
+    AVPName = capwap_config:get(ac, location_avp, undefined),
+    case capwap_loc_provider:get_loc(Name, false) of
+        {location, LatVal, LongVal} ->
+            ?LOG(debug, "Successful location: ~p", [{LatVal, LongVal}]),
+            Map#{AVPName => iolist_to_binary(io_lib:format("Lat:~s;Lon:~s", [LatVal, LongVal]))};
+        {error, Cause} ->
+            ?LOG(error, "Error retrieving location: ~p", [Cause]),
+            Map
+    end;
+add_location(Name, Map) ->
+    ?LOG(notice, "Name provided is not a binary, avoiding location retrieval: ~p", [Name]),
+    Map.

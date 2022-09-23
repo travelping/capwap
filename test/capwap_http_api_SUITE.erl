@@ -279,7 +279,14 @@ setup_applications() ->
                                    ]}
                                  ]}
                                ]}
-                             ]}
+                             ]},
+			  {location_provider, #{
+			    providers => [
+			        {capwap_loc_provider_default, #{default_loc => {location, <<"123">>, <<"456">>}}},
+			        {capwap_loc_provider_http, #{uri => "http://127.0.0.1:9999", timeout => 30000}}
+		            ],
+		            refresh => 1000}
+			  }
                      ]},
 	    {ergw_aaa,
 	     [
