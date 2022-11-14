@@ -1734,10 +1734,11 @@ handle_session_timer_ev({_, Level, _} = Ev, {Interval, _, _Opts} = Timer,
 	end,
     {keep_state, Data}.
 
-add_location(AC, Map) when is_binary(AC) ->
-    ?LOG(debug, "Getting location for: ~p", [AC]),
+add_location(AC, Map) ->
+    ?LOG(debug, "Getting location through: ~p", [AC]),
     try capwap_ac:get_info(AC) of
-	{ok, #{name := Name}} ->
+	{ok, #{id := Name}} ->
+                ?LOG(debug, "Getting location for name: ~p", [Name]),
 	        AVPName = capwap_config:get(ac, location_avp, undefined),
 	        case capwap_loc_provider:get_loc(Name, false) of
 	            {location, LatVal, LongVal} ->
