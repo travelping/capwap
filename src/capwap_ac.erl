@@ -442,7 +442,7 @@ handle_event(cast, {join_request, Seq,
 			'Error-Fragment-Invalid', 'Error-Fragment-Too-Old']),
 
     SOpts = #{now => Now},
-    ergw_aaa_session:invoke(Session, add_location(Name, to_session(SessionOpts)), start, SOpts),
+    ergw_aaa_session:invoke(Session, add_location(CommonName, to_session(SessionOpts)), start, SOpts),
     Data = start_session_timers(Data2),
 
     {next_state, join, Data};
@@ -678,6 +678,7 @@ handle_event({call, From}, get_info, _State, Data) ->
        location = Location,
        board_data = BoardData,
        descriptor = Descriptor,
+       id = CommonName,
        name = Name,
        start_time = StartTime,
        last_gps_pos = LastPos} = Data,
@@ -686,6 +687,7 @@ handle_event({call, From}, get_info, _State, Data) ->
 	     board_data => BoardData,
 	     descriptor => Descriptor,
 	     name => Name,
+	     id => CommonName,
 	     start_time => StartTime,
 	     last_gps_pos => LastPos},
     {keep_state_and_data, [{reply, From, {ok, Info}}]};
@@ -797,7 +799,7 @@ terminate(Reason, State,
 			  [State, Data, Reason]),
     AcctValues = stop_wtp(State, Data),
     if Session /= undefined ->
-	    AcctValuesLoc = add_location(Name, AcctValues),
+	    AcctValuesLoc = add_location(CommonName, AcctValues),
 	    ergw_aaa_session:invoke(Session, AcctValuesLoc, stop, #{async => true}),
 
 	    exometer:update([capwap, wtp, CommonName, station_count], 0),
@@ -957,12 +959,12 @@ maybe_takeover(CommonName) ->
 	    ok
     end.
 
-handle_wtp_event(Elements, Header, Data0 = #data{session = Session, name = Name}) ->
+handle_wtp_event(Elements, Header, Data0 = #data{session = Session, name = Name, id = CommonName}) ->
     IEs = maps:values(Elements),
     SessionOptsList = handle_wtp_stats_event(IEs, Header, []),
     lists:foreach(
       fun(Ev) ->
-	      EvLoc = add_location(Name, Ev),
+	      EvLoc = add_location(CommonName, Ev),
 	      ergw_aaa_session:invoke(Session, EvLoc, interim, #{async => true})
       end, SessionOptsList),
     Data = handle_wtp_action_event(IEs, Header, Data0),
@@ -2601,9 +2603,9 @@ handle_session_timer(_TRef, _Ev, _Data) ->
     keep_state_and_data.
 
 handle_session_timer_ev({_, Level, _} = Ev, {Interval, _, _Opts} = Timer,
-			#data{session = Session, timers = Timers, name = Name} = Data0) ->
+			#data{session = Session, timers = Timers, name = Name, id = CommonName} = Data0) ->
     Acc = accounting_update(Data0),
-    AccLoc = add_location(Name, Acc),
+    AccLoc = add_location(CommonName, Acc),
     ergw_aaa_session:invoke(Session, AccLoc, interim, #{async => true}),
 
     Data =
