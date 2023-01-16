@@ -1,4 +1,4 @@
-%% Copyright (C) 2013-2017, Travelping GmbH <info@travelping.com>
+%% Copyright (C) 2013-2023, Travelping GmbH <info@travelping.com>
 
 %% This program is free software: you can redistribute it and/or modify
 %% it under the terms of the GNU Affero General Public License as published by
@@ -1734,20 +1734,25 @@ handle_session_timer_ev({_, Level, _} = Ev, {Interval, _, _Opts} = Timer,
 	end,
     {keep_state, Data}.
 
-add_location(AC, Map) ->
+% FIXME Atoms are allowed for test cases. Test cases should, however,
+% use DTLS and not plain UDP.
+add_location(ACAtom, Map) when is_atom(ACAtom) ->
+    ?LOG(debug, "Getting location through atom: ~p", [ACAtom]),
+    add_location(atom_to_binary(ACAtom, utf8), Map);
+add_location(AC, Map) when is_binary(AC) ->
     ?LOG(debug, "Getting location through: ~p", [AC]),
     try capwap_ac:get_info(AC) of
 	{ok, #{id := Name}} ->
-                ?LOG(debug, "Getting location for name: ~p", [Name]),
-	        AVPName = capwap_config:get(ac, location_avp, undefined),
-	        case capwap_loc_provider:get_loc(Name, false) of
-	            {location, LatVal, LongVal} ->
-	                ?LOG(debug, "Successful location: ~p", [{LatVal, LongVal}]),
-	                Map#{AVPName => iolist_to_binary(io_lib:format("Lat:~s;Lon:~s", [LatVal, LongVal]))};
-	            {error, Cause} ->
-	                ?LOG(error, "Error retrieving location: ~p", [Cause]),
-	                Map
-	        end
+	    ?LOG(debug, "Getting location for name: ~p", [Name]),
+	    AVPName = capwap_config:get(ac, location_avp, undefined),
+	    case capwap_loc_provider:get_loc(Name, false) of
+		{location, LatVal, LongVal} ->
+		    ?LOG(debug, "Successful location: ~p", [{LatVal, LongVal}]),
+		    Map#{AVPName => iolist_to_binary(io_lib:format("Lat:~s;Lon:~s", [LatVal, LongVal]))};
+		{error, Cause} ->
+		    ?LOG(error, "Error retrieving location: ~p", [Cause]),
+		    Map
+	    end
     catch
 	Class:Error:ST ->
 	    ?LOG(warning, "Getting location failed: ~p:~p with ~0p", [Class, Error, ST]),

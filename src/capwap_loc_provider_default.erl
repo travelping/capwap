@@ -1,4 +1,4 @@
-%% Copyright 2017-2019 Travelping GmbH <info@travelping.com>
+%% Copyright (C) 2023, Travelping GmbH <info@travelping.com>
 %%
 %% This program is free software: you can redistribute it and/or modify
 %% it under the terms of the GNU Lesser General Public License as
@@ -15,18 +15,18 @@
 
 -module(capwap_loc_provider_default).
 
--compile({parse_transform, cut}).
-
 -behaviour(capwap_loc_provider).
 
 -include_lib("kernel/include/logger.hrl").
 
-%% AAA API
--export([config_fun/1]).
+-export([config_fun/1, validate_provider/1]).
 
 %%===================================================================
 %% API
 %%===================================================================
 
 config_fun(#{default_loc := L = {location, <<_/binary>>, <<_/binary>>}}) ->
-  fun(_) -> ?LOG(debug, "Default provider returning: ~p", [L]), L end.
+    fun(_) -> ?LOG(debug, "Default provider returning: ~p", [L]), L end.
+
+validate_provider(#{default_loc := {location, <<_/binary>>, <<_/binary>>}}) ->
+    ok.
