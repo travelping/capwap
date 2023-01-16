@@ -1,4 +1,4 @@
-%% Copyright (C) 2018, Travelping GmbH <info@travelping.com>
+%% Copyright (C) 2023, Travelping GmbH <info@travelping.com>
 
 %% This program is free software: you can redistribute it and/or modify
 %% it under the terms of the GNU Affero General Public License as published by
@@ -55,7 +55,6 @@ init_per_suite(Config) ->
     application:ensure_all_started(ranch),
     application:ensure_all_started(hackney),
     RefreshTime = 5000,
-    % logger:update_formatter_config(),
     LocConfig = #{providers => [
 	{capwap_loc_provider_http, #{uri => "http://127.0.0.1:9990", timeout => 30000}},
 	{capwap_loc_provider_default, #{default_loc => {location, <<"123">>, <<"456">>}}}
@@ -103,7 +102,6 @@ end_per_testcase(_, _) ->
     meck:expect(test_loc_handler, content, fun() ->  meck:passthrough([]) end),
     ok.
 
-
 %% ==============================================
 %% Tests
 %% ==============================================
@@ -145,7 +143,7 @@ test_reconfig(Config) ->
     {location, <<"123">>, <<"456">>} = capwap_loc_provider:get_loc(<<"device">>).
 
 test_error() ->
-    [{doc, "Test that the next provider is used in case of error"}].
+    [{doc, "Test that an error is returned in case of no valid providers"}].
 test_error(Config) ->
     RefreshTime = 5000,
     LocConfig = #{providers => [
@@ -153,24 +151,3 @@ test_error(Config) ->
       refresh => RefreshTime},
     capwap_loc_provider:load_config(LocConfig),
     {error, no_more_providers} = capwap_loc_provider:get_loc(<<"device">>).
-
-test_existing_server_no_cache() ->
-    [{doc, "Test a real endpoint without using a cache"}].
-test_existing_server_no_cache(Config) ->
-    %% The service needs to be exposed through kubectl port-forward
-    RefreshTime = 5000,
-    LocConfig = #{providers => [
-	{capwap_loc_provider_http, #{uri => "http://127.0.0.1:9999", timeout => 30000}}
-      ],
-      refresh => RefreshTime},
-    capwap_loc_provider:load_config(LocConfig),
-    GetAndPrint = fun(Id) ->
-        {location, Lat, Long} = capwap_loc_provider:get_loc(Id, false),
-	ct:pal("Location for ~p retrieved: {~p - ~p}~n", [Id, Lat, Long])
-    end,
-    lists:foreach(GetAndPrint, [<<"00112B0159E5">>, <<"00112B0158EF">>, <<"00112B028E3F">>]).
-
-
-
-%% test_error
-

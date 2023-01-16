@@ -1,4 +1,4 @@
-%% Copyright (C) 2013-2017, Travelping GmbH <info@travelping.com>
+%% Copyright (C) 2013-2023, Travelping GmbH <info@travelping.com>
 
 %% This program is free software: you can redistribute it and/or modify
 %% it under the terms of the GNU Affero General Public License as published by
@@ -60,5 +60,5 @@ init([]) ->
 				  ?CHILD(capwap_station_reg, worker, []),
 				  ?CHILD(capwap_station_sup, supervisor, []),
 				  ?CHILD(capwap_dp, worker, []),
-                  ?CHILD(capwap_http_api, supervisor, [])
+				  ?CHILD(capwap_http_api, supervisor, [])
     ]} }.

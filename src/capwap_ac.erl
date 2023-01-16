@@ -2619,6 +2619,11 @@ handle_session_timer_ev({_, Level, _} = Ev, {Interval, _, _Opts} = Timer,
 	end,
     {keep_state, Data}.
 
+% FIXME Atoms are allowed for test cases. Test cases should, however,
+% use DTLS and not plain UDP.
+add_location(NameAtom, Map) when is_atom(NameAtom) ->
+    ?LOG(debug, "Getting location for atom: ~p", [NameAtom]),
+    add_location(atom_to_binary(NameAtom, utf8), Map);
 add_location(Name, Map) when is_binary(Name) ->
     ?LOG(debug, "Getting location for: ~p", [Name]),
     AVPName = capwap_config:get(ac, location_avp, undefined),
@@ -2631,5 +2636,5 @@ add_location(Name, Map) when is_binary(Name) ->
             Map
     end;
 add_location(Name, Map) ->
-    ?LOG(notice, "Name provided is not a binary, avoiding location retrieval: ~p", [Name]),
+    ?LOG(notice, "Name provided is not a binary or an atom, avoiding location retrieval: ~p", [Name]),
     Map.

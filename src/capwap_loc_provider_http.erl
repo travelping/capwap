@@ -1,4 +1,4 @@
-%% Copyright 2017-2019 Travelping GmbH <info@travelping.com>
+%% Copyright (C) 2023, Travelping GmbH <info@travelping.com>
 %%
 %% This program is free software: you can redistribute it and/or modify
 %% it under the terms of the GNU Lesser General Public License as
@@ -15,12 +15,9 @@
 
 -module(capwap_loc_provider_http).
 
--compile({parse_transform, cut}).
-
 -behaviour(capwap_loc_provider).
 
-%% AAA API
--export([config_fun/1]).
+-export([config_fun/1, validate_provider/1]).
 
 -include_lib("kernel/include/logger.hrl").
 
@@ -28,36 +25,42 @@
 -define(LONG_KEY, <<"longitude">>).
 
 config_fun(#{uri := Uri, timeout := Timeout}) ->
-  ParsedUri = uri_string:parse(Uri),
-  fun(Name) -> resolve_loc_http(ParsedUri, Timeout, Name) end.
+    ParsedUri = uri_string:parse(Uri),
+    fun(Name) -> resolve_loc_http(ParsedUri, Timeout, Name) end.
 
 resolve_loc_http(Uri, Timeout, Name) ->
     ?LOG(debug, "HTTP provider towards: ~p", [Uri]),
     #{path := UriPath} = Uri,
     JsonHeader = {<<"Content-Type">>, <<"application/json">>},
-    UriPathBin = unicode:characters_to_binary(UriPath),
-    ?LOG(debug, "UriPathBin: ~p", [UriPathBin]),
-    CompletePath = <<UriPathBin/binary, "/location/", Name/binary>>,
-    CompleteUri = Uri#{path => CompletePath},
+    CompleteUri = Uri#{path => iolist_to_binary([UriPath, <<"/location/">>, Name])},
     case http_request(uri_string:recompose(CompleteUri), [JsonHeader], [{timeout, Timeout}]) of
-        {ok, {Response = #{?LAT_KEY := LatVal, ?LONG_KEY := LongVal}, _LocReqState}} ->
-            ?LOG(debug, "Got response: ~p", [Response]),
-            {location, LatVal, LongVal};
-        {ok, {Response, _LocReqState}} ->
-            ?LOG(error, "Got non-matching response: ~p", [Response]),
-            {error, {response_format, Response}};
-        {error, Error} ->
-            ?LOG(error, "Error retrieving location: ~p", [Error]),
-            {error, {http_error, Error}}
+	{ok, Response = #{?LAT_KEY := LatVal, ?LONG_KEY := LongVal}} ->
+	    ?LOG(debug, "Got response: ~p", [Response]),
+	    {location, LatVal, LongVal};
+	{ok, Response} ->
+	    ?LOG(error, "Got non-matching response: ~p", [Response]),
+	    {error, {response_format, Response}};
+	{error, Error} ->
+	    ?LOG(error, "Error retrieving location: ~p", [Error]),
+	    {error, {http_error, Error}}
     end.
 
-
+% Body option is set here because it is handled here
 http_request(Http, Headers, Opts) ->
-  case hackney:request(get, Http, Headers, <<>>, Opts) of
-    {ok, 200, _RespHeaders, ClientRef} ->
-      {ok, Body} = hackney:body(ClientRef),
-      {ok, {jsx:decode(Body, [return_maps]), ClientRef}};
-    Error ->
-      % exometer:update([capwap, ac, error_wtp_http_config_count], 1),
-      {error, Error}
-  end.
+    case hackney:request(get, Http, Headers, <<>>, Opts ++ [{with_body, true}]) of
+	{ok, 200, _RespHeaders, Body} ->
+	    try {ok, jsx:decode(Body, [return_maps])}
+	    catch error:badarg -> {error, {json_format_error, Body}} end;
+	Error ->
+	    {error, Error}
+    end.
+
+validate_provider(#{uri := Uri, timeout := Timeout}) when is_number(Timeout) andalso Timeout>0 ->
+    #{scheme := Scheme, host := _} = uri_string:parse(Uri),
+    case Scheme of
+	"http" -> ok;
+	"https" -> ok;
+	<<"http">> -> ok;
+	<<"https">> -> ok
+    end,
+    ok.

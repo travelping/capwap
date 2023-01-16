@@ -1,4 +1,4 @@
-%% Copyright 2017, Travelping GmbH <info@travelping.com>
+%% Copyright (C) 2013-2023, Travelping GmbH <info@travelping.com>
 
 %% This program is free software; you can redistribute it and/or
 %% modify it under the terms of the GNU General Public License

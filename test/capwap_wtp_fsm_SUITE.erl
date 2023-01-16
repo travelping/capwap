@@ -1,4 +1,4 @@
-%% Copyright (C) 2013-2017, Travelping GmbH <info@travelping.com>
+%% Copyright (C) 2013-2023, Travelping GmbH <info@travelping.com>
 
 %% This program is free software: you can redistribute it and/or modify
 %% it under the terms of the GNU Affero General Public License as published by
@@ -101,7 +101,6 @@ init_per_testcase(_, Config) ->
     capwap_ac_sup:clear(),
     Config.
 
-
 start_loc_server() ->
     Dispatch = cowboy_router:compile([
         {'_', [{"/[...]", test_loc_handler, []}]}
@@ -110,9 +109,9 @@ start_loc_server() ->
         [{port, 9990}],
         #{env => #{dispatch => Dispatch}}
     ).
+
 stop_loc_server() ->
     cowboy:stop_listener(test_loc_handler).
-
 
 end_per_testcase(_, Config) ->
     meck_unload(),
@@ -332,7 +331,6 @@ location(_Config) ->
     meck:validate(ergw_aaa_session),
     meck:validate(capwap_ac),
     ok.
-
 
 %% ------------------------------------------------------------------------------------
 %% helper
