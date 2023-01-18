@@ -3,6 +3,12 @@ capwap
 
 Erlang CAPWAP AC implementation.
 
+Version 3.2.0 - 18 Jan 2023
+---------------------------
+
+**Features** :rocket:
+* [#59](https://github.com/travelping/capwap/pull/59) Attach location information to AAA requests
+
 Version 3.1.0 - 5 Mar 2021
 ---------------------------
 
