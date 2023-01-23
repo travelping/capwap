@@ -18,7 +18,7 @@
 -behaviour(supervisor).
 
 %% API
--export([start_link/1]).
+-export([start_link/1, location_children/0]).
 
 %% Supervisor callbacks
 -export([init/1]).
@@ -32,6 +32,16 @@
 
 start_link(Config) ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, [Config]).
+
+location_children() ->
+    case application:get_env(location_provider) of
+	undefined ->
+	    ?LOG(warning, "Location provider disabled, no config found"),
+	    [];
+	{ok, LocProviderConfig} ->
+	    ?LOG(info, "Location provider enabled"),
+	    [?CHILD(capwap_loc_provider_sup, supervisor, [LocProviderConfig])]
+    end.
 
 %% Supervisor callbacks
 

@@ -52,9 +52,8 @@ start_tracer(File) ->
 %% ===================================================================
 
 init([]) ->
-    {ok, LocProviderConfig} = application:get_env(location_provider),
-    {ok, {{one_for_one, 30, 60}, [
-				  ?CHILD(capwap_loc_provider_sup, supervisor, [LocProviderConfig]),
+    LocProvider = capwap_loc_provider_sup:location_children(),
+    {ok, {{one_for_one, 30, 60}, LocProvider ++ [
 				  ?CHILD(capwap_wtp_reg, worker, []),
 				  ?CHILD(capwap_ac_sup, supervisor, []),
 				  ?CHILD(capwap_station_reg, worker, []),

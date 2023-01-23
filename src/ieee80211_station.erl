@@ -1736,21 +1736,21 @@ handle_session_timer_ev({_, Level, _} = Ev, {Interval, _, _Opts} = Timer,
 
 % FIXME Atoms are allowed for test cases. Test cases should, however,
 % use DTLS and not plain UDP.
-add_location(ACAtom, Map) when is_atom(ACAtom) ->
-    ?LOG(debug, "Getting location through atom: ~p", [ACAtom]),
-    add_location(atom_to_binary(ACAtom, utf8), Map);
-add_location(AC, Map) when is_binary(AC) ->
+add_location(AC, Map) when is_pid(AC) ->
     ?LOG(debug, "Getting location through: ~p", [AC]),
     try capwap_ac:get_info(AC) of
 	{ok, #{id := Name}} ->
-	    ?LOG(debug, "Getting location for name: ~p", [Name]),
-	    AVPName = capwap_config:get(ac, location_avp, undefined),
-	    case capwap_loc_provider:get_loc(Name, false) of
+	    BinName = case Name of _ when is_binary(Name) -> Name;
+				   _ when is_atom(Name) -> atom_to_binary(Name, utf8);
+				   _ -> <<"undefined">> end,
+	    ?LOG(debug, "Getting location for name: ~p", [{Name, BinName}]),
+	    SessionAttr = 'IM-LI-Location',
+	    case capwap_loc_provider:get_loc(BinName, false) of
 		{location, LatVal, LongVal} ->
 		    ?LOG(debug, "Successful location: ~p", [{LatVal, LongVal}]),
-		    Map#{AVPName => iolist_to_binary(io_lib:format("Lat:~s;Lon:~s", [LatVal, LongVal]))};
+		    Map#{SessionAttr => iolist_to_binary(io_lib:format("Lat:~s;Lon:~s", [LatVal, LongVal]))};
 		{error, Cause} ->
-		    ?LOG(error, "Error retrieving location: ~p", [Cause]),
+		    ?LOG(warning, "Error retrieving location: ~p", [Cause]),
 		    Map
 	    end
     catch
@@ -1759,5 +1759,5 @@ add_location(AC, Map) when is_binary(AC) ->
 	    Map
 	end;
 add_location(AC, Map) ->
-    ?LOG(notice, "AC provided is not a binary, avoiding location retrieval: ~p", [AC]),
+    ?LOG(notice, "AC provided is not a pid, avoiding location retrieval: ~p", [AC]),
     Map.
