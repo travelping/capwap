@@ -76,6 +76,8 @@ init_per_suite(Config0) ->
     %% Not really needed in this suite, just in case a custom response is needed
     meck:new(test_loc_handler, [no_link, passthrough]),
     logger:update_primary_config(#{level => all}),
+    logger:update_formatter_config(default, template, [time," ",pid," ",level," ",mfa,": ",msg,"\n"]),
+    logger:update_formatter_config(cth_log_redirect, template, [time," ",pid," ",level," ",mfa,": ",msg,"\n"]),
     Dispatch = cowboy_router:compile([
         {'_', [{"/[...]", test_loc_handler, []}]}
     ]),
@@ -206,7 +208,6 @@ wtp_fsm(_Config) ->
     ?equal(83, meck:num_calls(ergw_aaa_session, invoke, ['_', '_', interim, '_'])),
 
     meck:validate(ergw_aaa_session),
-    meck:validate(capwap_ac),
     ok.
 
 sta_fsm(_Config) ->
@@ -274,24 +275,23 @@ sta_fsm(_Config) ->
 			     [info, {timeout, '_', {accounting, 'IP-CAN', periodic}}, connected, '_'])),
 
     meck:validate(ergw_aaa_session),
-    meck:validate(capwap_ac),
     meck:validate(ieee80211_station),
     ok.
 
 location(_Config) ->
     meck:expect(ergw_aaa_session, invoke,
 		fun(Session, SessionOpts, interim, Opts) ->
-			#{'IM_LI_Location' := Loc} = SessionOpts,
+			#{'IM-LI-Location' := Loc} = SessionOpts,
 			%% TODO check location values
 			ct:pal("Sent location (interim): ~p~n", [Loc]),
 			meck:passthrough([Session, SessionOpts, interim, Opts]);
 		   (Session, SessionOpts, start, Opts) ->
-			#{'IM_LI_Location' := Loc} = SessionOpts,
+			#{'IM-LI-Location' := Loc} = SessionOpts,
 			%% TODO check location values
 			ct:pal("Sent location (start): ~p~n", [Loc]),
 			meck:passthrough([Session, SessionOpts, start, Opts]);
 		   (Session, SessionOpts, stop, Opts) ->
-			#{'IM_LI_Location' := Loc} = SessionOpts,
+			#{'IM-LI-Location' := Loc} = SessionOpts,
 			%% TODO check location values
 			ct:pal("Sent location (stop): ~p~n", [Loc]),
 			meck:passthrough([Session, SessionOpts, stop, Opts]);
@@ -329,7 +329,66 @@ location(_Config) ->
     ?equal(3, meck:num_calls(ergw_aaa_session, invoke, ['_', '_', interim, '_'])),
 
     meck:validate(ergw_aaa_session),
-    meck:validate(capwap_ac),
+    ok.
+
+location_eradius_mock(_Config) ->
+    meck:expect(eradius_client, send_request,
+		fun(Req, Session0, Opts) ->
+		    ct:pal("Calling send_request... ~p", [{Req, Session0, Opts}]),
+		    {ok, fooResponse, fooAuthenticator}
+		end
+    ),
+    meck:expect(ergw_aaa_session, invoke,
+		fun(Session, SessionOpts, interim, Opts) ->
+			#{'IM-LI-Location' := Loc} = SessionOpts,
+			%% TODO check location values
+			ct:pal("Sent location (interim): ~p~n", [Loc]),
+			meck:passthrough([Session, SessionOpts, interim, Opts]);
+		   (Session, SessionOpts, start, Opts) ->
+			#{'IM-LI-Location' := Loc} = SessionOpts,
+			%% TODO check location values
+			ct:pal("Sent location (start): ~p~n", [Loc]),
+			meck:passthrough([Session, SessionOpts, start, Opts]);
+		   (Session, SessionOpts, stop, Opts) ->
+			#{'IM-LI-Location' := Loc} = SessionOpts,
+			%% TODO check location values
+			ct:pal("Sent location (stop): ~p~n", [Loc]),
+			meck:passthrough([Session, SessionOpts, stop, Opts]);
+		   (Session, SessionOpts, Procedure, Opts) ->
+			meck:passthrough([Session, SessionOpts, Procedure, Opts])
+		end),
+
+    {ok, WTP} = start_local_wtp(),
+
+    Match1 = ets:fun2ms(fun({ok, {Header, Msg}}) when element(1, Header) == capwap_header, element(1, Msg) == discovery_response -> {Header, Msg} end),
+    {_Hdr1, _Msg1} = ?match(Match1, wtp_mockup_fsm:send_discovery(WTP)),
+
+    Match2 = ets:fun2ms(fun({ok, {Header, Msg}}) when element(1, Header) == capwap_header, element(1, Msg) == join_response -> {Header, Msg} end),
+    {_Hdr2, _Msg2} = ?match(Match2, wtp_mockup_fsm:send_join(WTP)),
+
+    Match3 = ets:fun2ms(fun({ok, {Header, Msg}}) when element(1, Header) == capwap_header, element(1, Msg) == configuration_status_response -> {Header, Msg} end),
+    {_Hdr3, _Msg3} = ?match(Match3, wtp_mockup_fsm:send_config_status(WTP)),
+
+    Match4 = ets:fun2ms(fun({ok, {Header, Msg}}) when element(1, Header) == capwap_header, element(1, Msg) == change_state_event_response -> {Header, Msg} end),
+    {_Hdr4, _Msg4} = ?match(Match4, wtp_mockup_fsm:send_change_state_event(WTP)),
+
+    Match5 = ets:fun2ms(fun({Header, Msg}) when element(1, Header) == capwap_header, element(1, Msg) == ieee_802_11_wlan_configuration_request -> {Header, Msg} end),
+    {_Hdr5, _Msg5} = ?assert_mbox_match(Match5),
+
+    Match6 = ets:fun2ms(fun({ok, {Header, Msg}}) when element(1, Header) == capwap_header, element(1, Msg) == wtp_event_response -> {Header, Msg} end),
+    {_Hdr6, _Msg6} = ?match(Match6, wtp_mockup_fsm:send_wwan_statistics(WTP)),
+
+    %% wait 'Acct-Interim-Interval'
+    ct:sleep({seconds, 11}),
+
+    catch stop_local_wtp(WTP),
+
+    ct:sleep(100),
+
+    ?equal(3, meck:num_calls(ergw_aaa_session, invoke, ['_', '_', interim, '_'])),
+
+    meck:validate(eradius_client),
+    meck:validate(ergw_aaa_radius),
     ok.
 
 %% ------------------------------------------------------------------------------------
@@ -344,14 +403,12 @@ stop_local_wtp(WTP) ->
     wtp_mockup_fsm:stop(WTP).
 
 meck_init() ->
-    meck:new(capwap_ac, [passthrough]),
     meck:new(ieee80211_station, [passthrough]),
     meck:new(ergw_aaa_session, [passthrough]).
 
 meck_unload() ->
     meck:unload(ergw_aaa_session),
-    meck:unload(ieee80211_station),
-    meck:unload(capwap_ac).
+    meck:unload(ieee80211_station).
 
 setup_applications() ->
     {ok, CWD} = file:get_cwd(),
@@ -361,7 +418,6 @@ setup_applications() ->
 		      {server_socket_opts, [{recbuf, 1048576}, {sndbuf, 1048576}]},
 		      {limit, 200},
 		      {max_wtp, 100},
-		      {location_avp, 'IM_LI_Location'},
 		      {security, ['x509']},
 		      {versions, [{hardware, <<"SCG">>},
 				  {software, <<"SCG">>}]},
@@ -426,6 +482,10 @@ setup_applications() ->
 	       [{ergw_aaa_static,
 		 [{'NAS-Identifier',        <<"NAS-Identifier">>},
 		  {'Acct-Interim-Interval', 10}
+		 ]},
+	       {ergw_aaa_radius,
+		 [{server, {{127,0,0,1}, 9100, <<"secret">>}},
+		   {vendor_dicts, [52315]}
 		 ]}
 	       ]},
 	      {services,
@@ -438,9 +498,12 @@ setup_applications() ->
 			   'Acct-Interim-Interval' => 10,
 			   'TLS-Pre-Shared-Key' => <<"MySecret">>},
 		     'RADIUS-Acct' =>
-			 #{'Result-Code' => 2001}
+			 #{handler => ergw_aaa_radius,'Result-Code' => 2001}
 		    }
 		  }
+		 ]},
+		 {'Mocked',
+		 [{handler, 'ergw_aaa_radius'}
 		 ]}
 	       ]},
 	      {apps,

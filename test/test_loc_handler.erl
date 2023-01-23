@@ -28,4 +28,4 @@ init(Req0 = #{path_info := [<<"location">> | _]}, State) ->
 
 %% Hook for meck
 content() ->
-    jsx:encode(#{<<"latitude">> => <<"11111">>,  <<"longitude">> => <<"22222">>}).
+    jsx:encode(#{<<"latitude">> => <<"11111.1">>,  <<"longitude">> => <<"22222.2">>}).

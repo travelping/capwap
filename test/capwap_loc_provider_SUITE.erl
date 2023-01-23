@@ -49,6 +49,9 @@ all() ->
      test_error].
 
 init_per_suite(Config) ->
+    % Dummy app env value to enable the calls
+    application:set_env(capwap, location_provider, #{}),
+    ct:pal("Env for capwap: ~p", [application:get_all_env(capwap)]),
     ct:log("Suite config: ~p~n", [Config]),
     meck:new(test_loc_handler, [no_link, passthrough]),
     logger:update_primary_config(#{level => all}),
@@ -57,7 +60,7 @@ init_per_suite(Config) ->
     RefreshTime = 5000,
     LocConfig = #{providers => [
 	{capwap_loc_provider_http, #{uri => "http://127.0.0.1:9990", timeout => 30000}},
-	{capwap_loc_provider_default, #{default_loc => {location, <<"123">>, <<"456">>}}}
+	{capwap_loc_provider_default, #{default_loc => {location, <<"123.123">>, <<"456.456">>}}}
       ],
       refresh => RefreshTime},
     
@@ -92,7 +95,7 @@ end_per_testcase(TC, _) when
     RefreshTime = 5000,
     LocConfig = #{providers => [
 	{capwap_loc_provider_http, #{uri => "http://127.0.0.1:9999", timeout => 30000}},
-	{capwap_loc_provider_default, #{default_loc => {location, <<"123">>, <<"456">>}}}
+	{capwap_loc_provider_default, #{default_loc => {location, <<"123.123">>, <<"456.456">>}}}
       ],
       refresh => RefreshTime},
     capwap_loc_provider:load_config(LocConfig),
@@ -109,18 +112,19 @@ end_per_testcase(_, _) ->
 test_cache() ->
     [{doc, "Test that the cache is used and refreshed appropriately"}].
 test_cache(_) ->
-    V1 = #{<<"latitude">> => <<"001">>,  <<"longitude">> => <<"002">>},
-    V2 = #{<<"latitude">> => <<"100">>,  <<"longitude">> => <<"200">>},
+    ct:pal("Env for capwap: ~p", [application:get_all_env(capwap)]),
+    V1 = #{<<"latitude">> => <<"001.1">>,  <<"longitude">> => <<"002.2">>},
+    V2 = #{<<"latitude">> => <<"100.0">>,  <<"longitude">> => <<"200.0">>},
     meck:expect(test_loc_handler, content, fun() -> jsx:encode(V1) end),
-    {location, <<"001">>, <<"002">>} = capwap_loc_provider:get_loc(<<"device">>),
+    {location, <<"001.1">>, <<"002.2">>} = capwap_loc_provider:get_loc(<<"device">>),
     meck:expect(test_loc_handler, content, fun() -> jsx:encode(V2) end),
     %% Note we change the value right now to catch errors in caching
     timer:sleep(1000),
     %% Cache hasn't expired
-    {location, <<"001">>, <<"002">>} = capwap_loc_provider:get_loc(<<"device">>),
+    {location, <<"001.1">>, <<"002.2">>} = capwap_loc_provider:get_loc(<<"device">>),
     timer:sleep(10000),
     %% Cache has expired now
-    {location, <<"100">>, <<"200">>} = capwap_loc_provider:get_loc(<<"device">>),
+    {location, <<"100.0">>, <<"200.0">>} = capwap_loc_provider:get_loc(<<"device">>),
     meck:unload(test_loc_handler),
     ok.
 
@@ -129,18 +133,18 @@ test_config_chain() ->
 test_config_chain(_) ->
     NonConformant = #{<<"error">> => <<"errorMsg">>},
     meck:expect(test_loc_handler, content, fun() -> jsx:encode(NonConformant) end),
-    {location, <<"123">>, <<"456">>} = capwap_loc_provider:get_loc(<<"device">>).
+    {location, <<"123.123">>, <<"456.456">>} = capwap_loc_provider:get_loc(<<"device">>).
 
 test_reconfig() ->
     [{doc, "Test that config can be modified at runtime"}].
 test_reconfig(Config) ->
     RefreshTime = 5000,
     LocConfig = #{providers => [
-	{capwap_loc_provider_default, #{default_loc => {location, Lat = <<"123">>, Long = <<"456">>}}}
+	{capwap_loc_provider_default, #{default_loc => {location, Lat = <<"123.123">>, Long = <<"456.456">>}}}
       ],
       refresh => RefreshTime},
     capwap_loc_provider:load_config(LocConfig),
-    {location, <<"123">>, <<"456">>} = capwap_loc_provider:get_loc(<<"device">>).
+    {location, <<"123.123">>, <<"456.456">>} = capwap_loc_provider:get_loc(<<"device">>).
 
 test_error() ->
     [{doc, "Test that an error is returned in case of no valid providers"}].

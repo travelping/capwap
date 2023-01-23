@@ -13,6 +13,27 @@
 %% You should have received a copy of the GNU Affero General Public License
 %% along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+%% The `capwap_loc_provider` functionality retrieves location information
+%% using a pluggable architecture. A plugin supplying location
+%% information to CAPWAP needs to provide a module conforming to
+%% the `capwap_loc_provider` using the callbacks defined below.
+
+%% This functionality expects a configuration term with the following
+%% format:
+
+%% ```
+%% {location_provider, #{
+%%     providers => [
+%%         {<plugin module>, <configuration term>}
+%%     ],
+%%     refresh => <refresh time>}
+%% }
+%% ```
+
+%% This module includes a cache that stores already retrieved locations
+%% for a configurable time. After the timer expires, the entry is removed from
+%% the cache, and resolved again when a new request comes in.
+
 -module(capwap_loc_provider).
 
 -behavior(gen_server).
@@ -21,7 +42,7 @@
 -export([start/1, start_link/1]).
 
 %% gen_server callbacks
--export([init/1, handle_call/3, handle_cast/2, handle_info/2]).
+-export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
 %% user api
 -export([flush_loc_cache/0, get_loc/1, get_loc/2, load_config/1]).
@@ -65,7 +86,7 @@ validate_provider({Mod, Config}) ->
 
 init(Config = #{refresh := RefreshTime, providers := Providers}) ->
     validate(Config),
-    ?LOG(debug, "table ref: ~p", [ets:whereis(?CACHE_LOC)]),
+    ?LOG(debug, "Table ref: ~p", [ets:whereis(?CACHE_LOC)]),
     TabOpts = [set, protected, named_table, {read_concurrency, true}],
     %% Not needed since it will return the table name
     LocTab = ets:new(?CACHE_LOC, TabOpts),
@@ -79,7 +100,7 @@ handle_call(flush_loc_cache, _, State = #loc_cache{loc_tab = LocTab}) ->
     ?LOG(debug, "Flush location cache, tableref: ~p", [ets:whereis(LocTab)]),
     ets:delete_all_objects(LocTab),
     {reply, ok, State};
-handle_call({get_loc, UseCache = true, Name}, _, State = #loc_cache{
+handle_call({get_loc, true, Name}, _, State = #loc_cache{
 	     loc_tab = LocTab, refresh = RefreshTime, provider_chain = Chain}) ->
     ?LOG(debug, "get location for device name (with cache): ~p", [Name]),
     Result = case ets:lookup(LocTab, Name) of
@@ -87,8 +108,8 @@ handle_call({get_loc, UseCache = true, Name}, _, State = #loc_cache{
 	[] -> refresh_loc(Name, Chain, LocTab, RefreshTime)
     end,
     {reply, Result, State};
-handle_call({get_loc, UseCache = false, Name}, _, State = #loc_cache{
-	     loc_tab = LocTab, refresh = RefreshTime, provider_chain = Chain}) ->
+handle_call({get_loc, false, Name}, _, State = #loc_cache{
+	     provider_chain = Chain}) ->
     ?LOG(debug, "get location for device name (without cache): ~p", [Name]),
     Result = Chain(Name),
     {reply, Result, State};
@@ -112,25 +133,46 @@ terminate(Reason, _) ->
 
 %% user api
 
+is_enabled() ->
+    case application:get_env(capwap, location_provider) of
+	undefined -> false;
+	{ok, _} -> true
+    end.
+
 flush_loc_cache() ->
-    gen_server:call(?MODULE, flush_loc_cache).
+    case is_enabled() of
+	true -> gen_server:call(?MODULE, flush_loc_cache);
+	false -> {error, "Location not enabled"}
+    end.
 
 load_config(Config) ->
-    gen_server:call(?MODULE, {load_config, Config}).
+    case is_enabled() of
+	true -> gen_server:call(?MODULE, {load_config, Config});
+	false -> {error, "Location not enabled"}
+    end.
+    
 
 %% Uses exceptions and error (for the provider itself)
 get_loc(Name) ->
     get_loc(Name, true).
 
 get_loc(Name, true) ->
-    ?LOG(debug, "table ref: ~p", [ets:whereis(?CACHE_LOC)]),
-    case ets:lookup(?CACHE_LOC, Name) of
-	[{Name, Loc = {location, _, _}}] -> Loc;
-	[] -> gen_server:call(?MODULE, {get_loc, true, Name}, 20000)
+    case is_enabled() of
+	true -> 
+	    ?LOG(debug, "table ref: ~p", [ets:whereis(?CACHE_LOC)]),
+	    case ets:lookup(?CACHE_LOC, Name) of
+		[{Name, Loc = {location, _, _}}] -> Loc;
+		[] -> gen_server:call(?MODULE, {get_loc, true, Name}, 20000)
+	    end;
+	false -> {error, "Location not enabled"}
     end;
 get_loc(Name, false) ->
-    ?LOG(debug, "bypassing cache"),
-    gen_server:call(?MODULE, {get_loc, false, Name}, 20000).
+    case is_enabled() of
+	true ->
+	    ?LOG(debug, "Bypassing cache"),
+	    gen_server:call(?MODULE, {get_loc, false, Name}, 20000);
+	false -> {error, "Location not enabled"}
+    end.
 
 %% Internal functions
 

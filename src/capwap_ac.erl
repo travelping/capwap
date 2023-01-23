@@ -2626,15 +2626,22 @@ add_location(NameAtom, Map) when is_atom(NameAtom) ->
     add_location(atom_to_binary(NameAtom, utf8), Map);
 add_location(Name, Map) when is_binary(Name) ->
     ?LOG(debug, "Getting location for: ~p", [Name]),
-    AVPName = capwap_config:get(ac, location_avp, undefined),
     case capwap_loc_provider:get_loc(Name, false) of
         {location, LatVal, LongVal} ->
             ?LOG(debug, "Successful location: ~p", [{LatVal, LongVal}]),
-            Map#{AVPName => iolist_to_binary(io_lib:format("Lat:~s;Lon:~s", [LatVal, LongVal]))};
+            Map#{'IM-LI-Location' =>
+		     #{'CAPWAP-GPS-Latitude' => bin_to_float(LatVal),
+		       'CAPWAP-GPS-Longitude' => bin_to_float(LongVal)}};
         {error, Cause} ->
-            ?LOG(error, "Error retrieving location: ~p", [Cause]),
+            ?LOG(warning, "Error retrieving location: ~p", [Cause]),
             Map
     end;
 add_location(Name, Map) ->
     ?LOG(notice, "Name provided is not a binary or an atom, avoiding location retrieval: ~p", [Name]),
     Map.
+
+bin_to_float(BinVal) ->
+    try binary_to_float(BinVal)
+    catch error:badarg ->
+	float(binary_to_integer(BinVal))
+    end.
