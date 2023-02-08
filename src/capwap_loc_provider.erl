@@ -91,7 +91,7 @@ init(Config = #{refresh := RefreshTime, providers := Providers}) ->
     %% Not needed since it will return the table name
     LocTab = ets:new(?CACHE_LOC, TabOpts),
     ?LOG(debug, "cache started: ~p", [LocTab]),
-    ?LOG(debug, "table ref: ~p", [ets:whereis(?CACHE_LOC)]),
+    ?LOG(debug, "Table ref: ~p", [ets:whereis(?CACHE_LOC)]),
     %% TODO Handle exceptions in chain?
     {ok, #loc_cache{
 	loc_tab = LocTab, refresh = RefreshTime, providers = Providers, provider_chain = chain(Providers)}}.
@@ -150,7 +150,7 @@ load_config(Config) ->
 	true -> gen_server:call(?MODULE, {load_config, Config});
 	false -> {error, "Location not enabled"}
     end.
-    
+
 
 %% Uses exceptions and error (for the provider itself)
 get_loc(Name) ->
@@ -158,7 +158,7 @@ get_loc(Name) ->
 
 get_loc(Name, true) ->
     case is_enabled() of
-	true -> 
+	true ->
 	    ?LOG(debug, "table ref: ~p", [ets:whereis(?CACHE_LOC)]),
 	    case ets:lookup(?CACHE_LOC, Name) of
 		[{Name, Loc = {location, _, _}}] -> Loc;
@@ -179,7 +179,7 @@ get_loc(Name, false) ->
 refresh_loc(Name, Chain, LocTab, RefreshTime) ->
     case Chain(Name) of
 	E = {error, _} -> E;
-	L = {location, _, _} -> 
+	L = {location, _, _} ->
 	    ets:insert(LocTab, {Name, L}),
 	    erlang:send_after(RefreshTime, ?MODULE, {evict, Name}),
 	    L
