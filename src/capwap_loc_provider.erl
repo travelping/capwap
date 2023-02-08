@@ -134,7 +134,7 @@ terminate(Reason, _) ->
 %% user api
 
 is_enabled() ->
-    case application:get_env(capwap, location_provider) of
+    case application:get_env(location_provider) of
 	undefined -> false;
 	{ok, _} -> true
     end.
@@ -159,7 +159,7 @@ get_loc(Name) ->
 get_loc(Name, true) ->
     case is_enabled() of
 	true ->
-	    ?LOG(debug, "table ref: ~p", [ets:whereis(?CACHE_LOC)]),
+	    ?LOG(debug, "Table ref: ~p", [ets:whereis(?CACHE_LOC)]),
 	    case ets:lookup(?CACHE_LOC, Name) of
 		[{Name, Loc = {location, _, _}}] -> Loc;
 		[] -> gen_server:call(?MODULE, {get_loc, true, Name}, 20000)
