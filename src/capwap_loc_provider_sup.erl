@@ -34,7 +34,7 @@ start_link(Config) ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, [Config]).
 
 location_children() ->
-    case application:get_env(location_provider) of
+    case application:get_env(capwap, location_provider) of
 	undefined ->
 	    ?LOG(warning, "Location provider disabled, no config found"),
 	    [];
