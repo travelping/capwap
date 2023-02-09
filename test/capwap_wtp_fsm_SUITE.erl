@@ -281,19 +281,19 @@ sta_fsm(_Config) ->
 location(_Config) ->
     meck:expect(ergw_aaa_session, invoke,
 		fun(Session, SessionOpts, interim, Opts) ->
-			#{'IM-LI-Location' := Loc} = SessionOpts,
+			#{'CAPWAP-GPS-Latitude' := Lat, 'CAPWAP-GPS-Longitude' := Long} = SessionOpts,
 			%% TODO check location values
-			ct:pal("Sent location (interim): ~p~n", [Loc]),
+			ct:pal("Sent location (interim): ~p~n", [{Lat, Long}]),
 			meck:passthrough([Session, SessionOpts, interim, Opts]);
 		   (Session, SessionOpts, start, Opts) ->
-			#{'IM-LI-Location' := Loc} = SessionOpts,
+			#{'CAPWAP-GPS-Latitude' := Lat, 'CAPWAP-GPS-Longitude' := Long} = SessionOpts,
 			%% TODO check location values
-			ct:pal("Sent location (start): ~p~n", [Loc]),
+			ct:pal("Sent location (start): ~p~n", [{Lat, Long}]),
 			meck:passthrough([Session, SessionOpts, start, Opts]);
 		   (Session, SessionOpts, stop, Opts) ->
-			#{'IM-LI-Location' := Loc} = SessionOpts,
+			#{'CAPWAP-GPS-Latitude' := Lat, 'CAPWAP-GPS-Longitude' := Long} = SessionOpts,
 			%% TODO check location values
-			ct:pal("Sent location (stop): ~p~n", [Loc]),
+			ct:pal("Sent location (stop): ~p~n", [{Lat, Long}]),
 			meck:passthrough([Session, SessionOpts, stop, Opts]);
 		   (Session, SessionOpts, Procedure, Opts) ->
 			meck:passthrough([Session, SessionOpts, Procedure, Opts])
