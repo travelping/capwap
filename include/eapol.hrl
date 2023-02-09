@@ -21,13 +21,13 @@
 -define(ETH_P_PAE, 16#888e).          %% Port Access Entity (IEEE 802.1X)
 
 -record(ccmp, {rsn,
-	       akm_algo,
-	       mic_algo,
-	       group_mgmt_cipher_suite,
-	       replay_counter,
-	       master_session_key,
-	       pre_master_key,
-	       nonce,
-	       kck,
-	       kek,
-	       tk}).
+               akm_algo,
+               mic_algo,
+               group_mgmt_cipher_suite,
+               replay_counter,
+               master_session_key,
+               pre_master_key,
+               nonce,
+               kck,
+               kek,
+               tk}).

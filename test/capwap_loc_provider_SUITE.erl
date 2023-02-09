@@ -21,26 +21,26 @@
 -include("capwap_config.hrl").
 
 -define(equal(Expected, Actual),
-    (fun (Expected@@@, Expected@@@) -> true;
-	 (Expected@@@, Actual@@@) ->
-	     ct:pal("MISMATCH(~s:~b, ~s)~nExpected: ~p~nActual:   ~p~n",
-		    [?FILE, ?LINE, ??Actual, Expected@@@, Actual@@@]),
-	     false
-     end)(Expected, Actual) orelse error(badmatch)).
+        (fun (Expected@@@, Expected@@@) -> true;
+             (Expected@@@, Actual@@@) ->
+                 ct:pal("MISMATCH(~s:~b, ~s)~nExpected: ~p~nActual:   ~p~n",
+                        [?FILE, ?LINE, ??Actual, Expected@@@, Actual@@@]),
+                 false
+         end)(Expected, Actual) orelse error(badmatch)).
 
 
 -define(match(Guard, Expr),
-	((fun () ->
-		  case (Expr) of
-		      Guard -> ok;
-		      V -> ct:pal("MISMATCH(~s:~b, ~s)~nExpected: ~p~nActual:   ~s~n",
-				   [?FILE, ?LINE, ??Expr, ??Guard, pretty_print(V)]),
-			    error(badmatch)
-		  end
-	  end)())).
+        ((fun () ->
+                  case (Expr) of
+                      Guard -> ok;
+                      V -> ct:pal("MISMATCH(~s:~b, ~s)~nExpected: ~p~nActual:   ~s~n",
+                                  [?FILE, ?LINE, ??Expr, ??Guard, pretty_print(V)]),
+                           error(badmatch)
+                  end
+          end)())).
 
 suite() ->
-	[{timetrap,{seconds,30}}].
+    [{timetrap,{seconds,30}}].
 
 all() ->
     [test_cache,
@@ -49,7 +49,7 @@ all() ->
      test_error].
 
 init_per_suite(Config) ->
-    % Dummy app env value to enable the calls
+                                                % Dummy app env value to enable the calls
     application:set_env(capwap, location_provider, #{}),
     ct:pal("Env for capwap: ~p", [application:get_all_env(capwap)]),
     ct:log("Suite config: ~p~n", [Config]),
@@ -59,19 +59,19 @@ init_per_suite(Config) ->
     application:ensure_all_started(hackney),
     RefreshTime = 5000,
     LocConfig = #{providers => [
-	{capwap_loc_provider_http, #{uri => "http://127.0.0.1:9990", timeout => 30000}},
-	{capwap_loc_provider_default, #{default_loc => {location, <<"123.123">>, <<"456.456">>}}}
-      ],
-      refresh => RefreshTime},
-    
+                                {capwap_loc_provider_http, #{uri => "http://127.0.0.1:9990", timeout => 30000}},
+                                {capwap_loc_provider_default, #{default_loc => {location, <<"123.123">>, <<"456.456">>}}}
+                               ],
+                  refresh => RefreshTime},
+
     {ok, LocSrv} = capwap_loc_provider:start(LocConfig),
     Dispatch = cowboy_router:compile([
-        {'_', [{"/[...]", test_loc_handler, []}]}
-    ]),
+                                      {'_', [{"/[...]", test_loc_handler, []}]}
+                                     ]),
     {ok, _} = cowboy:start_clear(test_loc_handler,
-        [{port, 9990}],
-        #{env => #{dispatch => Dispatch}}
-    ),
+                                 [{port, 9990}],
+                                 #{env => #{dispatch => Dispatch}}
+                                ),
     LocSuiteCfg = #{loc_provider => LocSrv, test_loc_name => test_loc_handler, refresh_time => RefreshTime},
     [{loc_suite_cfg, LocSuiteCfg} | Config].
 
@@ -89,15 +89,15 @@ init_per_testcase(_, Config) ->
     Config.
 
 end_per_testcase(TC, _) when 
-   TC == test_reconfig orelse 
-   TC == test_error orelse 
-   TC == test_existing_server_no_cache ->
+      TC == test_reconfig orelse 
+      TC == test_error orelse 
+      TC == test_existing_server_no_cache ->
     RefreshTime = 5000,
     LocConfig = #{providers => [
-	{capwap_loc_provider_http, #{uri => "http://127.0.0.1:9999", timeout => 30000}},
-	{capwap_loc_provider_default, #{default_loc => {location, <<"123.123">>, <<"456.456">>}}}
-      ],
-      refresh => RefreshTime},
+                                {capwap_loc_provider_http, #{uri => "http://127.0.0.1:9999", timeout => 30000}},
+                                {capwap_loc_provider_default, #{default_loc => {location, <<"123.123">>, <<"456.456">>}}}
+                               ],
+                  refresh => RefreshTime},
     capwap_loc_provider:load_config(LocConfig),
     meck:expect(test_loc_handler, content, fun() ->  meck:passthrough([]) end),
     ok;
@@ -140,9 +140,9 @@ test_reconfig() ->
 test_reconfig(Config) ->
     RefreshTime = 5000,
     LocConfig = #{providers => [
-	{capwap_loc_provider_default, #{default_loc => {location, Lat = <<"123.123">>, Long = <<"456.456">>}}}
-      ],
-      refresh => RefreshTime},
+                                {capwap_loc_provider_default, #{default_loc => {location, Lat = <<"123.123">>, Long = <<"456.456">>}}}
+                               ],
+                  refresh => RefreshTime},
     capwap_loc_provider:load_config(LocConfig),
     {location, <<"123.123">>, <<"456.456">>} = capwap_loc_provider:get_loc(<<"device">>).
 
@@ -151,7 +151,7 @@ test_error() ->
 test_error(Config) ->
     RefreshTime = 5000,
     LocConfig = #{providers => [
-      ],
-      refresh => RefreshTime},
+                               ],
+                  refresh => RefreshTime},
     capwap_loc_provider:load_config(LocConfig),
     {error, no_more_providers} = capwap_loc_provider:get_loc(<<"device">>).

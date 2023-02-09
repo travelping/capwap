@@ -18,7 +18,7 @@
 -compile({parse_transform, cut}).
 
 -export([wtp_init_config/2, wtp_config/1,
-	 wtp_radio_config/3]).
+         wtp_radio_config/3]).
 
 -include_lib("kernel/include/logger.hrl").
 -include("capwap_packet.hrl").
@@ -33,21 +33,21 @@ wtp_get(Path, Values)
     Settings = capwap_config:get(wtp, Path, []),
     ?LOG(debug, "got Settings for ~p: ~p", [Path, Settings]),
     lists:map(fun({K, V}) ->
-		      {K, proplists:get_value(K, Settings, V)}
-	      end, Values).
+                      {K, proplists:get_value(K, Settings, V)}
+              end, Values).
 
 wtp_init_config(CN, _Opts) ->
     WTP0 = [{psm_idle_timeout,           30},
-	    {psm_busy_timeout,           300},
-	    {max_stations,               100},
-	    {echo_request_interval,      60},
-	    {discovery_interval,         20},
-	    {idle_timeout,               300},
-	    {data_channel_dead_interval, 70},
-	    {ac_join_timeout,            70},
-	    {admin_pw,                   undefined},
-	    {wlan_hold_time,             15},
-	    {broken_add_wlan_workaround, false}],
+            {psm_busy_timeout,           300},
+            {max_stations,               100},
+            {echo_request_interval,      60},
+            {discovery_interval,         20},
+            {idle_timeout,               300},
+            {data_channel_dead_interval, 70},
+            {ac_join_timeout,            70},
+            {admin_pw,                   undefined},
+            {wlan_hold_time,             15},
+            {broken_add_wlan_workaround, false}],
     WTP1 = wtp_get([defaults], WTP0),
     WTP2 = wtp_get([CN], WTP1),
     ?LOG(debug, "WTP: ~p", [WTP2]),
@@ -63,14 +63,14 @@ bool_to_int(_) -> 0.
 %% derive WLAN defaults from Radio settings
 wtp_init_wlan_radio_defaults(Id, _Radio, WLAN) ->
     RSN = #wtp_wlan_rsn{
-	     version = 1,
-	     capabilities = 16#000C,
-	     group_cipher_suite = ?IEEE_802_1_CIPHER_SUITE_AES,
-	     management_frame_protection = false,
-	     group_mgmt_cipher_suite = 'AES-CMAC',
-	     cipher_suites = [?IEEE_802_1_CIPHER_SUITE_AES],
-	     akm_suites = []
-	    },
+             version = 1,
+             capabilities = 16#000C,
+             group_cipher_suite = ?IEEE_802_1_CIPHER_SUITE_AES,
+             management_frame_protection = false,
+             group_mgmt_cipher_suite = 'AES-CMAC',
+             cipher_suites = [?IEEE_802_1_CIPHER_SUITE_AES],
+             akm_suites = []
+            },
     WLAN#wtp_wlan_config{
       wlan_id = Id,
       suppress_ssid = bool_to_int(capwap_config:get(ac, suppress_ssid, false)),
@@ -87,21 +87,21 @@ wtp_init_wlan_radio_defaults(Id, _Radio, WLAN) ->
      }.
 
 wtp_init_wlan_keymgmt(WLAN = #wtp_wlan_config{
-				rsn = #wtp_wlan_rsn{akm_suites = AKM}
-				= RSN}, Value) ->
+                                rsn = #wtp_wlan_rsn{akm_suites = AKM}
+                                = RSN}, Value) ->
     if Value == psk ->
-	    WLAN#wtp_wlan_config{rsn = RSN#wtp_wlan_rsn{akm_suites = ['PSK' | AKM]}};
+            WLAN#wtp_wlan_config{rsn = RSN#wtp_wlan_rsn{akm_suites = ['PSK' | AKM]}};
        Value == 'ft-psk' ->
-	    WLAN#wtp_wlan_config{rsn = RSN#wtp_wlan_rsn{akm_suites = ['FT-PSK' | AKM]}};
+            WLAN#wtp_wlan_config{rsn = RSN#wtp_wlan_rsn{akm_suites = ['FT-PSK' | AKM]}};
        Value == wpa ->
-	    WLAN#wtp_wlan_config{rsn = RSN#wtp_wlan_rsn{akm_suites = ['802.1x' | AKM]}};
+            WLAN#wtp_wlan_config{rsn = RSN#wtp_wlan_rsn{akm_suites = ['802.1x' | AKM]}};
        Value == 'ft-wpa' ->
-	    WLAN#wtp_wlan_config{rsn = RSN#wtp_wlan_rsn{akm_suites = ['FT-802.1x' | AKM]}};
+            WLAN#wtp_wlan_config{rsn = RSN#wtp_wlan_rsn{akm_suites = ['FT-802.1x' | AKM]}};
        is_list(Value) ->
-	    lists:foldl(fun(V, W) -> wtp_init_wlan_keymgmt(W, V) end, WLAN, Value);
+            lists:foldl(fun(V, W) -> wtp_init_wlan_keymgmt(W, V) end, WLAN, Value);
        true ->
-	    ?LOG(error, "WLAN Key Management: ~w is invalid", [Value]),
-	    WLAN
+            ?LOG(error, "WLAN Key Management: ~w is invalid", [Value]),
+            WLAN
     end.
 
 wtp_init_wlan(_CN, _Radio, {ssid, _}, WLAN) ->
@@ -150,19 +150,19 @@ wtp_init_wlan_mf(CN, Radio, Settings, Count) ->
     DynSSIDSuffixLen = capwap_config:get(ac, dynamic_ssid_suffix_len, false),
 
     SSID = case proplists:get_value(ssid, Settings) of
-	       V when is_binary(V) -> V;
-	       V when is_list(V)   -> list_to_binary(V);
-	       _ when is_integer(DynSSIDSuffixLen),
-		      is_binary(CN) ->
-		   binary:list_to_bin([DefaultSSID, $-,
-				       binary:part(CN,
-						   size(CN) - DynSSIDSuffixLen,
-						   DynSSIDSuffixLen)]);
-	       _ -> DefaultSSID
-	   end,
+               V when is_binary(V) -> V;
+               V when is_list(V)   -> list_to_binary(V);
+               _ when is_integer(DynSSIDSuffixLen),
+                      is_binary(CN) ->
+                   binary:list_to_bin([DefaultSSID, $-,
+                                       binary:part(CN,
+                                                   size(CN) - DynSSIDSuffixLen,
+                                                   DynSSIDSuffixLen)]);
+               _ -> DefaultSSID
+           end,
     WLAN0 = wtp_init_wlan_radio_defaults(Count, Radio, #wtp_wlan_config{ssid = SSID}),
     WLAN = lists:foldl(wtp_init_wlan(CN, Radio, _, _),
-		       WLAN0, Settings),
+                       WLAN0, Settings),
     {WLAN, Count + 1}.
 
 %% apply per RADIO type AC defaults
@@ -170,29 +170,29 @@ wtp_init_radio_type_config(CN, RadioType, Radio) ->
     wtp_get([CN, radio_settings, RadioType], Radio).
 
 wtp_radio_config({CN, _}, RadioId, RadioType) ->
-    Radio0 = [{radio_id,		RadioId},
-	      {radio_type,		RadioType},
-	      {operation_mode,		'802.11g'},
-	      {channel,			undefined},
-	      {beacon_interval,		100},
-	      {dtim_period,		1},
-	      {short_preamble,		supported},
-	      {rts_threshold,		2347},
-	      {short_retry,		7},
-	      {long_retry,		4},
-	      {fragmentation_threshold,	2346},
-	      {tx_msdu_lifetime,	512},
-	      {rx_msdu_lifetime,	512},
-	      {tx_power,		100},
-	      {channel_assessment,	csonly},
-	      {energy_detect_threshold,	100},
-	      {band_support,		16#7F},
-	      {ti_threshold,		1000},
-	      {diversity,		disabled},
-	      {combiner,		omni},
-	      {antenna_selection,	[1]},
-	      {report_interval,         300},
-	      {wlans,			[]}],
+    Radio0 = [{radio_id,                RadioId},
+              {radio_type,              RadioType},
+              {operation_mode,          '802.11g'},
+              {channel,                 undefined},
+              {beacon_interval,         100},
+              {dtim_period,             1},
+              {short_preamble,          supported},
+              {rts_threshold,           2347},
+              {short_retry,             7},
+              {long_retry,              4},
+              {fragmentation_threshold, 2346},
+              {tx_msdu_lifetime,        512},
+              {rx_msdu_lifetime,        512},
+              {tx_power,                100},
+              {channel_assessment,      csonly},
+              {energy_detect_threshold, 100},
+              {band_support,            16#7F},
+              {ti_threshold,            1000},
+              {diversity,               disabled},
+              {combiner,                omni},
+              {antenna_selection,       [1]},
+              {report_interval,         300},
+              {wlans,                   []}],
 
     %% apply per Radio-Type AC defaults
     ConfTypes = [defaults | RadioType],

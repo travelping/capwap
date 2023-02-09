@@ -26,9 +26,9 @@
          content_types_accepted/2,fmt_dp_wtp/2]).
 
 -record(s, {
-    verbose = false :: boolean(),
-    opts
-}).
+            verbose = false :: boolean(),
+            opts
+           }).
 
 init(Req, Opts) ->
     Verbose = cowboy_req:header(<<"verbose">>, Req, <<"false">>),
@@ -90,16 +90,16 @@ handle_request_wtp(<<"GET">>, [ _ ], Req, State) ->
         {error, Error} ->
             {jsx:encode([{error, Error}]), Req, State};
         {ok, #{id              := Id,
-          station_count        := StationCnt,
-          location             := Location,
-          board_data           := BoardData,
-          descriptor           := Descriptor,
-          name                 := Name,
-          start_time           := StartTime,
-          ctrl_channel_address := CtrlAddress,
-          data_channel_address := DataAddress,
-          session_id           := SessionId,
-          echo_request_timeout := EchoReqTimeout}} ->
+               station_count        := StationCnt,
+               location             := Location,
+               board_data           := BoardData,
+               descriptor           := Descriptor,
+               name                 := Name,
+               start_time           := StartTime,
+               ctrl_channel_address := CtrlAddress,
+               data_channel_address := DataAddress,
+               session_id           := SessionId,
+               echo_request_timeout := EchoReqTimeout}} ->
             Now = erlang:system_time(milli_seconds),
             Ret = [{id, Id}, {stations, StationCnt},
                    {start_time, [{time, fmt_time_ms(StartTime)},
@@ -155,10 +155,10 @@ handle_request_wtp(_, _, Req, State) ->
 handle_request_station(<<"GET">>, [], Req, State) ->
     Stations = capwap:list_stations(),
     Ret = lists:map(fun({{CommonName, Endpoint}, MACs}) ->
-        [{id, CommonName},
-         {address, fmt_endpoint(Endpoint)},
-         {macs, [ fmt_station_mac(Station) || Station <- MACs ]}]
-    end, Stations),
+                            [{id, CommonName},
+                             {address, fmt_endpoint(Endpoint)},
+                             {macs, [ fmt_station_mac(Station) || Station <- MACs ]}]
+                    end, Stations),
     {jsx:encode(Ret), Req, State};
 handle_request_station(<<"DELETE">>, [_], Req, State) ->
     MACStr = cowboy_req:binding(id, Req),
@@ -186,21 +186,21 @@ handle_request_dp(<<"GET">>, [<<"stats">>], Req,
     case catch capwap_dp:get_stats() of
         [H | _] = StatsIn ->
             {_, Totals, Res} = lists:foldl(fun(Stats, {Cnt, Sum, Acc}) ->
-                S = tuple_to_list(Stats),
-                NewAcc = case Verbose of
-                    true ->
-                        Label = bin_fmt("thread_~w", [Cnt]),
-                        fmt_worker_stats(Label, S, Acc);
-                    _  ->
-                        Acc
-                end,
-                {Cnt + 1, lists:zipwith(fun(X, Y) -> X + Y end, S, Sum), NewAcc}
-            end, {1, lists:duplicate(size(H), 0), []}, StatsIn),
+                                                   S = tuple_to_list(Stats),
+                                                   NewAcc = case Verbose of
+                                                                true ->
+                                                                    Label = bin_fmt("thread_~w", [Cnt]),
+                                                                    fmt_worker_stats(Label, S, Acc);
+                                                                _  ->
+                                                                    Acc
+                                                            end,
+                                                   {Cnt + 1, lists:zipwith(fun(X, Y) -> X + Y end, S, Sum), NewAcc}
+                                           end, {1, lists:duplicate(size(H), 0), []}, StatsIn),
             Res1 = fmt_worker_stats(<<"total">>, Totals, Res),
             {jsx:encode(Res1), Req, State};
         _ ->
             {stop, dp_error_response(Req), State}
-        end;
+    end;
 handle_request_dp(_, _, Req, State) ->
     {jsx:encode([{error, bad_command}]), Req, State}.
 
@@ -222,9 +222,9 @@ handle_request_metrics(json, Path, Req, State) ->
 get_release_vsn() ->
     Releases = release_handler:which_releases(),
     Vsn = case lists:keyfind("ergw-capwap-node", 1, Releases) of
-        false -> "none";
-        {_, Version, _, _} -> Version
-    end,
+              false -> "none";
+              {_, Version, _, _} -> Version
+          end,
     jsx:encode([{version, list_to_binary(Vsn)}]).
 
 format_wtp({Id, Endpoint}) ->
@@ -247,13 +247,13 @@ fmt_dp_wtp(Verbose, {Endpoint, _WLANs, STAs, _RefCnt, _MTU, Stats}) ->
     Res = [{address, fmt_endpoint(Endpoint)}],
     Res1 = fmt_dp_wtp_stats(Verbose, Stats, Res),
     WTP_Stats = lists:map(fun(STA) ->
-        fmt_dp_wtp_stas(Verbose, STA)
-    end, STAs),
+                                  fmt_dp_wtp_stas(Verbose, STA)
+                          end, STAs),
     [{wtp_stats, WTP_Stats} | Res1].
 
 fmt_dp_wtp_stats(true, {RcvdPkts, SendPkts, RcvdBytes, SendBytes,
-		       RcvdFragments, SendFragments,
-		       ErrInvalidStation, ErrFragmentInvalid, ErrFragmentTooOld}, Acc) ->
+                        RcvdFragments, SendFragments,
+                        ErrInvalidStation, ErrFragmentInvalid, ErrFragmentTooOld}, Acc) ->
     [{input, [{bytes, RcvdBytes},
               {packets, RcvdPkts},
               {fragments, RcvdFragments}]},
@@ -277,25 +277,25 @@ fmt_dp_wtp_stas(true, {MAC, _VLAN, _RadioId, _BSSId, Stats}) ->
     ].
 
 fmt_worker_stats(Label, [RcvdPkts, SendPkts, RcvdBytes, SendBytes,
-			   RcvdFragments, SendFragments,
-			   ErrInvalidStation, ErrFragmentInvalid, ErrFragmentTooOld,
-			   ErrInvalidWtp, ErrHdrLengthInvalid, ErrTooShort,
-			   RateLimitUnknownWtp], Acc) ->
+                         RcvdFragments, SendFragments,
+                         ErrInvalidStation, ErrFragmentInvalid, ErrFragmentTooOld,
+                         ErrInvalidWtp, ErrHdrLengthInvalid, ErrTooShort,
+                         RateLimitUnknownWtp], Acc) ->
     [{Label,
-         [{input, [{bytes, RcvdBytes},
-                   {packets, RcvdPkts},
-                   {fragments, RcvdFragments}]},
-          {output, [{bytes, SendBytes},
-                    {packets, SendPkts},
-                    {fragments, SendFragments}]},
-          {errors, [{invalid_station, ErrInvalidStation},
-                    {invalid_wtp, ErrInvalidWtp},
-                    {fragment_invalid, ErrFragmentInvalid},
-                    {fragment_too_old, ErrFragmentTooOld},
-                    {header_length, ErrHdrLengthInvalid},
-                    {pkt_too_short, ErrTooShort},
-                    {rate_limit_unknown_wtp, RateLimitUnknownWtp}]}
-         ]} | Acc].
+      [{input, [{bytes, RcvdBytes},
+                {packets, RcvdPkts},
+                {fragments, RcvdFragments}]},
+       {output, [{bytes, SendBytes},
+                 {packets, SendPkts},
+                 {fragments, SendFragments}]},
+       {errors, [{invalid_station, ErrInvalidStation},
+                 {invalid_wtp, ErrInvalidWtp},
+                 {fragment_invalid, ErrFragmentInvalid},
+                 {fragment_too_old, ErrFragmentTooOld},
+                 {header_length, ErrHdrLengthInvalid},
+                 {pkt_too_short, ErrTooShort},
+                 {rate_limit_unknown_wtp, RateLimitUnknownWtp}]}
+      ]} | Acc].
 
 fmt_time_ms(StartTime) ->
     MegaSecs = StartTime div 1000000000,
@@ -303,13 +303,13 @@ fmt_time_ms(StartTime) ->
     Secs = Rem1 div 1000,
     MilliSecs = StartTime rem 1000,
     {{Year, Month, Day}, {Hour, Minute, Second}} =
-	calendar:now_to_universal_time({MegaSecs, Secs, MilliSecs * 1000}),
+        calendar:now_to_universal_time({MegaSecs, Secs, MilliSecs * 1000}),
     bin_fmt("~4.10.0b-~2.10.0b-~2.10.0b ~2.10.0b:~2.10.0b:~2.10.0b.~4.10.0b",
-		  [Year, Month, Day, Hour, Minute, Second, MilliSecs]).
+            [Year, Month, Day, Hour, Minute, Second, MilliSecs]).
 
 fmt_wtp_board_data(#wtp_board_data{
-			 vendor = Vendor,
-			 board_data_sub_elements = SubElements}) ->
+                      vendor = Vendor,
+                      board_data_sub_elements = SubElements}) ->
     lists:map(fun fmt_wtp_board_data_sub_element/1, SubElements) ++
         [{vendor, bin_fmt("~8.16.0B", [Vendor])},
          {vendor_id, vendor_id_str(Vendor)}];
@@ -341,22 +341,22 @@ fmt_endpoint({IP, Port}) ->
 
 fmt_ip(IP) ->
     Res = case inet:ntoa(IP) of
-        S when is_list(S) ->
-            S;
-        _ ->
-            io_lib:format("~w", [IP])
-    end,
+              S when is_list(S) ->
+                  S;
+              _ ->
+                  io_lib:format("~w", [IP])
+          end,
     erlang:list_to_binary(Res).
 
 fmt_wtp_descriptor(#wtp_descriptor{
-			 max_radios = MaxRadios,
-			 radios_in_use = RadiosInUse,
-			 encryption_sub_element = EncSubElem,
-			 sub_elements = SubElements}) ->
+                      max_radios = MaxRadios,
+                      radios_in_use = RadiosInUse,
+                      encryption_sub_element = EncSubElem,
+                      sub_elements = SubElements}) ->
     lists:map(fun fmt_wtp_descriptor_sub_element/1, SubElements) ++
-    [ {max_radios, MaxRadios},
-      {radios_in_use, RadiosInUse},
-      {encription_sub_element, bin_fmt("~ts", [EncSubElem])} ];
+        [ {max_radios, MaxRadios},
+          {radios_in_use, RadiosInUse},
+          {encription_sub_element, bin_fmt("~ts", [EncSubElem])} ];
 fmt_wtp_descriptor(Descriptor) ->
     [{undecoded, bin_fmt(Descriptor)}].
 
@@ -391,10 +391,10 @@ prometheus_encode({Path, Type, DataPoints}, Acc) ->
 
 exo_get_value(Name, Fun, AccIn) ->
     case exometer:get_value(Name) of
-	{ok, Value} ->
-	    Fun(Value, AccIn);
-	{error,not_found} ->
-	    AccIn
+        {ok, Value} ->
+            Fun(Value, AccIn);
+        {error,not_found} ->
+            AccIn
     end.
 
 exo_entry_to_map({Name, Type, enabled}, Metrics) ->
@@ -402,16 +402,16 @@ exo_entry_to_map({Name, Type, enabled}, Metrics) ->
 
 exo_entry_to_map([Path], {Name, Type}, Metrics) ->
     exo_get_value(Name, fun(V, Acc) ->
-				Entry = maps:from_list(V),
-				Acc#{ioize(Path) => Entry#{type => Type}}
-			end, Metrics);
+                                Entry = maps:from_list(V),
+                                Acc#{ioize(Path) => Entry#{type => Type}}
+                        end, Metrics);
 exo_entry_to_map([H|T], Metric, Metrics) ->
     Key = ioize(H),
     Entry = maps:get(Key, Metrics, #{}),
     Metrics#{Key => exo_entry_to_map(T, Metric, Entry)}.
 
 exo_entry_to_list({Name, Type, enabled}, Metrics) ->
-exo_get_value(Name, fun(V, Acc) -> [{Name, Type, V}|Acc] end, Metrics).
+    exo_get_value(Name, fun(V, Acc) -> [{Name, Type, V}|Acc] end, Metrics).
 
 ioize(Atom) when is_atom(Atom) ->
     atom_to_binary(Atom, utf8);
@@ -478,9 +478,9 @@ make_metric_name(Path) ->
 dp_error_response(Req) ->
     Node = capwap_dp:get_node(),
     Body = jsx:encode(#{
-        type => <<"error">>,
-        message => <<"Something is wrong with 'capwap-dp'">>,
-        dp_node => list_to_binary(atom_to_list(Node)),
-        ping_status => list_to_binary(atom_to_list(net_adm:ping(Node)))
-    }),
+                        type => <<"error">>,
+                        message => <<"Something is wrong with 'capwap-dp'">>,
+                        dp_node => list_to_binary(atom_to_list(Node)),
+                        ping_status => list_to_binary(atom_to_list(net_adm:ping(Node)))
+                       }),
     cowboy_req:reply(500, #{}, Body, Req).

@@ -20,9 +20,9 @@
 init(Req0 = #{path_info := [<<"location">> | _]}, State) ->
     ct:pal("Receiving request in test_loc_handler: ~p~n", [Req0]),
     Resp = cowboy_req:reply(200,
-	#{<<"content-type">> => <<"application/json">>},
-	test_loc_handler:content(),
-	Req0),
+                            #{<<"content-type">> => <<"application/json">>},
+                            test_loc_handler:content(),
+                            Req0),
     ct:pal("Sending response in test_loc_handler: ~p~n", [Resp]),
     {ok, Resp, State}.
 

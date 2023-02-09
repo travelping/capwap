@@ -20,8 +20,8 @@
 -export_records([wtp, wtp_radio, wtp_wlan_config, wtp_wlan_rsn]).
 
 -export([validate/0, get/2, get/3,
-	 wtp_init_config_provider/1, wtp_config/1,
-	 wtp_radio_config/3]).
+         wtp_init_config_provider/1, wtp_config/1,
+         wtp_radio_config/3]).
 
 -include_lib("kernel/include/logger.hrl").
 -include("capwap_packet.hrl").
@@ -30,8 +30,8 @@
 -include("eapol.hrl").
 
 -spec get(Category :: atom(),
-	  Key      :: atom(),
-	  Default  :: term()) -> term().
+          Key      :: atom(),
+          Default  :: term()) -> term().
 
 -define(APP, capwap).
 
@@ -50,10 +50,10 @@ get(ac, Key, Default) when is_atom(Key) ->
 
 get(Category, [Key|Keys], Default) ->
     case application:get_env(?APP, Key) of
-	{ok, Val} ->
-	    get(Category, Keys, Val, Default);
-	_ ->
-	    Default
+        {ok, Val} ->
+            get(Category, Keys, Val, Default);
+        _ ->
+            Default
     end.
 
 get(_Category, [], Val, _Default) ->
@@ -62,10 +62,10 @@ get(_Category, [], Val, _Default) ->
 get(Category, [Key|Keys], Val, Default)
   when is_list(Val) ->
     case lists:keyfind(Key, 1, Val) of
-	false ->
-	    Default;
-	{Key, NewVal} ->
-	    get(Category, Keys, NewVal, Default)
+        false ->
+            Default;
+        {Key, NewVal} ->
+            get(Category, Keys, NewVal, Default)
     end;
 
 get(_Category, _Key, _Val, Default) ->
@@ -87,13 +87,13 @@ wtp_init_config_provider(CN, [{Provider, Opts}|T])
 
 wtp_init_config_provider(CN, Provider, Opts, Next) ->
     case (catch Provider:wtp_init_config(CN, Opts)) of
-	{ok, Settings} ->
-	    ?LOG(debug, "Eval config provider ~p for ~p", [Provider, CN]),
-	    ?LOG(debug, "Get wtp config for ~p => ~p", [CN, Settings]),
-	    {ok, {Provider, Settings}};
-	Error ->
-	    ?LOG(debug, "Error in provider ~p with reason ~p", [Provider, Error]),
-	    wtp_init_config_provider(CN, Next)
+        {ok, Settings} ->
+            ?LOG(debug, "Eval config provider ~p for ~p", [Provider, CN]),
+            ?LOG(debug, "Get wtp config for ~p => ~p", [CN, Settings]),
+            {ok, {Provider, Settings}};
+        Error ->
+            ?LOG(debug, "Error in provider ~p with reason ~p", [Provider, Error]),
+            wtp_init_config_provider(CN, Next)
     end.
 
 wtp_config({Provider, State}) ->

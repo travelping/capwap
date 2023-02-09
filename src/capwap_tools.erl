@@ -64,22 +64,22 @@ ip_csum(Bin) ->
 
 
 hexdump(Line, Part) ->
-       L0 = [io_lib:format(" ~2.16.0B", [X]) || <<X:8>> <= Part],
-       io_lib:format("~4.16.0B:~s~n", [Line * 16, L0]).
+    L0 = [io_lib:format(" ~2.16.0B", [X]) || <<X:8>> <= Part],
+    io_lib:format("~4.16.0B:~s~n", [Line * 16, L0]).
 
 hexdump(_, <<>>, Out) ->
-       lists:flatten(lists:reverse(Out));
+    lists:flatten(lists:reverse(Out));
 hexdump(Line, <<Part:16/bytes, Rest/binary>>, Out) ->
-       L1 = hexdump(Line, Part),
-       hexdump(Line + 1, Rest, [L1|Out]);
+    L1 = hexdump(Line, Part),
+    hexdump(Line + 1, Rest, [L1|Out]);
 hexdump(Line, <<Part/binary>>, Out) ->
-       L1 = hexdump(Line, Part),
-       hexdump(Line + 1, <<>>, [L1|Out]).
+    L1 = hexdump(Line, Part),
+    hexdump(Line + 1, <<>>, [L1|Out]).
 
 hexdump(List) when is_list(List) ->
-       hexdump(0, list_to_binary(List), []);
+    hexdump(0, list_to_binary(List), []);
 hexdump(Bin) when is_binary(Bin)->
-       hexdump(0, Bin, []).
+    hexdump(0, Bin, []).
 
 
 

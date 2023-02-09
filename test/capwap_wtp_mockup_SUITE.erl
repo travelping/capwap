@@ -25,11 +25,11 @@ suite() ->
 
 init_per_suite(Config) ->
     case proplists:get_bool(run_mockup, Config) of
-	true ->
-	    setup_applications(),
-	    Config;
-	_ ->
-	    {skip, "disabled"}
+        true ->
+            setup_applications(),
+            Config;
+        _ ->
+            {skip, "disabled"}
     end.
 
 all() ->
@@ -37,10 +37,10 @@ all() ->
 
 load_local(Config) ->
     [WaitFor, KeepRunningFor, WtpCount, KeepAliveTimeout] =
-	get_config([{wait_for, 0},
-                {keep_running_for, 2000},
-                {multi_wtp_count, 10},
-                {keep_alive_timeout, 1}]),
+        get_config([{wait_for, 0},
+                    {keep_running_for, 2000},
+                    {multi_wtp_count, 10},
+                    {keep_alive_timeout, 1}]),
     CertDir = "",
     RootCert = "",
 
@@ -65,20 +65,20 @@ setup_applications() ->
     {ok, CWD} = file:get_cwd(),
     os:cmd("touch " ++ CWD ++ "/upstream"),
     Apps = [asn1,
-	    crypto,
-	    public_key,
-	    ssl,
-	    sasl,
-	    jobs,
-	    eradius,
-	    regine,
-	    ctld,
-	    {capwap, [{server_ip, {127, 0, 0, 1}},
-		      {enforce_dtls_control, false},
-		      {http_api, [{port, 0}]},
-		      {server_socket_opts, [{recbuf, 1048576}, {sndbuf, 1048576}]}
-		     ]}
-	   ],
+            crypto,
+            public_key,
+            ssl,
+            sasl,
+            jobs,
+            eradius,
+            regine,
+            ctld,
+            {capwap, [{server_ip, {127, 0, 0, 1}},
+                      {enforce_dtls_control, false},
+                      {http_api, [{port, 0}]},
+                      {server_socket_opts, [{recbuf, 1048576}, {sndbuf, 1048576}]}
+                     ]}
+           ],
     [setup_application(A) || A <- Apps].
 
 setup_application({Name, Env}) ->
@@ -137,13 +137,13 @@ pmap(F, L, Timeout) ->
     Parent = self(),
     Pids = [proc_lib:spawn(fun() -> Parent ! {self(), F(X)} end) || X <- L],
     lists:map(
-        fun(Pid) ->
-            receive {Pid, Result} ->
-	            Result
-            after Timeout ->
+      fun(Pid) ->
+              receive {Pid, Result} ->
+                      Result
+              after Timeout ->
                       {error, timeout}
-            end
-        end, Pids).
+              end
+      end, Pids).
 
 get_multi_cert_paths(undefined) ->
     [];

@@ -51,12 +51,12 @@
 -endif.
 
 -define(equal(Expected, Actual),
-    (fun (Expected@@@, Expected@@@) -> true;
-	 (Expected@@@, Actual@@@) ->
-	     ct:pal("MISMATCH(~s:~b, ~s)~nExpected: ~p~nActual:   ~p~n",
-		    [?FILE, ?LINE, ??Actual, Expected@@@, Actual@@@]),
-	     false
-     end)(Expected, Actual) orelse error(badmatch)).
+        (fun (Expected@@@, Expected@@@) -> true;
+             (Expected@@@, Actual@@@) ->
+                 ct:pal("MISMATCH(~s:~b, ~s)~nExpected: ~p~nActual:   ~p~n",
+                        [?FILE, ?LINE, ??Actual, Expected@@@, Actual@@@]),
+                 false
+         end)(Expected, Actual) orelse error(badmatch)).
 
 %%%===================================================================
 %%% Tests
@@ -65,15 +65,15 @@
 %%--------------------------------------------------------------------
 enc_dec_prop(Config) ->
     numtests(1000,
-	     ?FORALL(Msg, msg_gen(),
-		     begin
-			 ct:pal("Msg: ~s", [capwap_packet:pretty_print(Msg)]),
-			 [Enc] = capwap_packet:encode(control, Msg),
-			 Dec = capwap_packet:decode(control, Enc),
-			 ct:pal("Dec: ~s", [capwap_packet:pretty_print(Dec)]),
-			 ?equal([Enc], capwap_packet:encode(control,
-							  capwap_packet:decode(control, Enc)))
-		     end)).
+             ?FORALL(Msg, msg_gen(),
+                     begin
+                         ct:pal("Msg: ~s", [capwap_packet:pretty_print(Msg)]),
+                         [Enc] = capwap_packet:encode(control, Msg),
+                         Dec = capwap_packet:decode(control, Enc),
+                         ct:pal("Dec: ~s", [capwap_packet:pretty_print(Dec)]),
+                         ?equal([Enc], capwap_packet:encode(control,
+                                                            capwap_packet:decode(control, Enc)))
+                     end)).
 
 %%%===================================================================
 %%% Generate PCAP with random (but valid CAPWAP packets)
@@ -90,18 +90,18 @@ make_udp(NwSrc, NwDst, TpSrc, TpDst, PayLoad) ->
 
     UDPLength = 8 + size(PayLoad),
     UDPCSum = capwap_tools:ip_csum(<<NwSrc:4/bytes-unit:8, NwDst:4/bytes-unit:8,
-				     0:8, Proto:8, UDPLength:16,
-				     TpSrc:16, TpDst:16, UDPLength:16, 0:16,
-				     PayLoad/binary>>),
+                                     0:8, Proto:8, UDPLength:16,
+                                     TpSrc:16, TpDst:16, UDPLength:16, 0:16,
+                                     PayLoad/binary>>),
     UDP = <<TpSrc:16, TpDst:16, UDPLength:16, UDPCSum:16, PayLoad/binary>>,
 
     TotLen = 20 + size(UDP),
     HdrCSum = capwap_tools:ip_csum(<<4:4, 5:4, 0:8, TotLen:16,
-				     Id:16, 0:16, 64:8, Proto:8,
-				     0:16/integer, NwSrc:4/bytes-unit:8, NwDst:4/bytes-unit:8>>),
+                                     Id:16, 0:16, 64:8, Proto:8,
+                                     0:16/integer, NwSrc:4/bytes-unit:8, NwDst:4/bytes-unit:8>>),
     IP = <<4:4, 5:4, 0:8, TotLen:16,
-	   Id:16, 0:16, 64:8, Proto:8,
-	   HdrCSum:16/integer, NwSrc:4/bytes-unit:8, NwDst:4/bytes-unit:8>>,
+           Id:16, 0:16, 64:8, Proto:8,
+           HdrCSum:16/integer, NwSrc:4/bytes-unit:8, NwDst:4/bytes-unit:8>>,
     list_to_binary([IP, UDP]).
 
 format_pcapng(Data) ->
@@ -111,13 +111,13 @@ format_pcapng(Data) ->
 
 pcapng_shb() ->
     pcapng:encode({shb, {?PCAPNG_VERSION_MAJOR, ?PCAPNG_VERSION_MINOR},
-		   [{os, <<"CAROS">>}, {userappl, <<"CAPWAP">>}]}).
+                   [{os, <<"CAROS">>}, {userappl, <<"CAPWAP">>}]}).
 
 pcapng_ifd(Name) ->
     pcapng:encode({ifd, ?LINKTYPE_RAW, 65535,
-		   [{name,    Name},
-		    {tsresol, <<6>>},
-		    {os,      <<"CAROS">>}]}).
+                   [{name,    Name},
+                    {tsresol, <<6>>},
+                    {os,      <<"CAROS">>}]}).
 
 pcap_msg(Msg, Io) ->
     Data = capwap_packet:encode(Msg),
@@ -191,35 +191,35 @@ header(_) ->
 
 msg_type() ->
     oneof([
-	   discovery_request,
-	   discovery_response,
-	   join_request,
-	   join_response,
-	   configuration_status_request,
-	   configuration_status_response,
-	   configuration_update_request,
-	   configuration_update_response,
-	   wtp_event_request,
-	   wtp_event_response,
-	   change_state_event_request,
-	   change_state_event_response,
-	   echo_request,
-	   echo_response,
-	   image_data_request,
-	   image_data_response,
-	   reset_request,
-	   reset_response,
-	   primary_discovery_request,
-	   primary_discovery_response,
-	   data_transfer_request,
-	   data_transfer_response,
-	   clear_configuration_request,
-	   clear_configuration_response,
-	   station_configuration_request,
-	   station_configuration_response,
-	   ieee_802_11_wlan_configuration_request,
-	   ieee_802_11_wlan_configuration_response
-	  ]).
+           discovery_request,
+           discovery_response,
+           join_request,
+           join_response,
+           configuration_status_request,
+           configuration_status_response,
+           configuration_update_request,
+           configuration_update_response,
+           wtp_event_request,
+           wtp_event_response,
+           change_state_event_request,
+           change_state_event_response,
+           echo_request,
+           echo_response,
+           image_data_request,
+           image_data_response,
+           reset_request,
+           reset_response,
+           primary_discovery_request,
+           primary_discovery_response,
+           data_transfer_request,
+           data_transfer_response,
+           clear_configuration_request,
+           clear_configuration_response,
+           station_configuration_request,
+           station_configuration_response,
+           ieee_802_11_wlan_configuration_request,
+           ieee_802_11_wlan_configuration_response
+          ]).
 
 simple_ie() ->
     oneof(
@@ -324,9 +324,9 @@ ie() ->
 put_ie(IE, IEs) ->
     Key = element(1, IE),
     UpdateFun = fun(V) when is_list(V) -> V ++ [IE];
-		   (undefined)         -> IE;
-		   (V)                 -> [V, IE]
-		end,
+                   (undefined)         -> IE;
+                   (V)                 -> [V, IE]
+                end,
     maps:update_with(Key, UpdateFun, IE, IEs).
 
 list2map(List) ->
@@ -461,8 +461,8 @@ gen_delete_station() ->
 
 gen_discovery_type() ->
     #discovery_type{
-	discovery_type =
-	   oneof([unknown, static, dhcp, dns, 'AC-Referral'])
+       discovery_type =
+           oneof([unknown, static, dhcp, dns, 'AC-Referral'])
       }.
 
 gen_duplicate_ipv4_address() ->
@@ -499,7 +499,7 @@ gen_image_identifier() ->
     #image_identifier{
        vendor = uint32(),
        data = binary()
-    }.
+      }.
 
 gen_image_information() ->
     #image_information{
@@ -547,7 +547,7 @@ gen_result_code() ->
 gen_returned_message_element() ->
     #returned_message_element{
        reason = oneof([reserved, unknown_ie, unsupported_ie,
-		       unknown_ie_value, unsupported_ie_value]),
+                       unknown_ie_value, unsupported_ie_value]),
        message_element = binary()
       }.
 
@@ -620,7 +620,7 @@ gen_wtp_reboot_statistics() ->
        other_failure_count = uint16(),
        unknown_failure_count = uint16(),
        last_failure_type = oneof([unsuported, ac_initiated, link_failure,
-				  software, hardware, other])
+                                  software, hardware, other])
       }.
 
 gen_wtp_static_ip_address_information() ->
@@ -636,10 +636,10 @@ gen_ieee_802_11_add_wlan() ->
        radio_id = radio_id(),
        wlan_id = wlan_id(),
        capability = ?LET(S, list(oneof(['ess', 'ibss', 'cf-pollable', 'cf-poll-request',
-					'privacy', 'short_preamble', 'pbcc',
-					'channel_agility', 'spectrum_management', 'qos',
-					'short_slot_time', 'apsd', 'reserved', 'dsss_ofdm',
-					'delayed_block_ack'])), lists:usort(S)),
+                                        'privacy', 'short_preamble', 'pbcc',
+                                        'channel_agility', 'spectrum_management', 'qos',
+                                        'short_slot_time', 'apsd', 'reserved', 'dsss_ofdm',
+                                        'delayed_block_ack'])), lists:usort(S)),
        key_index = byte(),
        key_status = oneof([per_station, static_wep, begin_rekeying, completed_rekeying]),
        key = binary(32),
@@ -749,10 +749,10 @@ gen_ieee_802_11_station() ->
        association_id = uint16(),
        mac_address = mac_address(),
        capabilities = ?LET(S, list(oneof(['ess', 'ibss', 'cf-pollable', 'cf-poll-request',
-					  'privacy', 'short_preamble', 'pbcc',
-					  'channel_agility', 'spectrum_management', 'qos',
-					  'short_slot_time', 'apsd', 'reserved', 'dsss_ofdm',
-					  'delayed_block_ack'])), lists:usort(S)),
+                                          'privacy', 'short_preamble', 'pbcc',
+                                          'channel_agility', 'spectrum_management', 'qos',
+                                          'short_slot_time', 'apsd', 'reserved', 'dsss_ofdm',
+                                          'delayed_block_ack'])), lists:usort(S)),
        wlan_id = wlan_id(),
        supported_rate = ?LET(I, integer(1,8), vector(I, byte()))
       }.
@@ -826,10 +826,10 @@ gen_ieee_802_11_update_wlan() ->
        radio_id = radio_id(),
        wlan_id = wlan_id(),
        capability = ?LET(S, list(oneof(['ess', 'ibss', 'cf-pollable', 'cf-poll-request',
-					'privacy', 'short_preamble', 'pbcc',
-					'channel_agility', 'spectrum_management', 'qos',
-					'short_slot_time', 'apsd', 'reserved', 'dsss_ofdm',
-					'delayed_block_ack'])), lists:usort(S)),
+                                        'privacy', 'short_preamble', 'pbcc',
+                                        'channel_agility', 'spectrum_management', 'qos',
+                                        'short_slot_time', 'apsd', 'reserved', 'dsss_ofdm',
+                                        'delayed_block_ack'])), lists:usort(S)),
        key_index = byte(),
        key_status = oneof([per_station, static_wep, begin_rekeying, completed_rekeying]),
        key = binary(32)
@@ -864,7 +864,7 @@ gen_ieee_802_11_wtp_radio_information() ->
     #ieee_802_11_wtp_radio_information{
        radio_id = radio_id(),
        radio_type = ?LET(S, list(oneof(['802.11n', '802.11g',
-					'802.11a', '802.11b'])), lists:usort(S))
+                                        '802.11a', '802.11b'])), lists:usort(S))
       }.
 
 gen_tp_wtp_wwan_statistics_0_9() ->
@@ -953,7 +953,7 @@ gen_firmware_download_information() ->
 gen_firmware_download_status() ->
     #firmware_download_status{
        status = oneof([reserved, in_progress, download_finished_successfully,
-		       download_failed]),
+                       download_failed]),
        bytes_downloaded = uint32(),
        bytes_remaining = uint32()
       }.

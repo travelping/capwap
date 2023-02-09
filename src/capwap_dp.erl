@@ -144,17 +144,17 @@ handle_info({packet_in, tap, VlanId, Packet}, State) ->
     ?LOG(debug, "TAP: ~p", [Packet]),
     <<MAC:6/bytes, _/binary>> = Packet,
     case MAC of
-	<<255, 255, 255, 255, 255, 255>> ->
-	    ?LOG(warning, "need to handle broadcast on VLAN ~w", [VlanId]),
-	    ok;
+        <<255, 255, 255, 255, 255, 255>> ->
+            ?LOG(warning, "need to handle broadcast on VLAN ~w", [VlanId]),
+            ok;
 
-	<<_:7, 1:1, _/binary>> ->
-	    ?LOG(warning, "need to handle multicast on VLAN ~w to ~s", [VlanId, capwap_tools:format_eui(MAC)]),
-	    ok;
+        <<_:7, 1:1, _/binary>> ->
+            ?LOG(warning, "need to handle multicast on VLAN ~w to ~s", [VlanId, capwap_tools:format_eui(MAC)]),
+            ok;
 
-	_ ->
-	    ?LOG(warning, "packet for invalid STA ~s on VLAN ~w", [capwap_tools:format_eui(MAC), VlanId]),
-	    ok
+        _ ->
+            ?LOG(warning, "packet for invalid STA ~s on VLAN ~w", [capwap_tools:format_eui(MAC), VlanId]),
+            ok
     end,
     {noreply, State};
 
@@ -169,7 +169,7 @@ handle_info({wtp_down, WTP}, State) ->
     {noreply, State};
 
 handle_info({timeout, TRef, interim},
-	    #state{interim_timer = TRef} = State0) ->
+            #state{interim_timer = TRef} = State0) ->
     report_stats(),
     State = start_interim(State0),
     {noreply, State};
@@ -194,8 +194,8 @@ get_node() ->
 
 start_nodedown_timeout(State = #state{tref = undefined, timeout = Timeout}) ->
     NewTimeout = if Timeout < 3000 -> Timeout * 2;
-		    true           -> Timeout
-		 end,
+                    true           -> Timeout
+                 end,
     TRef = erlang:send_after(Timeout, self(), reconnect),
     State#state{tref = TRef, timeout = NewTimeout};
 
@@ -213,17 +213,17 @@ stop_interim(#state{interim_timer = TRef} = State) ->
 connect(State0) ->
     Node = get_node(),
     case net_adm:ping(Node) of
-	pong ->
-	    ?LOG(warning, "Node ~p is up", [Node]),
-	    erlang:monitor_node(Node, true),
-	    clear(),
-	    {ok, APIVersion} = bind(self()),
-	    report_stats(),
-	    State1 = start_interim(State0),
-	    State1#state{state = connected, timeout = 10, api_version = APIVersion};
-	pang ->
-	    ?LOG(warning, "Node ~p is down", [Node]),
-	    start_nodedown_timeout(State0)
+        pong ->
+            ?LOG(warning, "Node ~p is up", [Node]),
+            erlang:monitor_node(Node, true),
+            clear(),
+            {ok, APIVersion} = bind(self()),
+            report_stats(),
+            State1 = start_interim(State0),
+            State1#state{state = connected, timeout = 10, api_version = APIVersion};
+        pang ->
+            ?LOG(warning, "Node ~p is down", [Node]),
+            start_nodedown_timeout(State0)
     end.
 
 handle_nodedown(State0) ->
@@ -245,15 +245,15 @@ cancel_timer(_) ->
     false.
 
 wtp_stats_sum({RcvdPkts0, SendPkts0, RcvdBytes0, SendBytes0,
-	       RcvdFragments0, SendFragments0,
-	       ErrInvalidStation0, ErrFragmentInvalid0, ErrFragmentTooOld0,
-	       ErrInvalidWtp0, ErrHdrLengthInvalid0,
-	       ErrTooShort0, RatelimitUnknownWtp0},
-	      {RcvdPkts1, SendPkts1, RcvdBytes1, SendBytes1,
-	       RcvdFragments1, SendFragments1,
-	       ErrInvalidStation1, ErrFragmentInvalid1, ErrFragmentTooOld1,
-	       ErrInvalidWtp1, ErrHdrLengthInvalid1,
-	       ErrTooShort1, RatelimitUnknownWtp1}) ->
+               RcvdFragments0, SendFragments0,
+               ErrInvalidStation0, ErrFragmentInvalid0, ErrFragmentTooOld0,
+               ErrInvalidWtp0, ErrHdrLengthInvalid0,
+               ErrTooShort0, RatelimitUnknownWtp0},
+              {RcvdPkts1, SendPkts1, RcvdBytes1, SendBytes1,
+               RcvdFragments1, SendFragments1,
+               ErrInvalidStation1, ErrFragmentInvalid1, ErrFragmentTooOld1,
+               ErrInvalidWtp1, ErrHdrLengthInvalid1,
+               ErrTooShort1, RatelimitUnknownWtp1}) ->
     {RcvdPkts0 + RcvdPkts1, SendPkts0 + SendPkts1,
      RcvdBytes0 + RcvdBytes1, SendBytes0 + SendBytes1,
      RcvdFragments0 + RcvdFragments1, SendFragments0 + SendFragments1,
@@ -266,10 +266,10 @@ wtp_stats_sum({RcvdPkts0, SendPkts0, RcvdBytes0, SendBytes0,
      RatelimitUnknownWtp0 + RatelimitUnknownWtp1}.
 
 wtp_stats_to_accouting({RcvdPkts, SendPkts, RcvdBytes, SendBytes,
-			RcvdFragments, SendFragments,
-			ErrInvalidStation, ErrFragmentInvalid, ErrFragmentTooOld,
-			ErrInvalidWtp, ErrHdrLengthInvalid,
-			ErrTooShort, RatelimitUnknownWtp}) ->
+                        RcvdFragments, SendFragments,
+                        ErrInvalidStation, ErrFragmentInvalid, ErrFragmentTooOld,
+                        ErrInvalidWtp, ErrHdrLengthInvalid,
+                        ErrTooShort, RatelimitUnknownWtp}) ->
     [{'InPackets',  RcvdPkts},
      {'OutPackets', SendPkts},
      {'InOctets',   RcvdBytes},
@@ -289,8 +289,8 @@ wtp_stats_to_accouting(_) ->
 exo_report_stats(Thread, ProcessStats) ->
     Acc = wtp_stats_to_accouting(ProcessStats),
     lists:foreach(fun ({Key, Value}) ->
-			  exometer:update_or_create([capwap, dp, Thread, Key], Value, gauge, [])
-		  end, Acc).
+                          exometer:update_or_create([capwap, dp, Thread, Key], Value, gauge, [])
+                  end, Acc).
 
 report_stats(ProcessStats, {Cnt, Sum}) ->
     exo_report_stats(integer_to_list(Cnt), ProcessStats),
@@ -298,14 +298,14 @@ report_stats(ProcessStats, {Cnt, Sum}) ->
 
 report_stats() ->
     case call({get_stats}, 100) of
-	Stats when is_list(Stats) ->
-	    SumInit = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-	    {_Cnt, Sum} = lists:foldl(fun report_stats/2, {0, SumInit}, Stats),
-	    exo_report_stats("all", Sum),
-	    ok;
-	Other ->
-	    ?LOG(warning, "WTP Stats: ~p", [Other]),
-	    ok
+        Stats when is_list(Stats) ->
+            SumInit = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+            {_Cnt, Sum} = lists:foldl(fun report_stats/2, {0, SumInit}, Stats),
+            exo_report_stats("all", Sum),
+            ok;
+        Other ->
+            ?LOG(warning, "WTP Stats: ~p", [Other]),
+            ok
     end.
 
 %%%===================================================================
@@ -319,29 +319,29 @@ run(WTP) ->
 
 run_loop(WTP) ->
     receive
-	{packet_in, tap, Packet} ->
-	    io:format("Packet-In: ~p~n", [Packet]),
-	    <<MAC:6/bytes, _/binary>> = Packet,
-        case {capwap_tools:eth_addr_is_reserved(MAC), capwap_tools:may_learn(MAC)} of
-		{false, true} ->
-		    io:format("install STA: ~p~n", [MAC]),
-		    RadioId = 1,
-		    BSS = <<1,1,1,1,1,1>>,
-		    attach_station(WTP, MAC, 0, RadioId, BSS);
+        {packet_in, tap, Packet} ->
+            io:format("Packet-In: ~p~n", [Packet]),
+            <<MAC:6/bytes, _/binary>> = Packet,
+            case {capwap_tools:eth_addr_is_reserved(MAC), capwap_tools:may_learn(MAC)} of
+                {false, true} ->
+                    io:format("install STA: ~p~n", [MAC]),
+                    RadioId = 1,
+                    BSS = <<1,1,1,1,1,1>>,
+                    attach_station(WTP, MAC, 0, RadioId, BSS);
 
-		_ ->
-		    ok
-	    end,
-	    Data = capwap_packet:encode(data, {#capwap_header{radio_id = 1, wb_id = 2, flags = [{frame, '802.3'}]}, Packet}),
-	    [sendto(WTP, X) || X <- Data],
-	    ok;
+                _ ->
+                    ok
+            end,
+            Data = capwap_packet:encode(data, {#capwap_header{radio_id = 1, wb_id = 2, flags = [{frame, '802.3'}]}, Packet}),
+            [sendto(WTP, X) || X <- Data],
+            ok;
 
-	{capwap_in, WTPDataChannelAddress, Msg} ->
-	    io:format("CAPWAP From ~p: ~p~n", [WTPDataChannelAddress, Msg]),
-	    ok;
+        {capwap_in, WTPDataChannelAddress, Msg} ->
+            io:format("CAPWAP From ~p: ~p~n", [WTPDataChannelAddress, Msg]),
+            ok;
 
-	Other ->
-	    io:format("Other: ~p~n", [Other]),
-	    ok
+        Other ->
+            io:format("Other: ~p~n", [Other]),
+            ok
     end,
     run_loop(WTP).

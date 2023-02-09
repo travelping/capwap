@@ -41,10 +41,10 @@ start_listener(TransportMod, Arguments) ->
 start_tracer(File) ->
     Spec = ?CHILD(capwap_trace, worker, []),
     case supervisor:start_child(?MODULE, Spec) of
-	{ok, _} ->
-	    capwap_trace:add_handler(File);
-	Other ->
-	    Other
+        {ok, _} ->
+            capwap_trace:add_handler(File);
+        Other ->
+            Other
     end.
 
 %% ===================================================================
@@ -54,10 +54,10 @@ start_tracer(File) ->
 init([]) ->
     LocProvider = capwap_loc_provider_sup:location_children(),
     {ok, {{one_for_one, 30, 60}, LocProvider ++ [
-				  ?CHILD(capwap_wtp_reg, worker, []),
-				  ?CHILD(capwap_ac_sup, supervisor, []),
-				  ?CHILD(capwap_station_reg, worker, []),
-				  ?CHILD(capwap_station_sup, supervisor, []),
-				  ?CHILD(capwap_dp, worker, []),
-				  ?CHILD(capwap_http_api, supervisor, [])
-    ]} }.
+                                                 ?CHILD(capwap_wtp_reg, worker, []),
+                                                 ?CHILD(capwap_ac_sup, supervisor, []),
+                                                 ?CHILD(capwap_station_reg, worker, []),
+                                                 ?CHILD(capwap_station_sup, supervisor, []),
+                                                 ?CHILD(capwap_dp, worker, []),
+                                                 ?CHILD(capwap_http_api, supervisor, [])
+                                                ]} }.

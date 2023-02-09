@@ -21,35 +21,35 @@
 -include("capwap_config.hrl").
 
 -define(equal(Expected, Actual),
-    (fun (Expected@@@, Expected@@@) -> true;
-	 (Expected@@@, Actual@@@) ->
-	     ct:pal("MISMATCH(~s:~b, ~s)~nExpected: ~p~nActual:   ~p~n",
-		    [?FILE, ?LINE, ??Actual, Expected@@@, Actual@@@]),
-	     false
-     end)(Expected, Actual) orelse error(badmatch)).
+        (fun (Expected@@@, Expected@@@) -> true;
+             (Expected@@@, Actual@@@) ->
+                 ct:pal("MISMATCH(~s:~b, ~s)~nExpected: ~p~nActual:   ~p~n",
+                        [?FILE, ?LINE, ??Actual, Expected@@@, Actual@@@]),
+                 false
+         end)(Expected, Actual) orelse error(badmatch)).
 
 
 -define(match(Guard, Expr),
-	((fun () ->
-		  case (Expr) of
-		      Guard -> ok;
-		      V -> ct:pal("MISMATCH(~s:~b, ~s)~nExpected: ~p~nActual:   ~s~n",
-				   [?FILE, ?LINE, ??Expr, ??Guard, pretty_print(V)]),
-			    error(badmatch)
-		  end
-	  end)())).
+        ((fun () ->
+                  case (Expr) of
+                      Guard -> ok;
+                      V -> ct:pal("MISMATCH(~s:~b, ~s)~nExpected: ~p~nActual:   ~s~n",
+                                  [?FILE, ?LINE, ??Expr, ??Guard, pretty_print(V)]),
+                           error(badmatch)
+                  end
+          end)())).
 
 suite() ->
-	[{timetrap,{seconds,30}}].
+    [{timetrap,{seconds,30}}].
 
 all() ->
     [json_to_rec].
 
 init_per_suite(Config) ->
-	Config.
+    Config.
 
 end_per_suite(_Config) ->
-	ok.
+    ok.
 
 %% ==============================================
 %% Tests

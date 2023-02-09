@@ -118,10 +118,10 @@ recv(Socket, Length) ->
 
 recv(Socket, Length, Timeout) when is_port(Socket) ->
     case gen_udp:recv(Socket, Length, Timeout) of
-	{ok, {_Address, _Port, Packet}} ->
-	    {ok, Packet};
-	Error ->
-	    Error
+        {ok, {_Address, _Port, Packet}} ->
+            {ok, Packet};
+        Error ->
+            Error
     end;
 recv(Socket, Length, Timeout) ->
     call(Socket, recv, {Length, Timeout}).
@@ -201,7 +201,7 @@ capwap_socket(SslSocketId) ->
 init([Owner, Port, Options0]) ->
     process_flag(trap_exit, true),
     Options = proplists:expand([{binary, [{mode, binary}]},
-				{list, [{mode, list}]}], Options0),
+                                {list, [{mode, list}]}], Options0),
     Opts0 = lists:keystore(active, 1, Options, {active, true}),
     Opts = lists:keystore(mode, 1, Opts0, {mode, binary}),
     case open_socket(Port, Opts) of
@@ -261,10 +261,10 @@ handle_call({accept, undefined, _Timeout}, _From, State) ->
 
 handle_call({getopts, undefined, Options}, _From, State = #state{socket = Socket, mode = Mode}) ->
     case inet:getopts(Socket, Options) of
-	{ok, SocketOptions} ->
-	    Reply = {ok, lists:keystore(mode, 1, SocketOptions, {mode, Mode})};
-	Reply ->
-	    ok
+        {ok, SocketOptions} ->
+            Reply = {ok, lists:keystore(mode, 1, SocketOptions, {mode, Mode})};
+        Reply ->
+            ok
     end,
     {reply, Reply, State};
 
@@ -327,7 +327,7 @@ handle_call({controlling_process, CSocketId, Args}, From, State) ->
 handle_call(_Request, _From, State) ->
     {reply, ok, State}.
 
-%handle_call(Request, From, State = #state{socket = Socket, connections = Cons}) ->
+                                                %handle_call(Request, From, State = #state{socket = Socket, connections = Cons}) ->
 handle_cast(_Request, State) ->
     {noreply, State}.
 
@@ -336,21 +336,21 @@ handle_info(timeout, State0 = #state{state = accepting}) ->
     {noreply, State};
 
 handle_info({udp, Socket, IP, InPortNo, Packet},
-	    State0 = #state{socket = Socket}) ->
+            State0 = #state{socket = Socket}) ->
     State = handle_packet({IP, InPortNo}, Packet, State0),
     inet:setopts(Socket, [{active, once}]),
     {noreply, State};
 
 %% TODO handle SSL decoded packet!
 %% handle_info({udp, Socket, IP, InPortNo, Packet},
-%% 	    State0 = #state{socket = Socket, ip_conns = IpConns}) ->
+%%          State0 = #state{socket = Socket, ip_conns = IpConns}) ->
 %%     Peer = {IP, InPortNo},
 %%     State1 = case gb_trees:lookup(Peer, IpConns) of
-%% 		 none ->
-%% 		     handle_accept(Peer, Packet, State0);
-%% 		 {value, SslSocket} ->
-%% 		     handle_packet(Peer, SslSocket, Packet, State0)
-%% 	     end,
+%%               none ->
+%%                   handle_accept(Peer, Packet, State0);
+%%               {value, SslSocket} ->
+%%                   handle_packet(Peer, SslSocket, Packet, State0)
+%%           end,
 %%     inet:setopts(Socket, [{active, once}]),
 %%     {noreply, State1};
 
@@ -380,7 +380,7 @@ handle_packet(Peer, Type, Packet, State) ->
     handle_packet(Peer, Type, CSocket, Packet, State).
 
 handle_packet(Peer, Type, undefined, Packet,
-	      State0 = #state{socket = Socket}) ->
+              State0 = #state{socket = Socket}) ->
     ?LOG(debug, "handle_packet #4"),
     case handle_first_packet(Peer, Type, Packet, State0) of
         {reply, Data} ->
@@ -433,10 +433,10 @@ send(_, _, []) ->
     ok;
 send(Socket, Type, [H|T]) ->
     case do_send(Socket, Type, H) of
-	ok ->
-	    send(Socket, Type, T);
-	Other ->
-	    Other
+        ok ->
+            send(Socket, Type, T);
+        Other ->
+            Other
     end.
 
 send(Socket, Peer, Type, Data) when is_binary(Data) ->
@@ -445,10 +445,10 @@ send(_, _, _, []) ->
     ok;
 send(Socket, Peer, Type, [H|T]) ->
     case do_send(Socket, Peer, Type, H) of
-	ok ->
-	    send(Socket, Peer, Type, T);
-	Other ->
-	    Other
+        ok ->
+            send(Socket, Peer, Type, T);
+        Other ->
+            Other
     end.
 
 do_send(Socket, udp, Data) ->
@@ -471,12 +471,12 @@ reply_accept(_Reply, State) ->
 %% Socket Handling functions
 %% ---------------------------------------------------------------------------
 with_socket(CSocketId, Args, From, Error, Fun, State =
-		#state{virtual_sockets = VSockets}) ->
+                #state{virtual_sockets = VSockets}) ->
     case gb_trees:lookup(CSocketId, VSockets) of
-	none ->
-	    {reply, Error, State};
-	{value, CSocket} ->
-	    Fun(CSocket, Args, From, State)
+        none ->
+            {reply, Error, State};
+        {value, CSocket} ->
+            Fun(CSocket, Args, From, State)
     end.
 
 socket_close(CSocket, _, _From, State0) ->
@@ -487,25 +487,25 @@ socket_shutdown(_CSocket, _Args, _From, State) ->
     {reply, ok, State}.
 
 socket_recv(CSocket = #capwap_socket{queue = Queue},
-	    {_Length = 0, _Timeout = 0}, _From, State0) ->
+            {_Length = 0, _Timeout = 0}, _From, State0) ->
     State = update_csocket(CSocket#capwap_socket{queue = queue:new()}, State0),
     {reply, {ok, binary:list_to_bin(Queue)}, State}.
 
 socket_send(#capwap_socket{type = Type, peer = Peer},
-	    Packet, _From,
-	    State = #state{socket = Socket}) ->
+            Packet, _From,
+            State = #state{socket = Socket}) ->
     Reply = send(Socket, Peer, Type, Packet),
     {reply, Reply, State}.
 
 socket_setopts(CSocket = #capwap_socket{id = CSocketId, owner = Owner, queue = Queue},
-	       Options, _From, State0) ->
+               Options, _From, State0) ->
     case proplists:get_value(active, Options) of
-	Active when Active /= false ->
-	    [Owner ! {?PROTOCOL, capwap_socket(CSocketId), Packet} || Packet <- queue:to_list(Queue)],
-	    State = update_csocket(CSocket#capwap_socket{mode = active, queue = queue:new()}, State0),
-	    {reply, ok, State};
-	_ ->
-	    {reply, ok, State0}
+        Active when Active /= false ->
+            [Owner ! {?PROTOCOL, capwap_socket(CSocketId), Packet} || Packet <- queue:to_list(Queue)],
+            State = update_csocket(CSocket#capwap_socket{mode = active, queue = queue:new()}, State0),
+            {reply, ok, State};
+        _ ->
+            {reply, ok, State0}
     end.
 
 socket_getopts(_CSocket, _Args, _From, State) ->
@@ -535,40 +535,40 @@ socket_owner_down(Pid, {_Key, _Value, Iter}, State) ->
 get_wtp(Peer, _State) ->
     %% TODO: keep AC configuration in State and pass it to new AC
     case capwap_wtp_reg:lookup(Peer) of
-	not_found ->
-	    capwap_ac_sup:new_wtp(Peer);
-	Reply ->
-	    Reply
+        not_found ->
+            capwap_ac_sup:new_wtp(Peer);
+        Reply ->
+            Reply
     end.
 
 new_csocket(Peer, Type, Owner, Packet, State0 =
-	       #state{connections = Connections, virtual_sockets = VSockets}) ->
+                #state{connections = Connections, virtual_sockets = VSockets}) ->
     CSocketId = make_ref(),
     MonRef = monitor(process, Owner),
     CSocket = #capwap_socket{id = CSocketId, type = Type, peer = Peer,
-			     owner = Owner, monitor = MonRef,
-			     mode = passive, queue = queue:from_list([Packet])},
+                             owner = Owner, monitor = MonRef,
+                             mode = passive, queue = queue:from_list([Packet])},
 
     State = State0#state{connections     = gb_trees:insert({Peer, Type}, CSocketId, Connections),
-			 virtual_sockets = gb_trees:insert(CSocketId, CSocket, VSockets)},
+                         virtual_sockets = gb_trees:insert(CSocketId, CSocket, VSockets)},
     {CSocketId, State}.
 
 get_csocket(Peer, Type,
-		#state{connections = Connections, virtual_sockets = VSockets}) ->
+            #state{connections = Connections, virtual_sockets = VSockets}) ->
     case gb_trees:lookup({Peer, Type}, Connections) of
-	none ->
-	    undefined;
-	{value, CSocketId} ->
-	    gb_trees:get(CSocketId, VSockets)
+        none ->
+            undefined;
+        {value, CSocketId} ->
+            gb_trees:get(CSocketId, VSockets)
     end.
 
 update_csocket(CSocket = #capwap_socket{id = CSocketId},
-	        State = #state{virtual_sockets = VSockets}) ->
+               State = #state{virtual_sockets = VSockets}) ->
     State#state{virtual_sockets = gb_trees:update(CSocketId, CSocket, VSockets)}.
 
 delete_csocket(#capwap_socket{id = CSocketId, type = Type, peer = Peer, monitor = MonRef},
-	       State =
-		   #state{connections = Connections, virtual_sockets = VSockets}) ->
+               State =
+                   #state{connections = Connections, virtual_sockets = VSockets}) ->
     catch(demonitor(MonRef)),
     State#state{
       connections = gb_trees:delete_any({Peer, Type}, Connections),

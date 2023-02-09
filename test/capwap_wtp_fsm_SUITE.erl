@@ -26,26 +26,26 @@
 match(MatchSpec, Actual, Expr, File, Line) ->
     CompiledMatchSpec = ets:match_spec_compile(MatchSpec),
     case ets:match_spec_run([Actual], CompiledMatchSpec) of
-	[] ->
-	    ct:pal("MISMATCH(~s:~b, ~s)~nExpected: ~p~nActual:   ~p~n",
-		   [File, Line, Expr, MatchSpec, Actual]),
-	    error(badmatch);
-	[Result] ->
-	    Result
+        [] ->
+            ct:pal("MISMATCH(~s:~b, ~s)~nExpected: ~p~nActual:   ~p~n",
+                   [File, Line, Expr, MatchSpec, Actual]),
+            error(badmatch);
+        [Result] ->
+            Result
     end.
 
 assert_mbox_match(MatchSpec, File, Line) ->
     CompiledMatchSpec = ets:match_spec_compile(MatchSpec),
     receive
         Actual ->
-	    case ets:match_spec_run([Actual], CompiledMatchSpec) of
-		[] ->
-		    ct:pal("MISMATCH(~s:~b)~nExpected: ~p~nActual:   ~p~n",
-			   [File, Line, MatchSpec, Actual]),
-		    error(badmatch);
-		[Result] ->
-		    Result
-	    end
+            case ets:match_spec_run([Actual], CompiledMatchSpec) of
+                [] ->
+                    ct:pal("MISMATCH(~s:~b)~nExpected: ~p~nActual:   ~p~n",
+                           [File, Line, MatchSpec, Actual]),
+                    error(badmatch);
+                [Result] ->
+                    Result
+            end
     after
         1000 ->
             ct:fail(timeout)
@@ -60,12 +60,12 @@ assert_mbox_match(MatchSpec, File, Line) ->
         ((fun () -> match(MatchSpec, Expr, ??Expr, ?FILE, ?LINE) end)())).
 
 -define(equal(Expected, Actual),
-    (fun (Expected@@@, Expected@@@) -> true;
-	 (Expected@@@, Actual@@@) ->
-	     ct:pal("MISMATCH(~s:~b, ~s)~nExpected: ~p~nActual:   ~p~n",
-		    [?FILE, ?LINE, ??Actual, Expected@@@, Actual@@@]),
-	     false
-     end)(Expected, Actual) orelse error(badmatch)).
+        (fun (Expected@@@, Expected@@@) -> true;
+             (Expected@@@, Actual@@@) ->
+                 ct:pal("MISMATCH(~s:~b, ~s)~nExpected: ~p~nActual:   ~p~n",
+                        [?FILE, ?LINE, ??Actual, Expected@@@, Actual@@@]),
+                 false
+         end)(Expected, Actual) orelse error(badmatch)).
 
 suite() ->
     [{timetrap,{minutes,5}}].
@@ -79,12 +79,12 @@ init_per_suite(Config0) ->
     logger:update_formatter_config(default, template, [time," ",pid," ",level," ",mfa,": ",msg,"\n"]),
     logger:update_formatter_config(cth_log_redirect, template, [time," ",pid," ",level," ",mfa,": ",msg,"\n"]),
     Dispatch = cowboy_router:compile([
-        {'_', [{"/[...]", test_loc_handler, []}]}
-    ]),
+                                      {'_', [{"/[...]", test_loc_handler, []}]}
+                                     ]),
     {ok, _} = cowboy:start_clear(test_loc_handler,
-        [{port, 9990}],
-        #{env => #{dispatch => Dispatch}}
-    ),
+                                 [{port, 9990}],
+                                 #{env => #{dispatch => Dispatch}}
+                                ),
     LocSuiteCfg = #{test_loc_name => test_loc_handler},
     [{loc_cfg, LocSuiteCfg} | Config].
 
@@ -105,12 +105,12 @@ init_per_testcase(_, Config) ->
 
 start_loc_server() ->
     Dispatch = cowboy_router:compile([
-        {'_', [{"/[...]", test_loc_handler, []}]}
-    ]),
+                                      {'_', [{"/[...]", test_loc_handler, []}]}
+                                     ]),
     {ok, _} = cowboy:start_clear(test_loc_handler,
-        [{port, 9990}],
-        #{env => #{dispatch => Dispatch}}
-    ).
+                                 [{port, 9990}],
+                                 #{env => #{dispatch => Dispatch}}
+                                ).
 
 stop_loc_server() ->
     cowboy:stop_listener(test_loc_handler).
@@ -124,10 +124,10 @@ all() ->
 
 check_auth_session_args(Session) ->
     case maps:get('Username', Session, undefined) of
-	V when is_binary(V) ->
-	    ok;
-	V ->
-	    erlang:error(badarg, [{'Username', V}])
+        V when is_binary(V) ->
+            ok;
+        V ->
+            erlang:error(badarg, [{'Username', V}])
     end.
 
 check_session_args({Key, MatchSpec}, Session) ->
@@ -135,45 +135,45 @@ check_session_args({Key, MatchSpec}, Session) ->
     Value = maps:get(Key, Session, undefined),
 
     case ets:match_spec_run([Value], CompiledMatchSpec) of
-	[ok] ->
-	    ok;
-	V ->
-	    erlang:error(badarg, [{Key, V}])
+        [ok] ->
+            ok;
+        V ->
+            erlang:error(badarg, [{Key, V}])
     end.
 
 wtp_fsm(_Config) ->
     meck:expect(ergw_aaa_session, invoke,
-		fun(Session, SessionOpts, authenticate, Opts) ->
-			check_auth_session_args(SessionOpts),
-			meck:passthrough([Session, SessionOpts, authenticate, Opts]);
-		   (Session, SessionOpts, interim, Opts) ->
-			IsIntOrUndefined = ets:fun2ms(fun(X) when is_integer(X) -> ok;
-							 (X) when X == undefined -> ok end),
-			IsListOrUndefined = ets:fun2ms(fun(X) when is_list(X) -> ok;
-							  (X) when X == undefined -> ok end),
-			OptValues = [{'TP-CAPWAP-Radio-Id',      IsIntOrUndefined},
-				     {'TP-CAPWAP-Timestamp',     IsIntOrUndefined},
-				     {'TP-CAPWAP-WWAN-CREG',     IsIntOrUndefined},
-				     {'TP-CAPWAP-WWAN-Cell-Id',  IsIntOrUndefined},
-				     {'TP-CAPWAP-WWAN-Id',       IsIntOrUndefined},
-				     {'TP-CAPWAP-WWAN-LAC',      IsIntOrUndefined},
-				     {'TP-CAPWAP-WWAN-Latency',  IsIntOrUndefined},
-				     {'TP-CAPWAP-WWAN-MCC',      IsIntOrUndefined},
-				     {'TP-CAPWAP-WWAN-MNC',      IsIntOrUndefined},
-				     {'TP-CAPWAP-WWAN-RAT',      IsIntOrUndefined},
-				     {'TP-CAPWAP-WWAN-RSSi',     IsIntOrUndefined},
-				     {'TP-CAPWAP-GPS-Altitude',  IsListOrUndefined},
-				     {'TP-CAPWAP-GPS-Hdop',      IsListOrUndefined},
-				     {'TP-CAPWAP-GPS-Latitude',  IsListOrUndefined},
-				     {'TP-CAPWAP-GPS-Longitude', IsListOrUndefined},
-				     {'TP-CAPWAP-GPS-Timestamp', IsListOrUndefined}],
-			lists:foreach(fun(X) ->
-					      check_session_args(X, SessionOpts)
-				      end, OptValues),
-			meck:passthrough([Session, SessionOpts, interim, Opts]);
-		   (Session, SessionOpts, Procedure, Opts) ->
-			meck:passthrough([Session, SessionOpts, Procedure, Opts])
-		end),
+                fun(Session, SessionOpts, authenticate, Opts) ->
+                        check_auth_session_args(SessionOpts),
+                        meck:passthrough([Session, SessionOpts, authenticate, Opts]);
+                   (Session, SessionOpts, interim, Opts) ->
+                        IsIntOrUndefined = ets:fun2ms(fun(X) when is_integer(X) -> ok;
+                                                         (X) when X == undefined -> ok end),
+                        IsListOrUndefined = ets:fun2ms(fun(X) when is_list(X) -> ok;
+                                                          (X) when X == undefined -> ok end),
+                        OptValues = [{'TP-CAPWAP-Radio-Id',      IsIntOrUndefined},
+                                     {'TP-CAPWAP-Timestamp',     IsIntOrUndefined},
+                                     {'TP-CAPWAP-WWAN-CREG',     IsIntOrUndefined},
+                                     {'TP-CAPWAP-WWAN-Cell-Id',  IsIntOrUndefined},
+                                     {'TP-CAPWAP-WWAN-Id',       IsIntOrUndefined},
+                                     {'TP-CAPWAP-WWAN-LAC',      IsIntOrUndefined},
+                                     {'TP-CAPWAP-WWAN-Latency',  IsIntOrUndefined},
+                                     {'TP-CAPWAP-WWAN-MCC',      IsIntOrUndefined},
+                                     {'TP-CAPWAP-WWAN-MNC',      IsIntOrUndefined},
+                                     {'TP-CAPWAP-WWAN-RAT',      IsIntOrUndefined},
+                                     {'TP-CAPWAP-WWAN-RSSi',     IsIntOrUndefined},
+                                     {'TP-CAPWAP-GPS-Altitude',  IsListOrUndefined},
+                                     {'TP-CAPWAP-GPS-Hdop',      IsListOrUndefined},
+                                     {'TP-CAPWAP-GPS-Latitude',  IsListOrUndefined},
+                                     {'TP-CAPWAP-GPS-Longitude', IsListOrUndefined},
+                                     {'TP-CAPWAP-GPS-Timestamp', IsListOrUndefined}],
+                        lists:foreach(fun(X) ->
+                                              check_session_args(X, SessionOpts)
+                                      end, OptValues),
+                        meck:passthrough([Session, SessionOpts, interim, Opts]);
+                   (Session, SessionOpts, Procedure, Opts) ->
+                        meck:passthrough([Session, SessionOpts, Procedure, Opts])
+                end),
 
     {ok, WTP} = start_local_wtp(),
 
@@ -212,37 +212,37 @@ wtp_fsm(_Config) ->
 
 sta_fsm(_Config) ->
     meck:expect(ergw_aaa_session, invoke,
-		fun(Session, SessionOpts, authenticate, Opts) ->
-			check_auth_session_args(SessionOpts),
-			meck:passthrough([Session, SessionOpts, authenticate, Opts]);
-		   (Session, SessionOpts, interim, Opts) ->
-			IsIntOrUndefined = ets:fun2ms(fun(X) when is_integer(X) -> ok;
-							 (X) when X == undefined -> ok end),
-			IsListOrUndefined = ets:fun2ms(fun(X) when is_list(X) -> ok;
-							  (X) when X == undefined -> ok end),
-			OptValues = [{'TP-CAPWAP-Radio-Id',      IsIntOrUndefined},
-				     {'TP-CAPWAP-Timestamp',     IsIntOrUndefined},
-				     {'TP-CAPWAP-WWAN-CREG',     IsIntOrUndefined},
-				     {'TP-CAPWAP-WWAN-Cell-Id',  IsIntOrUndefined},
-				     {'TP-CAPWAP-WWAN-Id',       IsIntOrUndefined},
-				     {'TP-CAPWAP-WWAN-LAC',      IsIntOrUndefined},
-				     {'TP-CAPWAP-WWAN-Latency',  IsIntOrUndefined},
-				     {'TP-CAPWAP-WWAN-MCC',      IsIntOrUndefined},
-				     {'TP-CAPWAP-WWAN-MNC',      IsIntOrUndefined},
-				     {'TP-CAPWAP-WWAN-RAT',      IsIntOrUndefined},
-				     {'TP-CAPWAP-WWAN-RSSi',     IsIntOrUndefined},
-				     {'TP-CAPWAP-GPS-Altitude',  IsListOrUndefined},
-				     {'TP-CAPWAP-GPS-Hdop',      IsListOrUndefined},
-				     {'TP-CAPWAP-GPS-Latitude',  IsListOrUndefined},
-				     {'TP-CAPWAP-GPS-Longitude', IsListOrUndefined},
-				     {'TP-CAPWAP-GPS-Timestamp', IsListOrUndefined}],
-			lists:foreach(fun(X) ->
-					      check_session_args(X, SessionOpts)
-				      end, OptValues),
-			meck:passthrough([Session, SessionOpts, interim, Opts]);
-		   (Session, SessionOpts, Procedure, Opts) ->
-			meck:passthrough([Session, SessionOpts, Procedure, Opts])
-		end),
+                fun(Session, SessionOpts, authenticate, Opts) ->
+                        check_auth_session_args(SessionOpts),
+                        meck:passthrough([Session, SessionOpts, authenticate, Opts]);
+                   (Session, SessionOpts, interim, Opts) ->
+                        IsIntOrUndefined = ets:fun2ms(fun(X) when is_integer(X) -> ok;
+                                                         (X) when X == undefined -> ok end),
+                        IsListOrUndefined = ets:fun2ms(fun(X) when is_list(X) -> ok;
+                                                          (X) when X == undefined -> ok end),
+                        OptValues = [{'TP-CAPWAP-Radio-Id',      IsIntOrUndefined},
+                                     {'TP-CAPWAP-Timestamp',     IsIntOrUndefined},
+                                     {'TP-CAPWAP-WWAN-CREG',     IsIntOrUndefined},
+                                     {'TP-CAPWAP-WWAN-Cell-Id',  IsIntOrUndefined},
+                                     {'TP-CAPWAP-WWAN-Id',       IsIntOrUndefined},
+                                     {'TP-CAPWAP-WWAN-LAC',      IsIntOrUndefined},
+                                     {'TP-CAPWAP-WWAN-Latency',  IsIntOrUndefined},
+                                     {'TP-CAPWAP-WWAN-MCC',      IsIntOrUndefined},
+                                     {'TP-CAPWAP-WWAN-MNC',      IsIntOrUndefined},
+                                     {'TP-CAPWAP-WWAN-RAT',      IsIntOrUndefined},
+                                     {'TP-CAPWAP-WWAN-RSSi',     IsIntOrUndefined},
+                                     {'TP-CAPWAP-GPS-Altitude',  IsListOrUndefined},
+                                     {'TP-CAPWAP-GPS-Hdop',      IsListOrUndefined},
+                                     {'TP-CAPWAP-GPS-Latitude',  IsListOrUndefined},
+                                     {'TP-CAPWAP-GPS-Longitude', IsListOrUndefined},
+                                     {'TP-CAPWAP-GPS-Timestamp', IsListOrUndefined}],
+                        lists:foreach(fun(X) ->
+                                              check_session_args(X, SessionOpts)
+                                      end, OptValues),
+                        meck:passthrough([Session, SessionOpts, interim, Opts]);
+                   (Session, SessionOpts, Procedure, Opts) ->
+                        meck:passthrough([Session, SessionOpts, Procedure, Opts])
+                end),
 
     {ok, WTP} = start_local_wtp(),
 
@@ -251,11 +251,11 @@ sta_fsm(_Config) ->
     {ok, _} = wtp_mockup_fsm:send_config_status(WTP),
     {ok, _} = wtp_mockup_fsm:send_change_state_event(WTP),
     receive
-	{#capwap_header{}, Msg} when element(1, Msg) == ieee_802_11_wlan_configuration_request ->
-	    ok
+        {#capwap_header{}, Msg} when element(1, Msg) == ieee_802_11_wlan_configuration_request ->
+            ok
     after
-	1000 ->
-	    ct:fail(timeout)
+        1000 ->
+            ct:fail(timeout)
     end,
     {ok, _} = wtp_mockup_fsm:send_wwan_statistics(WTP),
 
@@ -272,7 +272,7 @@ sta_fsm(_Config) ->
 
     ?equal(6, meck:num_calls(ergw_aaa_session, invoke, ['_', '_', interim, '_'])),
     ?equal(2, meck:num_calls(ieee80211_station, handle_event,
-			     [info, {timeout, '_', {accounting, 'IP-CAN', periodic}}, connected, '_'])),
+                             [info, {timeout, '_', {accounting, 'IP-CAN', periodic}}, connected, '_'])),
 
     meck:validate(ergw_aaa_session),
     meck:validate(ieee80211_station),
@@ -280,24 +280,24 @@ sta_fsm(_Config) ->
 
 location(_Config) ->
     meck:expect(ergw_aaa_session, invoke,
-		fun(Session, SessionOpts, interim, Opts) ->
-			#{'IM-LI-Location' := Loc} = SessionOpts,
-			%% TODO check location values
-			ct:pal("Sent location (interim): ~p~n", [Loc]),
-			meck:passthrough([Session, SessionOpts, interim, Opts]);
-		   (Session, SessionOpts, start, Opts) ->
-			#{'IM-LI-Location' := Loc} = SessionOpts,
-			%% TODO check location values
-			ct:pal("Sent location (start): ~p~n", [Loc]),
-			meck:passthrough([Session, SessionOpts, start, Opts]);
-		   (Session, SessionOpts, stop, Opts) ->
-			#{'IM-LI-Location' := Loc} = SessionOpts,
-			%% TODO check location values
-			ct:pal("Sent location (stop): ~p~n", [Loc]),
-			meck:passthrough([Session, SessionOpts, stop, Opts]);
-		   (Session, SessionOpts, Procedure, Opts) ->
-			meck:passthrough([Session, SessionOpts, Procedure, Opts])
-		end),
+                fun(Session, SessionOpts, interim, Opts) ->
+                        #{'IM-LI-Location' := Loc} = SessionOpts,
+                        %% TODO check location values
+                        ct:pal("Sent location (interim): ~p~n", [Loc]),
+                        meck:passthrough([Session, SessionOpts, interim, Opts]);
+                   (Session, SessionOpts, start, Opts) ->
+                        #{'IM-LI-Location' := Loc} = SessionOpts,
+                        %% TODO check location values
+                        ct:pal("Sent location (start): ~p~n", [Loc]),
+                        meck:passthrough([Session, SessionOpts, start, Opts]);
+                   (Session, SessionOpts, stop, Opts) ->
+                        #{'IM-LI-Location' := Loc} = SessionOpts,
+                        %% TODO check location values
+                        ct:pal("Sent location (stop): ~p~n", [Loc]),
+                        meck:passthrough([Session, SessionOpts, stop, Opts]);
+                   (Session, SessionOpts, Procedure, Opts) ->
+                        meck:passthrough([Session, SessionOpts, Procedure, Opts])
+                end),
 
     {ok, WTP} = start_local_wtp(),
 
@@ -333,30 +333,30 @@ location(_Config) ->
 
 location_eradius_mock(_Config) ->
     meck:expect(eradius_client, send_request,
-		fun(Req, Session0, Opts) ->
-		    ct:pal("Calling send_request... ~p", [{Req, Session0, Opts}]),
-		    {ok, fooResponse, fooAuthenticator}
-		end
-    ),
+                fun(Req, Session0, Opts) ->
+                        ct:pal("Calling send_request... ~p", [{Req, Session0, Opts}]),
+                        {ok, fooResponse, fooAuthenticator}
+                end
+               ),
     meck:expect(ergw_aaa_session, invoke,
-		fun(Session, SessionOpts, interim, Opts) ->
-			#{'IM-LI-Location' := Loc} = SessionOpts,
-			%% TODO check location values
-			ct:pal("Sent location (interim): ~p~n", [Loc]),
-			meck:passthrough([Session, SessionOpts, interim, Opts]);
-		   (Session, SessionOpts, start, Opts) ->
-			#{'IM-LI-Location' := Loc} = SessionOpts,
-			%% TODO check location values
-			ct:pal("Sent location (start): ~p~n", [Loc]),
-			meck:passthrough([Session, SessionOpts, start, Opts]);
-		   (Session, SessionOpts, stop, Opts) ->
-			#{'IM-LI-Location' := Loc} = SessionOpts,
-			%% TODO check location values
-			ct:pal("Sent location (stop): ~p~n", [Loc]),
-			meck:passthrough([Session, SessionOpts, stop, Opts]);
-		   (Session, SessionOpts, Procedure, Opts) ->
-			meck:passthrough([Session, SessionOpts, Procedure, Opts])
-		end),
+                fun(Session, SessionOpts, interim, Opts) ->
+                        #{'IM-LI-Location' := Loc} = SessionOpts,
+                        %% TODO check location values
+                        ct:pal("Sent location (interim): ~p~n", [Loc]),
+                        meck:passthrough([Session, SessionOpts, interim, Opts]);
+                   (Session, SessionOpts, start, Opts) ->
+                        #{'IM-LI-Location' := Loc} = SessionOpts,
+                        %% TODO check location values
+                        ct:pal("Sent location (start): ~p~n", [Loc]),
+                        meck:passthrough([Session, SessionOpts, start, Opts]);
+                   (Session, SessionOpts, stop, Opts) ->
+                        #{'IM-LI-Location' := Loc} = SessionOpts,
+                        %% TODO check location values
+                        ct:pal("Sent location (stop): ~p~n", [Loc]),
+                        meck:passthrough([Session, SessionOpts, stop, Opts]);
+                   (Session, SessionOpts, Procedure, Opts) ->
+                        meck:passthrough([Session, SessionOpts, Procedure, Opts])
+                end),
 
     {ok, WTP} = start_local_wtp(),
 
@@ -397,7 +397,7 @@ location_eradius_mock(_Config) ->
 
 start_local_wtp() ->
     wtp_mockup_fsm:start_link({{127,0,0,1}, 5246}, {127,0,0,1}, 0,
-			      "", "", <<8,8,8,8,8,8>>, false, [{data_keep_alive_timeout, 300}]).
+                              "", "", <<8,8,8,8,8,8>>, false, [{data_keep_alive_timeout, 300}]).
 
 stop_local_wtp(WTP) ->
     wtp_mockup_fsm:stop(WTP).
@@ -414,120 +414,120 @@ setup_applications() ->
     {ok, CWD} = file:get_cwd(),
     os:cmd("touch " ++ CWD ++ "/upstream"),
     Apps = [{capwap, [{server_ip, {127, 0, 0, 1}},
-		      {enforce_dtls_control, false},
-		      {server_socket_opts, [{recbuf, 1048576}, {sndbuf, 1048576}]},
-		      {limit, 200},
-		      {max_wtp, 100},
-		      {security, ['x509']},
-		      {versions, [{hardware, <<"SCG">>},
-				  {software, <<"SCG">>}]},
-		      {ac_name, <<"CAPWAP AC">>},
+                      {enforce_dtls_control, false},
+                      {server_socket_opts, [{recbuf, 1048576}, {sndbuf, 1048576}]},
+                      {limit, 200},
+                      {max_wtp, 100},
+                      {security, ['x509']},
+                      {versions, [{hardware, <<"SCG">>},
+                                  {software, <<"SCG">>}]},
+                      {ac_name, <<"CAPWAP AC">>},
 
-		      {http_api, [{port, 0}]},
+                      {http_api, [{port, 0}]},
 
-		      {default_ssid, <<"DEV CAPWAP WIFI">>},
-		      {default_ssid_suppress, 0},
-		      {dynamic_ssid_suffix_len, false},
+                      {default_ssid, <<"DEV CAPWAP WIFI">>},
+                      {default_ssid_suppress, 0},
+                      {dynamic_ssid_suffix_len, false},
 
-		      {wtps, [
-			      %% default for ALL WTP's
-			      {defaults,
-			       [{psm_idle_timeout,           30},
-				{psm_busy_timeout,           300},
-				{max_stations,               100},
-				{echo_request_interval,      60},
-				{discovery_interval,         20},
-				{idle_timeout,               300},
-				{data_channel_dead_interval, 70},
-				{ac_join_timeout,            70},
-				{admin_pw,                   undefined},
-				{wlan_hold_time,             15},
-				{radio_settings,
-				 [{defaults,
-				   [{beacon_interval, 200},
-				    {dtim_period,     1},
-				    {short_preamble,  supported},
-				    {wlans, [[]]}
-				   ]},
-				  {'802.11a',
-				   [{operation_mode, '802.11a'},
-				    {channel, 155},
-				    {wlans, [[]]}
-				   ]},
-				  {'802.11b',
-				   [{operation_mode, '802.11b'},
-				    {channel, 11},
-				    {wlans, [[]]}
-				   ]},
-				  {'802.11g',
-				   [{operation_mode, '802.11g'},
-				    {channel, 11},
-				    {beacon_interval, 150},
-				    {wlans, [[]]}
-				   ]}
-				 ]}
-			       ]}
-			     ]},
-			  {location_provider, #{
-			    providers => [
-			        {capwap_loc_provider_http, #{uri => "http://127.0.0.1:9990", timeout => 3000}},
-			        {capwap_loc_provider_default, #{default_loc => {location, <<"456">>, <<"789">>}}}
-		            ],
-		            refresh => 1000}
-			  }
-		     ]},
-	    {ergw_aaa,
-	     [
-	      {handlers,
-	       [{ergw_aaa_static,
-		 [{'NAS-Identifier',        <<"NAS-Identifier">>},
-		  {'Acct-Interim-Interval', 10}
-		 ]},
-	       {ergw_aaa_radius,
-		 [{server, {{127,0,0,1}, 9100, <<"secret">>}},
-		   {vendor_dicts, [52315]}
-		 ]}
-	       ]},
-	      {services,
-	       [{'Default',
-		 [{handler, 'ergw_aaa_static'},
-		  {answers,
-		   #{'RADIUS-Auth' =>
-			 #{handler => ergw_aaa_radius,
-			   'Result-Code' => 2001,
-			   'Acct-Interim-Interval' => 10,
-			   'TLS-Pre-Shared-Key' => <<"MySecret">>},
-		     'RADIUS-Acct' =>
-			 #{handler => ergw_aaa_radius,'Result-Code' => 2001}
-		    }
-		  }
-		 ]},
-		 {'Mocked',
-		 [{handler, 'ergw_aaa_radius'}
-		 ]}
-	       ]},
-	      {apps,
-	       [{capwap_wtp,
-		 [{session, ['Default']},
-		  {procedures, [{authenticate, [{'Default', [{answer, 'RADIUS-Auth'}]}]},
-				{authorize, []},
-				{start, [{'Default', [{answer, 'RADIUS-Acct'}]}]},
-				{interim, [{'Default', [{answer, 'RADIUS-Acct'}]}]},
-				{stop, [{'Default', [{answer, 'RADIUS-Acct'}]}]}
-			       ]}
-		 ]},
-		{capwap_station,
-		 [{session, ['Default']},
-		  {procedures, [{authenticate, [{'Default', [{answer, 'RADIUS-Auth'}]}]},
-				{authorize, []},
-				{start, [{'Default', [{answer, 'RADIUS-Acct'}]}]},
-				{interim, [{'Default', [{answer, 'RADIUS-Acct'}]}]},
-				{stop, [{'Default', [{answer, 'RADIUS-Acct'}]}]}
-			       ]}
-		 ]}
-	       ]}
-	     ]}
-	   ],
+                      {wtps, [
+                              %% default for ALL WTP's
+                              {defaults,
+                               [{psm_idle_timeout,           30},
+                                {psm_busy_timeout,           300},
+                                {max_stations,               100},
+                                {echo_request_interval,      60},
+                                {discovery_interval,         20},
+                                {idle_timeout,               300},
+                                {data_channel_dead_interval, 70},
+                                {ac_join_timeout,            70},
+                                {admin_pw,                   undefined},
+                                {wlan_hold_time,             15},
+                                {radio_settings,
+                                 [{defaults,
+                                   [{beacon_interval, 200},
+                                    {dtim_period,     1},
+                                    {short_preamble,  supported},
+                                    {wlans, [[]]}
+                                   ]},
+                                  {'802.11a',
+                                   [{operation_mode, '802.11a'},
+                                    {channel, 155},
+                                    {wlans, [[]]}
+                                   ]},
+                                  {'802.11b',
+                                   [{operation_mode, '802.11b'},
+                                    {channel, 11},
+                                    {wlans, [[]]}
+                                   ]},
+                                  {'802.11g',
+                                   [{operation_mode, '802.11g'},
+                                    {channel, 11},
+                                    {beacon_interval, 150},
+                                    {wlans, [[]]}
+                                   ]}
+                                 ]}
+                               ]}
+                             ]},
+                      {location_provider, #{
+                                            providers => [
+                                                          {capwap_loc_provider_http, #{uri => "http://127.0.0.1:9990", timeout => 3000}},
+                                                          {capwap_loc_provider_default, #{default_loc => {location, <<"456">>, <<"789">>}}}
+                                                         ],
+                                            refresh => 1000}
+                      }
+                     ]},
+            {ergw_aaa,
+             [
+              {handlers,
+               [{ergw_aaa_static,
+                 [{'NAS-Identifier',        <<"NAS-Identifier">>},
+                  {'Acct-Interim-Interval', 10}
+                 ]},
+                {ergw_aaa_radius,
+                 [{server, {{127,0,0,1}, 9100, <<"secret">>}},
+                  {vendor_dicts, [52315]}
+                 ]}
+               ]},
+              {services,
+               [{'Default',
+                 [{handler, 'ergw_aaa_static'},
+                  {answers,
+                   #{'RADIUS-Auth' =>
+                         #{handler => ergw_aaa_radius,
+                           'Result-Code' => 2001,
+                           'Acct-Interim-Interval' => 10,
+                           'TLS-Pre-Shared-Key' => <<"MySecret">>},
+                     'RADIUS-Acct' =>
+                         #{handler => ergw_aaa_radius,'Result-Code' => 2001}
+                    }
+                  }
+                 ]},
+                {'Mocked',
+                 [{handler, 'ergw_aaa_radius'}
+                 ]}
+               ]},
+              {apps,
+               [{capwap_wtp,
+                 [{session, ['Default']},
+                  {procedures, [{authenticate, [{'Default', [{answer, 'RADIUS-Auth'}]}]},
+                                {authorize, []},
+                                {start, [{'Default', [{answer, 'RADIUS-Acct'}]}]},
+                                {interim, [{'Default', [{answer, 'RADIUS-Acct'}]}]},
+                                {stop, [{'Default', [{answer, 'RADIUS-Acct'}]}]}
+                               ]}
+                 ]},
+                {capwap_station,
+                 [{session, ['Default']},
+                  {procedures, [{authenticate, [{'Default', [{answer, 'RADIUS-Auth'}]}]},
+                                {authorize, []},
+                                {start, [{'Default', [{answer, 'RADIUS-Acct'}]}]},
+                                {interim, [{'Default', [{answer, 'RADIUS-Acct'}]}]},
+                                {stop, [{'Default', [{answer, 'RADIUS-Acct'}]}]}
+                               ]}
+                 ]}
+               ]}
+             ]}
+           ],
     [application:load(Name) || {Name, _} <- Apps],
     dp_mockup:new(),
     lists:flatten([setup_application(A) || A <- Apps]).

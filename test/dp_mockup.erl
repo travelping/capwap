@@ -22,7 +22,7 @@
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
-	 terminate/2, code_change/3]).
+         terminate/2, code_change/3]).
 
 -define(SERVER, ?MODULE).
 
@@ -132,11 +132,11 @@ handle_call({attach_station, WTP, STA, VlanId, RadioId, BSS}, _From, State)
 handle_call({get_wtp, WTP}, _From, State) ->
     #wtp{wlans = Wlans, stations = Stations} = maps:get(WTP, State, #wtp{}),
     Ws = maps:fold(
-	   fun({RadioId, WlanId}, {BSS, VlanId}, L) ->
-		   [{RadioId, WlanId, BSS, VlanId}|L] end, [], Wlans),
+           fun({RadioId, WlanId}, {BSS, VlanId}, L) ->
+                   [{RadioId, WlanId, BSS, VlanId}|L] end, [], Wlans),
     STAs = maps:fold(
-	     fun(STA, {VlanId, RadioId, BSS}, L) ->
-		     [{STA, VlanId, RadioId, BSS, {0,0,0,0}}|L] end, [], Stations),
+             fun(STA, {VlanId, RadioId, BSS}, L) ->
+                     [{STA, VlanId, RadioId, BSS, {0,0,0,0}}|L] end, [], Stations),
     WTPCnts = {0, 0, 0, 0, 0, 0, 0, 0, 0},
     Reply = {WTP, Ws, STAs, 1, 1500, WTPCnts},
     {reply, Reply, State};
@@ -144,7 +144,7 @@ handle_call({get_wtp, WTP}, _From, State) ->
 handle_call({get_station, STA}, _From, State) ->
     %% only fill values required for test case
     Stats = {STA, 'VLan', 'RadioId', 'BSS',
-	     {_RcvdPkts = 1, _SendPkts = 2, _RcvdBytes = 3, _SendBytes = 4}},
+             {_RcvdPkts = 1, _SendPkts = 2, _RcvdBytes = 3, _SendBytes = 4}},
     {reply, Stats, State};
 
 handle_call({clear}, _From, _State) ->

@@ -30,7 +30,7 @@
 -define(SERVER, ?MODULE).
 
 -record(state, {
-         }).
+               }).
 
 %%%===================================================================
 %%% API
@@ -53,14 +53,14 @@ unregister(AC, BSS, Station) ->
 
 lookup(ClientMAC) ->
     case ets:lookup(?SERVER, ClientMAC) of
-	[] -> not_found;
-	[{_, RadioMAC}] -> {ok, RadioMAC}
+        [] -> not_found;
+        [{_, RadioMAC}] -> {ok, RadioMAC}
     end.
 
 lookup(AC, BSS, Station) ->
     case ets:lookup(?SERVER, {AC, BSS, Station}) of
-	[] -> not_found;
-	[{_, Pid}] -> {ok, Pid}
+        [] -> not_found;
+        [{_, Pid}] -> {ok, Pid}
     end.
 
 list_stations() ->

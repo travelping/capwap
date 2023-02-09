@@ -22,7 +22,7 @@
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
-	 terminate/2, code_change/3]).
+         terminate/2, code_change/3]).
 
 -include_lib("kernel/include/logger.hrl").
 
@@ -46,9 +46,9 @@ gtk_rekey_done(Controller, Station) ->
 
 init([ACRef, GTK, IGTK, Stations]) ->
     lists:foreach(fun(Sta) ->
-			  monitor(process, Sta),
-			  ieee80211_station:start_gtk_rekey(Sta, self(), GTK, IGTK)
-		  end, Stations),
+                          monitor(process, Sta),
+                          ieee80211_station:start_gtk_rekey(Sta, self(), GTK, IGTK)
+                  end, Stations),
     erlang:send_after(5000, self(), group_rekey_timeout),
     {ok, #state{acref = ACRef, stations = Stations}}.
 
@@ -89,8 +89,8 @@ gtk_rekey_done(#state{acref = ACRef} = State) ->
 
 handle_sta_done(Sta, #state{stations = Stations0} = State) ->
     case lists:delete(Sta, Stations0) of
-	[] ->
-	    gtk_rekey_done(State);
-	Stations ->
-	    {noreply, State#state{stations = Stations}}
+        [] ->
+            gtk_rekey_done(State);
+        Stations ->
+            {noreply, State#state{stations = Stations}}
     end.

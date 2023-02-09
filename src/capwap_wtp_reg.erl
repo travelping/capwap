@@ -20,7 +20,7 @@
 %% API
 -export([start_link/0]).
 -export([register/1, register_args/2, unregister/0, unregister/1,
-	 lookup/1, register_sessionid/2, lookup_sessionid/2]).
+         lookup/1, register_sessionid/2, lookup_sessionid/2]).
 -export([list_commonnames/0, get_commonname/1]).
 
 %% regine_server callbacks
@@ -33,7 +33,7 @@
 -define(SELECT_BY_PID (Pid), [{{'$1',Pid,'$2'},[],[true]}]).
 
 -record(state, {
-         }).
+               }).
 
 %%%===================================================================
 %%% API
@@ -57,14 +57,14 @@ unregister(Key) ->
 
 lookup(PeerId) ->
     case ets:lookup(?SERVER, PeerId) of
-	[] -> not_found;
-	[{_, Pid, _}] -> {ok, Pid}
+        [] -> not_found;
+        [{_, Pid, _}] -> {ok, Pid}
     end.
 
 lookup_sessionid(PeerId, SessionId) ->
     case ets:lookup(?SERVER, {PeerId, SessionId}) of
-	[] -> not_found;
-	[{_, Pid, _}] -> {ok, Pid}
+        [] -> not_found;
+        [{_, Pid, _}] -> {ok, Pid}
     end.
 
 get_commonname(GetPid) ->
