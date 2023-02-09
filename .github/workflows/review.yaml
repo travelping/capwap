@@ -1,0 +1,47 @@
+name: review
+
+on:
+  pull_request_target:
+    types:
+      - opened
+      - synchronize
+    branches:
+      - master
+      - 'fix/**'
+      - 'stable/**'
+      - 'feature/**'
+
+jobs:
+  code-style-review:
+    runs-on: ubuntu-22.04
+    env:
+      ACCESS_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      -
+        name: work around permission issue
+        run: |
+          git config --global --add safe.directory /__w/capwap/capwap
+      -
+        name: Check out repository
+        uses: actions/checkout@v3
+        with:
+          ref: ${{github.event.pull_request.head.ref}}
+          repository: ${{github.event.pull_request.head.repo.full_name}}
+      -
+        name: install dependencies
+        run: |
+          sudo apt update
+          sudo apt install rebar3 emacs erlang-mode
+      -
+        name: format
+        run: rebar3 fmt
+      -
+        name: automated review
+        uses: googleapis/code-suggester@v4
+        with:
+          command: review
+          pull_number: ${{ github.event.pull_request.number }}
+          git_dir: '.'
+      -
+        name: check
+        run: git diff --quiet --exit-code
