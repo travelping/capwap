@@ -1744,11 +1744,11 @@ add_location(AC, Map) when is_pid(AC) ->
 				   _ when is_atom(Name) -> atom_to_binary(Name, utf8);
 				   _ -> <<"undefined">> end,
 	    ?LOG(debug, "Getting location for name: ~p", [{Name, BinName}]),
-	    SessionAttr = 'IM-LI-Location',
 	    case capwap_loc_provider:get_loc(BinName, false) of
 		{location, LatVal, LongVal} ->
 		    ?LOG(debug, "Successful location: ~p", [{LatVal, LongVal}]),
-		    Map#{SessionAttr => iolist_to_binary(io_lib:format("Lat:~s;Lon:~s", [LatVal, LongVal]))};
+		    Map#{'CAPWAP-GPS-Latitude' => bin_to_float(LatVal),
+		         'CAPWAP-GPS-Longitude' => bin_to_float(LongVal)};
 		{error, Cause} ->
 		    ?LOG(warning, "Error retrieving location: ~p", [Cause]),
 		    Map
@@ -1761,3 +1761,9 @@ add_location(AC, Map) when is_pid(AC) ->
 add_location(AC, Map) ->
     ?LOG(notice, "AC provided is not a pid, avoiding location retrieval: ~p", [AC]),
     Map.
+
+bin_to_float(BinVal) ->
+    try binary_to_float(BinVal)
+    catch error:badarg ->
+	float(binary_to_integer(BinVal))
+    end.

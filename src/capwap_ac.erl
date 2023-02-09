@@ -2629,9 +2629,8 @@ add_location(Name, Map) when is_binary(Name) ->
     case capwap_loc_provider:get_loc(Name, false) of
         {location, LatVal, LongVal} ->
             ?LOG(debug, "Successful location: ~p", [{LatVal, LongVal}]),
-            Map#{'IM-LI-Location' =>
-		     #{'CAPWAP-GPS-Latitude' => bin_to_float(LatVal),
-		       'CAPWAP-GPS-Longitude' => bin_to_float(LongVal)}};
+            Map#{'CAPWAP-GPS-Latitude' => bin_to_float(LatVal),
+		 'CAPWAP-GPS-Longitude' => bin_to_float(LongVal)};
         {error, Cause} ->
             ?LOG(warning, "Error retrieving location: ~p", [Cause]),
             Map
