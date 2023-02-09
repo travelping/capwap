@@ -126,40 +126,40 @@ request(Id, Type, Data) ->
 %% EAPOL Key frames are defined in IEEE 802.11-2012, Sect. 11.6.2
 %%
 key(Flags, KeyData, #ccmp{mic_algo = MICAlgo,
-			  replay_counter = ReplayCounter,
-			  nonce = Nonce} = CCMP) ->
+                          replay_counter = ReplayCounter,
+                          nonce = Nonce} = CCMP) ->
     KeyInfo = lists:foldl(fun keyinfo/2, 0, Flags)
-	bor mic_algo(MICAlgo),
+        bor mic_algo(MICAlgo),
     KeyLen = key_len(CCMP),
     MICLen = mic_len(MICAlgo),
     EAPOLData = <<?EAPOL_KEY_802_11, KeyInfo:16, KeyLen:16, ReplayCounter:64,
-		  Nonce:32/bytes,		%% Key Nounce
-		  0:128,			%% EAPOL Key IV
-		  0:64,				%% Key RSC, see RFC 5416, Sect. 9.1 !!!!
-		  0:64>>,			%% reserved
+                  Nonce:32/bytes,               %% Key Nounce
+                  0:128,                        %% EAPOL Key IV
+                  0:64,                         %% Key RSC, see RFC 5416, Sect. 9.1 !!!!
+                  0:64>>,                       %% reserved
     KeyDataLen = byte_size(KeyData),
     KeyData1 = <<KeyDataLen:16, KeyData/binary>>,
     DataLen = byte_size(EAPOLData) + MICLen + 2 + KeyDataLen,
     EAPOL = <<?'802_1X_VERSION', ?EAPOL_PACKET_TYPE_KEY, DataLen:16, EAPOLData/binary>>,
 
     MIC = case proplists:get_bool(mic, Flags) of
-	      true ->
-		  calc_hmac(CCMP, EAPOL, KeyData1, MICLen);
-	      _ ->
-		  binary:copy(<<0>>, MICLen)
-	  end,
+              true ->
+                  calc_hmac(CCMP, EAPOL, KeyData1, MICLen);
+              _ ->
+                  binary:copy(<<0>>, MICLen)
+          end,
     iolist_to_binary([EAPOL, MIC, KeyData1]).
 
 validate_mic(Crypto, {Head, MIC, Tail}) ->
     case calc_hmac(Crypto, Head, Tail, byte_size(MIC)) of
-	MIC -> ok;
-	V   ->
-	    ?LOG(debug, "Algo: ~p", [Crypto#ccmp.mic_algo]),
-	    ?LOG(debug, "Head: ~s", [pbkdf2:to_hex(Head)]),
-	    ?LOG(debug, "MIC: ~s", [pbkdf2:to_hex(MIC)]),
-	    ?LOG(debug, "Tail: ~s", [pbkdf2:to_hex(Tail)]),
-	    ?LOG(debug, "invalid MIC: expected: ~s, got: ~s", [pbkdf2:to_hex(MIC), pbkdf2:to_hex(V)]),
-	    {error, invalid}
+        MIC -> ok;
+        V   ->
+            ?LOG(debug, "Algo: ~p", [Crypto#ccmp.mic_algo]),
+            ?LOG(debug, "Head: ~s", [pbkdf2:to_hex(Head)]),
+            ?LOG(debug, "MIC: ~s", [pbkdf2:to_hex(MIC)]),
+            ?LOG(debug, "Tail: ~s", [pbkdf2:to_hex(Tail)]),
+            ?LOG(debug, "invalid MIC: expected: ~s, got: ~s", [pbkdf2:to_hex(MIC), pbkdf2:to_hex(V)]),
+            {error, invalid}
     end.
 
 decode(<<Version:8, ?EAPOL_PACKET_TYPE_START, DataLen:16, Data:DataLen/binary>>)
@@ -169,36 +169,36 @@ decode(<<Version:8, ?EAPOL_PACKET_TYPE_START, DataLen:16, Data:DataLen/binary>>)
 decode(Packet = <<Version:8, ?EAPOL_PACKET_TYPE_PACKET, DataLen:16, EAPOLData:DataLen/binary>>)
   when Version == 1; Version == 2 ->
     try EAPOLData of
-	<<?EAPOL_CODE_RESPONSE, Id:8, DataLen:16, 1:8, Identity/bytes>>
-	  when size(Identity) == DataLen - 5 ->
-	    {response, Id, EAPOLData, {identity, Identity}};
-	<<?EAPOL_CODE_RESPONSE, Id:8, DataLen:16, Data/bytes>>
-	  when size(Data) == DataLen - 4 ->
-	    {response, Id, EAPOLData, Data};
-	_ ->
-	    {unknown, Packet}
+        <<?EAPOL_CODE_RESPONSE, Id:8, DataLen:16, 1:8, Identity/bytes>>
+          when size(Identity) == DataLen - 5 ->
+            {response, Id, EAPOLData, {identity, Identity}};
+        <<?EAPOL_CODE_RESPONSE, Id:8, DataLen:16, Data/bytes>>
+          when size(Data) == DataLen - 4 ->
+            {response, Id, EAPOLData, Data};
+        _ ->
+            {unknown, Packet}
     catch
-	_:_ -> {invalid, Packet}
+        _:_ -> {invalid, Packet}
     end;
 
 decode(Data = <<Version:8, ?EAPOL_PACKET_TYPE_KEY, DataLen:16, EAPOLData:DataLen/binary>>)
   when Version == 1; Version == 2 ->
     try
-	<<?EAPOL_KEY_802_11, KeyInfo:16, _/binary>> = EAPOLData,
-	MICAlgo = mic_algo(KeyInfo band 16#07),
-	Flags = keyinfo(KeyInfo),
-	?LOG(debug, "KeyInfo: ~p", [Flags]),
-	MICLen = mic_len(MICAlgo),
+        <<?EAPOL_KEY_802_11, KeyInfo:16, _/binary>> = EAPOLData,
+        MICAlgo = mic_algo(KeyInfo band 16#07),
+        Flags = keyinfo(KeyInfo),
+        ?LOG(debug, "KeyInfo: ~p", [Flags]),
+        MICLen = mic_len(MICAlgo),
 
-	<< ?EAPOL_KEY_802_11, _:16, _KeyLen:16, ReplayCounter:64,
-	   Nonce:32/bytes, 0:128, 0:64, 0:64, _:MICLen/bytes,
-	   KeyDataLen:16, KeyData:KeyDataLen/bytes>> = EAPOLData,
+        << ?EAPOL_KEY_802_11, _:16, _KeyLen:16, ReplayCounter:64,
+           Nonce:32/bytes, 0:128, 0:64, 0:64, _:MICLen/bytes,
+           KeyDataLen:16, KeyData:KeyDataLen/bytes>> = EAPOLData,
 
-	<< Head:81/bytes, MIC:MICLen/bytes, Tail/bytes>> = Data,
+        << Head:81/bytes, MIC:MICLen/bytes, Tail/bytes>> = Data,
 
-	{key, Flags, MICAlgo, ReplayCounter, Nonce, KeyData, {Head, MIC, Tail}}
+        {key, Flags, MICAlgo, ReplayCounter, Nonce, KeyData, {Head, MIC, Tail}}
     catch
-	_:_ -> {invalid, Data}
+        _:_ -> {invalid, Data}
     end;
 decode(Data) ->
     {unknown, Data}.
@@ -265,8 +265,8 @@ phrase2psk(Phrase, SSID)
 
 pmk2ptk(PMK, AA, SPA, ANonce, SNonce, PRFLen) ->
     <<KCK:16/bytes, KEK:16/bytes, TK/binary>> =
-	prf(sha, PMK, "Pairwise key expansion", [min(AA, SPA), max(AA, SPA),
-						  min(ANonce, SNonce), max(SNonce, ANonce)], PRFLen),
+        prf(sha, PMK, "Pairwise key expansion", [min(AA, SPA), max(AA, SPA),
+                                                 min(ANonce, SNonce), max(SNonce, ANonce)], PRFLen),
     {KCK, KEK, TK}.
 
 ft_msk2ptk(MSK, SNonce, ANonce, BSS, StationMAC, SSID, MDomain, R0KH, R1KH, S0KH, S1KH) ->
@@ -282,8 +282,8 @@ ft_msk2ptk(MSK, SNonce, ANonce, BSS, StationMAC, SSID, MDomain, R0KH, R1KH, S0KH
     ?LOG(debug, "FT: R0KH-Id: ~p", [pbkdf2:to_hex(R0KH)]),
 
     <<PMKR0:256/bits, PMKR0NameSalt:128/bits>> =
-	kdf(sha256, XXKey, "FT-R0", [byte_size(SSID), SSID, <<MDomain:16>>,
-					   byte_size(R0KH), R0KH, S0KH], 384),
+        kdf(sha256, XXKey, "FT-R0", [byte_size(SSID), SSID, <<MDomain:16>>,
+                                     byte_size(R0KH), R0KH, S0KH], 384),
     <<PMKR0Name:128/bits, _/binary>> = crypto:hash(sha256, ["FT-R0N", PMKR0NameSalt]),
 
     ?LOG(debug, "FT PMK-R0: ~p", [pbkdf2:to_hex(PMKR0)]),
@@ -293,7 +293,7 @@ ft_msk2ptk(MSK, SNonce, ANonce, BSS, StationMAC, SSID, MDomain, R0KH, R1KH, S0KH
     %% PMKR1Name = Truncate-128(SHA-256(“FT-R1N” || PMKR0Name || R1KH-ID || S1KH-ID))
 
     PMKR1 =
-	kdf(sha256, PMKR0, "FT-R1", [R1KH, S1KH], 256),
+        kdf(sha256, PMKR0, "FT-R1", [R1KH, S1KH], 256),
     <<PMKR1Name:128/bits, _/binary>> = crypto:hash(sha256, ["FT-R1N", PMKR0Name, BSS, StationMAC]),
 
     ?LOG(debug, "FT PMK-R1: ~p", [pbkdf2:to_hex(PMKR1)]),
@@ -301,44 +301,44 @@ ft_msk2ptk(MSK, SNonce, ANonce, BSS, StationMAC, SSID, MDomain, R0KH, R1KH, S0KH
 
     %%PTK = KDF-PTKLen(PMK-R1, "FT-PTK", SNonce || ANonce || BSSID || STA-ADDR)
     <<KCK:128/bits, KEK:128/bits, TK:128/bits>> =
-	kdf(sha256, PMKR1, "FT-PTK", [SNonce, ANonce, BSS, StationMAC], 384),
+        kdf(sha256, PMKR1, "FT-PTK", [SNonce, ANonce, BSS, StationMAC], 384),
     ?LOG(debug, "KCK: ~p", [pbkdf2:to_hex(KCK)]),
     ?LOG(debug, "KEK: ~p", [pbkdf2:to_hex(KEK)]),
     ?LOG(debug, "TK: ~p", [pbkdf2:to_hex(TK)]),
     {KCK, KEK, TK, PMKR0Name, PMKR1Name}.
 
-   %% Inputs:  Plaintext, n 64-bit values {P1, P2, ..., Pn}, and
-   %%          Key, K (the KEK).
-   %% Outputs: Ciphertext, (n+1) 64-bit values {C0, C1, ..., Cn}.
+%% Inputs:  Plaintext, n 64-bit values {P1, P2, ..., Pn}, and
+%%          Key, K (the KEK).
+%% Outputs: Ciphertext, (n+1) 64-bit values {C0, C1, ..., Cn}.
 
-   %% 1) Initialize variables.
+%% 1) Initialize variables.
 
-   %%     Set A = IV, an initial value (see 2.2.3)
-   %%     For i = 1 to n
-   %%         R[i] = P[i]
+%%     Set A = IV, an initial value (see 2.2.3)
+%%     For i = 1 to n
+%%         R[i] = P[i]
 
-   %% 2) Calculate intermediate values.
+%% 2) Calculate intermediate values.
 
-   %%     For j = 0 to 5
-   %%         For i=1 to n
-   %%             B = AES(K, A | R[i])
-   %%             A = MSB(64, B) ^ t where t = (n*j)+i
-   %%             R[i] = LSB(64, B)
+%%     For j = 0 to 5
+%%         For i=1 to n
+%%             B = AES(K, A | R[i])
+%%             A = MSB(64, B) ^ t where t = (n*j)+i
+%%             R[i] = LSB(64, B)
 
-   %% 3) Output the results.
+%% 3) Output the results.
 
-   %%     Set C[0] = A
-   %%     For i = 1 to n
-   %%         C[i] = R[i]
+%%     Set C[0] = A
+%%     For i = 1 to n
+%%         C[i] = R[i]
 
 aes_key_wrap(KEK, PlainText) ->
     IV = binary:copy(<<16#A6>>, 8),
     Text = [X || <<X:8/bytes>> <= PlainText],
     Algo = case byte_size(KEK) of
-	       16 -> aes_128_ecb;
-	       24 -> aes_192_ecb;
-	       32 -> aes_256_ecb
-	   end,
+               16 -> aes_128_ecb;
+               24 -> aes_192_ecb;
+               32 -> aes_256_ecb
+           end,
     aes_key_wrap({Algo, KEK}, IV, Text, 1, 0).
 
 aes_key_wrap(_KEK, IV, Text, _Cnt, 6) ->

@@ -94,22 +94,22 @@ init(Config = #{refresh := RefreshTime, providers := Providers}) ->
     ?LOG(debug, "Table ref: ~p", [ets:whereis(?CACHE_LOC)]),
     %% TODO Handle exceptions in chain?
     {ok, #loc_cache{
-	loc_tab = LocTab, refresh = RefreshTime, providers = Providers, provider_chain = chain(Providers)}}.
+            loc_tab = LocTab, refresh = RefreshTime, providers = Providers, provider_chain = chain(Providers)}}.
 
 handle_call(flush_loc_cache, _, State = #loc_cache{loc_tab = LocTab}) ->
     ?LOG(debug, "Flush location cache, tableref: ~p", [ets:whereis(LocTab)]),
     ets:delete_all_objects(LocTab),
     {reply, ok, State};
 handle_call({get_loc, true, Name}, _, State = #loc_cache{
-	     loc_tab = LocTab, refresh = RefreshTime, provider_chain = Chain}) ->
+                                                 loc_tab = LocTab, refresh = RefreshTime, provider_chain = Chain}) ->
     ?LOG(debug, "get location for device name (with cache): ~p", [Name]),
     Result = case ets:lookup(LocTab, Name) of
-	[{Name, Loc = {location, _, _}}] -> Loc;
-	[] -> refresh_loc(Name, Chain, LocTab, RefreshTime)
-    end,
+                 [{Name, Loc = {location, _, _}}] -> Loc;
+                 [] -> refresh_loc(Name, Chain, LocTab, RefreshTime)
+             end,
     {reply, Result, State};
 handle_call({get_loc, false, Name}, _, State = #loc_cache{
-	     provider_chain = Chain}) ->
+                                                  provider_chain = Chain}) ->
     ?LOG(debug, "get location for device name (without cache): ~p", [Name]),
     Result = Chain(Name),
     {reply, Result, State};
@@ -135,20 +135,20 @@ terminate(Reason, _) ->
 
 is_enabled() ->
     case application:get_env(capwap, location_provider) of
-	undefined -> false;
-	{ok, _} -> true
+        undefined -> false;
+        {ok, _} -> true
     end.
 
 flush_loc_cache() ->
     case is_enabled() of
-	true -> gen_server:call(?MODULE, flush_loc_cache);
-	false -> {error, "Location not enabled"}
+        true -> gen_server:call(?MODULE, flush_loc_cache);
+        false -> {error, "Location not enabled"}
     end.
 
 load_config(Config) ->
     case is_enabled() of
-	true -> gen_server:call(?MODULE, {load_config, Config});
-	false -> {error, "Location not enabled"}
+        true -> gen_server:call(?MODULE, {load_config, Config});
+        false -> {error, "Location not enabled"}
     end.
 
 
@@ -158,34 +158,34 @@ get_loc(Name) ->
 
 get_loc(Name, true) ->
     case is_enabled() of
-	true ->
-	    ?LOG(debug, "table ref: ~p", [ets:whereis(?CACHE_LOC)]),
-	    case ets:lookup(?CACHE_LOC, Name) of
-		[{Name, Loc = {location, _, _}}] -> Loc;
-		[] -> gen_server:call(?MODULE, {get_loc, true, Name}, 20000)
-	    end;
-	false -> {error, "Location not enabled"}
+        true ->
+            ?LOG(debug, "table ref: ~p", [ets:whereis(?CACHE_LOC)]),
+            case ets:lookup(?CACHE_LOC, Name) of
+                [{Name, Loc = {location, _, _}}] -> Loc;
+                [] -> gen_server:call(?MODULE, {get_loc, true, Name}, 20000)
+            end;
+        false -> {error, "Location not enabled"}
     end;
 get_loc(Name, false) ->
     case is_enabled() of
-	true ->
-	    ?LOG(debug, "Bypassing cache"),
-	    gen_server:call(?MODULE, {get_loc, false, Name}, 20000);
-	false -> {error, "Location not enabled"}
+        true ->
+            ?LOG(debug, "Bypassing cache"),
+            gen_server:call(?MODULE, {get_loc, false, Name}, 20000);
+        false -> {error, "Location not enabled"}
     end.
 
 %% Internal functions
 
 refresh_loc(Name, Chain, LocTab, RefreshTime) ->
     case Chain(Name) of
-	E = {error, _} -> E;
-	L = {location, _, _} ->
-	    ets:insert(LocTab, {Name, L}),
-	    erlang:send_after(RefreshTime, ?MODULE, {evict, Name}),
-	    L
+        E = {error, _} -> E;
+        L = {location, _, _} ->
+            ets:insert(LocTab, {Name, L}),
+            erlang:send_after(RefreshTime, ?MODULE, {evict, Name}),
+            L
     end.
 
-% Should cause be logged? Or maybe passed on to the next item?
+                                                % Should cause be logged? Or maybe passed on to the next item?
 prov_fun(ModFun, Next) ->
     fun(Name) -> case ModFun(Name) of {error, _Cause} -> Next(Name); L = {location, _, _} -> L end end.
 

@@ -14,86 +14,86 @@
 %% along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 -record(wtp, {
-	  psm_idle_timeout,
-	  psm_busy_timeout,
-	  max_stations,
-	  echo_request_interval,
-	  discovery_interval,
-	  idle_timeout,
-	  data_channel_dead_interval,
-	  ac_join_timeout,
-	  admin_pw,
-	  wlan_hold_time,
-	  broken_add_wlan_workaround,
-	  radios
-	 }).
+              psm_idle_timeout,
+              psm_busy_timeout,
+              max_stations,
+              echo_request_interval,
+              discovery_interval,
+              idle_timeout,
+              data_channel_dead_interval,
+              ac_join_timeout,
+              admin_pw,
+              wlan_hold_time,
+              broken_add_wlan_workaround,
+              radios
+             }).
 
 -record(wtp_radio, {
-	  radio_id,
-	  radio_type,
-	  supported_rates,
-	  operation_mode,
-	  channel,
-	  beacon_interval,
-	  dtim_period,
-	  short_preamble,
-	  rts_threshold,
-	  short_retry,
-	  long_retry,
-	  fragmentation_threshold,
-	  tx_msdu_lifetime,
-	  rx_msdu_lifetime,
-	  tx_power,
-	  channel_assessment,
-	  energy_detect_threshold,
-	  band_support,
-	  ti_threshold,
-	  diversity,
-	  combiner,
-	  antenna_selection,
-	  report_interval,
+                    radio_id,
+                    radio_type,
+                    supported_rates,
+                    operation_mode,
+                    channel,
+                    beacon_interval,
+                    dtim_period,
+                    short_preamble,
+                    rts_threshold,
+                    short_retry,
+                    long_retry,
+                    fragmentation_threshold,
+                    tx_msdu_lifetime,
+                    rx_msdu_lifetime,
+                    tx_power,
+                    channel_assessment,
+                    energy_detect_threshold,
+                    band_support,
+                    ti_threshold,
+                    diversity,
+                    combiner,
+                    antenna_selection,
+                    report_interval,
 
-	  supported_cipher_suites,
+                    supported_cipher_suites,
 
-	  %% IEEE 802.11n settings
-	  a_msdu,
-	  a_mpdu,
-	  deny_non_11n,
-	  short_gi,
-	  bandwidth_binding,
-	  max_supported_mcs,
-	  max_mandatory_mcs,
-	  tx_antenna,
-	  rx_antenna,
+                    %% IEEE 802.11n settings
+                    a_msdu,
+                    a_mpdu,
+                    deny_non_11n,
+                    short_gi,
+                    bandwidth_binding,
+                    max_supported_mcs,
+                    max_mandatory_mcs,
+                    tx_antenna,
+                    rx_antenna,
 
-	  wlans
-	 }).
+                    wlans
+                   }).
 
 -record(wtp_wlan_rsn, {
-	  version			:: undefined | 1 | 2,
-	  capabilities			:: undefined | integer(),
-	  group_cipher_suite		:: undefined | binary(),
-	  cipher_suites			:: undefined | [binary()],
-	  akm_suites			:: undefined | [binary()],
-	  pmk_ids			:: undefined | [binary()],
-	  group_mgmt_cipher_suite	:: undefined | binary(),
+                       version                       :: undefined | 1 | 2,
+                       capabilities                  :: undefined | integer(),
+                       group_cipher_suite            :: undefined | binary(),
+                       cipher_suites                 :: undefined | [binary()],
+                       akm_suites                    :: undefined | [binary()],
+                       pmk_ids                       :: undefined | [binary()],
+                       group_mgmt_cipher_suite       :: undefined | binary(),
 
-	  management_frame_protection
-	 }).
+                       management_frame_protection
+                      }).
 
 -record(wtp_wlan_config, {
-	  wlan_id,
-	  ssid,
-	  suppress_ssid,
-	  mac_mode,
-	  vlan,
-	  privacy,
-	  management_frame_protection,
-	  fast_transition,
-	  mobility_domain,
-	  secret,
-	  rsn,
-	  peer_rekey,
-	  group_rekey,
-	  strict_group_rekey
-	 }).
+                          wlan_id,
+                          ssid,
+                          suppress_ssid,
+                          mac_mode,
+                          vlan,
+                          privacy,
+                          management_frame_protection,
+                          fast_transition,
+                          mobility_domain,
+                          secret,
+                          rsn,
+                          peer_rekey,
+                          group_rekey,
+                          strict_group_rekey
+                         }).

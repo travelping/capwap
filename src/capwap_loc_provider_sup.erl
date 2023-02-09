@@ -35,12 +35,12 @@ start_link(Config) ->
 
 location_children() ->
     case application:get_env(capwap, location_provider) of
-	undefined ->
-	    ?LOG(warning, "Location provider disabled, no config found"),
-	    [];
-	{ok, LocProviderConfig} ->
-	    ?LOG(info, "Location provider enabled"),
-	    [?CHILD(capwap_loc_provider_sup, supervisor, [LocProviderConfig])]
+        undefined ->
+            ?LOG(warning, "Location provider disabled, no config found"),
+            [];
+        {ok, LocProviderConfig} ->
+            ?LOG(info, "Location provider enabled"),
+            [?CHILD(capwap_loc_provider_sup, supervisor, [LocProviderConfig])]
     end.
 
 %% Supervisor callbacks
@@ -48,12 +48,12 @@ location_children() ->
 init([Config]) ->
     ?LOG(debug, "Init'ed supervisor with config: ~p", [Config]),
     ProviderServer = #{id => capwap_loc_provider,
-		       start => {capwap_loc_provider, start_link, [Config]},
-		       restart => permanent,
-		       significant => false,
-		       shutdown => 500,
-		       type => worker},
+                       start => {capwap_loc_provider, start_link, [Config]},
+                       restart => permanent,
+                       significant => false,
+                       shutdown => 500,
+                       type => worker},
 
     {ok, {#{strategy => one_for_one, intensity => 30, period => 60}, [
-	    ProviderServer
-    ]}}.
+                                                                      ProviderServer
+                                                                     ]}}.

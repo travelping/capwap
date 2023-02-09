@@ -19,23 +19,23 @@
 
 wlan_attr(Id, Name) ->
     {Id, Name,
-      [{"Radio ID", 8, integer},
-       {"WLAN ID", 8, integer},
-       {"Capability", {flags, ["ess", "ibss", "cf-pollable", "cf-poll-request", "privacy",
-			       "short_preamble", "pbcc", "channel_agility",
-			       "spectrum_management", "qos", "short_slot_time", "apsd",
-			       "reserved", "dsss_ofdm", "delayed_block_ack",
-			       "immediate_block_ack"]}},
-       {"Key Index", 8, integer},
-       {"Key Status", 8, {enum, [per_station, static_wep, begin_rekeying, completed_rekeying]}},
-       {"Key", 16, length_binary},
-       {"Group TSC", 6, bytes},
-       {"QoS", 8, {enum, [best_effort, video, voice, background]}},
-       {"Auth Type", 8, {enum, [open_system, wep_shared_key]}},
-       {"MAC Mode", 8, {enum, [local_mac, split_mac]}},
-       {"Tunnel Mode", 8, {enum, [local_bridge, '802_3_tunnel', '802_11_tunnel']}},
-       {"Suppress SSID", 8, integer},
-       {"SSID", 0, binary}]}.
+     [{"Radio ID", 8, integer},
+      {"WLAN ID", 8, integer},
+      {"Capability", {flags, ["ess", "ibss", "cf-pollable", "cf-poll-request", "privacy",
+                              "short_preamble", "pbcc", "channel_agility",
+                              "spectrum_management", "qos", "short_slot_time", "apsd",
+                              "reserved", "dsss_ofdm", "delayed_block_ack",
+                              "immediate_block_ack"]}},
+      {"Key Index", 8, integer},
+      {"Key Status", 8, {enum, [per_station, static_wep, begin_rekeying, completed_rekeying]}},
+      {"Key", 16, length_binary},
+      {"Group TSC", 6, bytes},
+      {"QoS", 8, {enum, [best_effort, video, voice, background]}},
+      {"Auth Type", 8, {enum, [open_system, wep_shared_key]}},
+      {"MAC Mode", 8, {enum, [local_mac, split_mac]}},
+      {"Tunnel Mode", 8, {enum, [local_bridge, '802_3_tunnel', '802_11_tunnel']}},
+      {"Suppress SSID", 8, integer},
+      {"SSID", 0, binary}]}.
 
 
 ies() ->
@@ -267,10 +267,10 @@ ies() ->
        {'_', 8},
        {"MAC Address", 6, bytes},
        {"Capabilities", {flags, ["ess", "ibss", "cf-pollable", "cf-poll-request", "privacy",
-				 "short_preamble", "pbcc", "channel_agility",
-				 "spectrum_management", "qos", "short_slot_time", "apsd",
-				 "reserved", "dsss_ofdm", "delayed_block_ack",
-				 "immediate_block_ack"]}},
+                                 "short_preamble", "pbcc", "channel_agility",
+                                 "spectrum_management", "qos", "short_slot_time", "apsd",
+                                 "reserved", "dsss_ofdm", "delayed_block_ack",
+                                 "immediate_block_ack"]}},
        {"WLAN ID", 8, integer},
        {"Supported Rate", '_', {array, 8}}]},
      {1037, "IEEE 802.11 Station QoS Profile",
@@ -324,10 +324,10 @@ ies() ->
       [{"Radio ID", 8, integer},
        {"WLAN ID", 8, integer},
        {"Capability", {flags, ["ess", "ibss", "cf-pollable", "cf-poll-request", "privacy",
-			       "short_preamble", "pbcc", "channel_agility",
-			       "spectrum_management", "qos", "short_slot_time", "apsd",
-			       "reserved", "dsss_ofdm", "delayed_block_ack",
-			       "immediate_block_ack"]}},
+                               "short_preamble", "pbcc", "channel_agility",
+                               "spectrum_management", "qos", "short_slot_time", "apsd",
+                               "reserved", "dsss_ofdm", "delayed_block_ack",
+                               "immediate_block_ack"]}},
        {"Key Index", 8, integer},
        {"Key Status", 8, {enum, [per_station, static_wep, begin_rekeying, completed_rekeying]}},
        {"Key", 16, length_binary}]},
@@ -436,7 +436,7 @@ vendor_ies() ->
        {'_', 16}
       ]},
      {{18681, 17}, "IEEE 802.11n Station Information",
-     [{"MAC Address", 6, bytes},
+      [{"MAC Address", 6, bytes},
        {"Bandwith 40MHz", 1, integer},
        {"Power Save Mode", 2, {enum, [static, dynamic, reserved, disabled]}},
        {"SGI-20MHz", 1, integer},
@@ -591,11 +591,11 @@ indent(List, Extra) ->
 
 s2a(Name) ->
     lists:map(fun(32) -> $_;
-		 ($-) -> $_;
-		 ($.) -> $_;
-		 (C)  -> C
-	      end,
-	      string:to_lower(Name)).
+                 ($-) -> $_;
+                 ($.) -> $_;
+                 (C)  -> C
+              end,
+              string:to_lower(Name)).
 
 append([], Acc) ->
     Acc;
@@ -606,12 +606,12 @@ collect(_Fun, [], Acc) ->
     lists:reverse(Acc);
 collect(Fun, [F|Fields], Acc) ->
     case Fun(F) of
-	[] ->
-	    collect(Fun, Fields, Acc);
-	{stop, L} ->
-	    lists:reverse(append(L, Acc));
-	L ->
-	    collect(Fun, Fields, append(L, Acc))
+        [] ->
+            collect(Fun, Fields, Acc);
+        {stop, L} ->
+            lists:reverse(append(L, Acc));
+        L ->
+            collect(Fun, Fields, append(L, Acc))
     end.
 
 collect(Fun, Fields) ->
@@ -679,9 +679,9 @@ write_record({_Id, Name, Fields}) ->
 
 %% hand crafted vendor IE
 write_decoder(_FunName, {37, _Name, _Fields}) ->
-"decode_element(37, <<M_vendor:32/integer,
-		     M_element_id:16/integer,
-		     M_data/binary>>) ->
+    "decode_element(37, <<M_vendor:32/integer,
+                     M_element_id:16/integer,
+    M_data/binary>>) ->
     decode_vendor_element({M_vendor, M_element_id}, M_data)";
 
 write_decoder(FunName, {Id, Name, Fields}) ->
@@ -690,12 +690,12 @@ write_decoder(FunName, {Id, Name, Fields}) ->
     Match = string:join(collect(fun(X) -> gen_decoder_header_match(X) end, Fields), [",\n", MatchIdent]),
 
     Body = case collect_late_assign(init, Fields, [], []) of
-	       {[], []} ->
-		   [];
-	       {Init, SubMatch} ->
-		   M = io_lib:format("    <<~s>> = M_Rest,", [string:join(SubMatch, ",\n      ")]),
-		   ["    ", Init, ",\n", M, "\n"]
-	   end,
+               {[], []} ->
+                   [];
+               {Init, SubMatch} ->
+                   M = io_lib:format("    <<~s>> = M_Rest,", [string:join(SubMatch, ",\n      ")]),
+                   ["    ", Init, ",\n", M, "\n"]
+           end,
     RecIdent = indent(Name, 6),
     RecAssign = string:join(collect(fun(X) -> gen_decoder_record_assign(X) end, Fields), [",\n", RecIdent]),
     io_lib:format("~s<<~s>>) ->~n~s    #~s{~s}", [FunHead, Match, Body, s2a(Name), RecAssign]).
@@ -718,7 +718,7 @@ main(_) ->
     IEs = StdIEs ++ VendorIEs,
 
     MsgDescription = string:join([io_lib:format("msg_description(~s) -> <<\"~s\">>", [s2a(X), X]) || {_, X} <- msgs()]
-				 ++ ["msg_description(X) -> io_lib:format(\"~p\", [X])"], ";\n") ++ ".\n",
+                                 ++ ["msg_description(X) -> io_lib:format(\"~p\", [X])"], ";\n") ++ ".\n",
 
     {FwdFuns, RevFuns} = gen_message_type(msgs(), {[], []}),
     WildFun = ["message_type({Vendor, Type}) when is_integer(Vendor), is_integer(Type) -> {Vendor, Type}"],
@@ -737,15 +737,15 @@ main(_) ->
     CatchAnyVendorEncoder = "encode_element({Tag = {Vendor, Type}, Value}) when is_integer(Vendor), is_integer(Type), is_binary(Value) ->\n    encode_vendor_element(Tag, Value)",
     CatchAnyEncoder = "encode_element({Tag, Value}) when is_integer(Tag), is_binary(Value) ->\n    encode_element(Tag, Value)",
     EncFuns = string:join([write_encoder("encode_element", X) || X <- StdIEs, element(1, X) /= 37] ++
-			  [write_encoder("encode_vendor_element", X) || X <- VendorIEs]
-			  ++ [CatchAnyVendorEncoder, CatchAnyEncoder] , ";\n\n"),
+                          [write_encoder("encode_vendor_element", X) || X <- VendorIEs]
+                          ++ [CatchAnyVendorEncoder, CatchAnyEncoder] , ";\n\n"),
 
     CatchAnyPretty = "pretty_print_f(_, _) ->\n    no",
     RecPrettyDefs = string:join([write_pretty_print("pretty_print_f", X) || X <- IEs, element(1, X) /= 37]
-				++ [CatchAnyPretty] , ";\n"),
+                                ++ [CatchAnyPretty] , ";\n"),
 
     ErlDecls = io_lib:format("%% -include(\"capwap_packet_gen.hrl\").~n~n~s~n~s~n~s~n~s.~n~n~s.~n~n~s.~n~n~s.~n",
-			     [MsgDescription, MTypes, Enums, Funs, VendorFuns, EncFuns, RecPrettyDefs]),
+                             [MsgDescription, MTypes, Enums, Funs, VendorFuns, EncFuns, RecPrettyDefs]),
 
     {ok, HrlF0} = file:read_file("include/capwap_packet.hrl"),
     [HrlHead, _] = binary:split(HrlF0, [<<"%% -include(\"capwap_packet_gen.hrl\").">>],[]),

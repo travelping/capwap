@@ -16,41 +16,41 @@
 -define(CAPWAP_BINDING_802_11, 1).
 
 -record(wpa_config, {
-	  ssid,
-	  privacy,
-	  mobility_domain,
-	  rsn,
-	  secret,
-	  peer_rekey,
-	  group_rekey,
-	  strict_group_rekey
-	 }).
+                     ssid,
+                     privacy,
+                     mobility_domain,
+                     rsn,
+                     secret,
+                     peer_rekey,
+                     group_rekey,
+                     strict_group_rekey
+                    }).
 
 -record(wlan, {
-	  wlan_identifier,
+               wlan_identifier,
 
-	  bss,
-	  ssid,
-	  suppress_ssid,
-	  mode,
-	  mac_mode,
-	  tunnel_mode,
-	  vlan,
-	  rate_set,
-	  privacy,
-	  wpa_config,
-	  fast_transition,
-	  mobility_domain,
-	  information_elements,
+               bss,
+               ssid,
+               suppress_ssid,
+               mode,
+               mac_mode,
+               tunnel_mode,
+               vlan,
+               rate_set,
+               privacy,
+               wpa_config,
+               fast_transition,
+               mobility_domain,
+               information_elements,
 
-	  state,
+               state,
 
-	  group_tsc,
-	  gtk,
-	  igtk,
+               group_tsc,
+               gtk,
+               igtk,
 
-	  group_rekey_state,
-	  group_rekey_timer
-         }).
+               group_rekey_state,
+               group_rekey_timer
+              }).
 
 -record(ieee80211_key, {cipher, index, key}).

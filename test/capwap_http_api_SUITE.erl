@@ -47,10 +47,10 @@ init_per_suite(Config0) ->
     exometer:new(DataPointIP6, gauge, []),
     lists:foreach(
       fun(_) ->
-	      Value = rand:uniform(1000),
-	      exometer:update(DataPointG, Value + 0.001),
-	      exometer:update(DataPointH, Value),
-	      exometer:update(DataPointS, Value)
+              Value = rand:uniform(1000),
+              exometer:update(DataPointG, Value + 0.001),
+              exometer:update(DataPointH, Value),
+              exometer:update(DataPointS, Value)
       end, lists:seq(1, 100)),
 
     Config.
@@ -66,7 +66,7 @@ http_api_version_req() ->
 http_api_version_req(_Config) ->
     URL = get_test_url("/api/v1/version"),
     {ok, {_, _, Body}} = httpc:request(get, {URL, []},
-				       [], [{body_format, binary}]),
+                                       [], [{body_format, binary}]),
     Res = jsx:decode(Body, [return_maps]),
     ?assertEqual(#{<<"version">> => <<"none">>}, Res),
     ok.
@@ -78,16 +78,16 @@ http_api_list_wtps(_Config) ->
 
     URL = get_test_url("/api/v1/wtp"),
     {ok, {_, _, Body}} = httpc:request(get, {URL, []},
-				       [], [{body_format, binary}]),
+                                       [], [{body_format, binary}]),
     Res = jsx:decode(Body, [return_maps]),
     ?assertEqual([#{<<"id">> => <<"test-wtp">>,
                     <<"endpoint">> => #{
-                      <<"ip">> => <<"127.0.0.1">>,
-                      <<"port">> => 0
-                    } }], Res),
+                                        <<"ip">> => <<"127.0.0.1">>,
+                                        <<"port">> => 0
+                                       } }], Res),
     capwap_wtp_reg:unregister(),
     {ok, {_, _, Body1}} = httpc:request(get, {URL, []},
-				       [], [{body_format, binary}]),
+                                        [], [{body_format, binary}]),
     Res1 = jsx:decode(Body1, [return_maps]),
     ?assertEqual([], Res1),
     ok.
@@ -100,16 +100,16 @@ http_api_list_wtps_with_undefined(_Config) ->
 
     URL = get_test_url("/api/v1/wtp"),
     {ok, {_, _, Body}} = httpc:request(get, {URL, []},
-				       [], [{body_format, binary}]),
+                                       [], [{body_format, binary}]),
     Res = jsx:decode(Body, [return_maps]),
     ?assertEqual([#{<<"id">> => <<"test-wtp">>,
                     <<"endpoint">> => #{
-                      <<"ip">> => <<"127.0.0.1">>,
-                      <<"port">> => 0
-                    } }], Res),
+                                        <<"ip">> => <<"127.0.0.1">>,
+                                        <<"port">> => 0
+                                       } }], Res),
     capwap_wtp_reg:unregister(),
     {ok, {_, _, Body1}} = httpc:request(get, {URL, []},
-				       [], [{body_format, binary}]),
+                                        [], [{body_format, binary}]),
     Res1 = jsx:decode(Body1, [return_maps]),
     ?assertEqual([], Res1),
     ok.
@@ -119,7 +119,7 @@ http_api_get_wtp_info() ->
 http_api_get_wtp_info(_Config) ->
     URL = get_test_url("/api/v1/wtp/something"),
     {ok, {_, _, Body}} = httpc:request(get, {URL, []},
-				       [], [{body_format, binary}]),
+                                       [], [{body_format, binary}]),
     Response = jsx:decode(Body, [return_maps]),
     ?assertEqual(#{<<"error">> => <<"not_found">>}, Response),
     ok.
@@ -129,9 +129,9 @@ http_api_prometheus_metrics_req() ->
 http_api_prometheus_metrics_req(_Config) ->
     URL = get_test_url("/metrics"),
     Accept = "application/vnd.google.protobuf;proto=io.prometheus.client.MetricFamily;encoding=delimited;q=0.7,"
-             ++ "text/plain;version=0.0.4;q=0.3,*/*;q=0.1",
+        ++ "text/plain;version=0.0.4;q=0.3,*/*;q=0.1",
     {ok, {_, _, Body}} = httpc:request(get, {URL, [{"Accept", Accept}]},
-				       [], [{body_format, binary}]),
+                                       [], [{body_format, binary}]),
     Lines = binary:split(Body, <<"\n">>, [global]),
     Result =
         lists:filter(
@@ -145,10 +145,10 @@ http_api_prometheus_metrics_sub_req() ->
     [{doc, "Check /metrics/... Prometheus API endpoint"}].
 http_api_prometheus_metrics_sub_req(_Config) ->
     Accept = "application/vnd.google.protobuf;proto=io.prometheus.client.MetricFamily;encoding=delimited;q=0.7,"
-             ++ "text/plain;version=0.0.4;q=0.3,*/*;q=0.1",
+        ++ "text/plain;version=0.0.4;q=0.3,*/*;q=0.1",
     URL0 = get_test_url("/metrics/capwap/ac/station_count"),
     {ok, {_, _, Body}} = httpc:request(get, {URL0, [{"Accept", Accept}]},
-				       [], [{body_format, binary}]),
+                                       [], [{body_format, binary}]),
     Lines = binary:split(Body, <<"\n">>, [global]),
     Result =
         lists:filter(fun(<<"capwap_ac_station_count", _/binary>>) ->
@@ -163,12 +163,12 @@ http_api_metrics_req() ->
 http_api_metrics_req(_Config) ->
     URL = get_test_url("/metrics"),
     {ok, {_, _, Body}} = httpc:request(get, {URL, []},
-				       [], [{body_format, binary}]),
+                                       [], [{body_format, binary}]),
     Res = jsx:decode(Body, [return_maps]),
     ?assertMatch(#{<<"value">> := 0},
                  maps:get(<<"station_count">>,
-                    maps:get(<<"ac">>,
-                        maps:get(<<"capwap">>, Res)))
+                          maps:get(<<"ac">>,
+                                   maps:get(<<"capwap">>, Res)))
                 ),
     ok.
 
@@ -177,7 +177,7 @@ http_api_metrics_sub_req() ->
 http_api_metrics_sub_req(_Config) ->
     URL0 = get_test_url("/metrics/capwap/ac/station_count"),
     {ok, {_, _, Body0}} = httpc:request(get, {URL0, []},
-				       [], [{body_format, binary}]),
+                                        [], [{body_format, binary}]),
     Res0 = jsx:decode(Body0, [return_maps]),
     ?assertMatch(#{<<"value">> := 0}, Res0),
     ok.
@@ -187,7 +187,7 @@ http_api_bad_command() ->
 http_api_bad_command(_Config) ->
     URL0 = get_test_url("/another_command"),
     {ok, {_, _, Body0}} = httpc:request(get, {URL0, []},
-				       [], [{body_format, binary}]),
+                                        [], [{body_format, binary}]),
     ?assertEqual(<<>>, Body0),
     ok.
 
@@ -196,7 +196,7 @@ http_api_dp_wtp_list_error() ->
 http_api_dp_wtp_list_error(_Config) ->
     URL = get_test_url("/api/v1/dp/wtp-list"),
     {ok, {_, _, Body}} = httpc:request(get, {URL, []},
-				       [], [{body_format, binary}]),
+                                       [], [{body_format, binary}]),
     Res = jsx:decode(Body, [return_maps]),
     ?assertEqual(<<"error">>, maps:get(<<"type">>, Res)),
     ok.
@@ -206,7 +206,7 @@ http_api_dp_status_error() ->
 http_api_dp_status_error(_Config) ->
     URL = get_test_url("/api/v1/dp/stats"),
     {ok, {_, _, Body}} = httpc:request(get, {URL, []},
-				       [], [{body_format, binary}]),
+                                       [], [{body_format, binary}]),
     Res = jsx:decode(Body, [return_maps]),
     ?assertEqual(<<"error">>, maps:get(<<"type">>, Res)),
     ok.
@@ -235,7 +235,7 @@ setup_applications() ->
                                   {software, <<"SCG">>}]},
                       {ac_name, <<"CAPWAP AC">>},
 
-		      {http_api, [{port, 0}]},
+                      {http_api, [{port, 0}]},
 
                       {default_ssid, <<"DEV CAPWAP WIFI">>},
                       {default_ssid_suppress, 0},
@@ -280,48 +280,48 @@ setup_applications() ->
                                  ]}
                                ]}
                              ]},
-			  {location_provider, #{
-			    providers => [
-			        {capwap_loc_provider_default, #{default_loc => {location, <<"123">>, <<"456">>}}},
-			        {capwap_loc_provider_http, #{uri => "http://127.0.0.1:9999", timeout => 30000}}
-		            ],
-		            refresh => 1000}
-			  }
+                      {location_provider, #{
+                                            providers => [
+                                                          {capwap_loc_provider_default, #{default_loc => {location, <<"123">>, <<"456">>}}},
+                                                          {capwap_loc_provider_http, #{uri => "http://127.0.0.1:9999", timeout => 30000}}
+                                                         ],
+                                            refresh => 1000}
+                      }
                      ]},
-	    {ergw_aaa,
-	     [
-	      {handlers,
-	       [{ergw_aaa_static,
-		 [{'NAS-Identifier',        <<"NAS-Identifier">>},
-		  {'Acct-Interim-Interval', 600}
-		 ]}
-	       ]},
-	      {services,
-	       [{'Default',
-		 [{handler, 'ergw_aaa_static'},
-		  {answers,
-		   #{'RADIUS-Auth' =>
-			 #{'Result-Code' => 2001,
-			   'TLS-Pre-Shared-Key' => <<"MySecret">>},
-		     'RADIUS-Acct' =>
-			 #{'Result-Code' => 2001}
-		    }
-		  }
-		 ]}
-	       ]},
-	      {apps,
-	       [{default,
-		 [{session, ['Default']},
-		  {procedures, [{authenticate, [{'Default', [{answer, 'RADIUS-Auth'}]}]},
-				{authorize, []},
-				{start, [{'Default', [{answer, 'RADIUS-Acct'}]}]},
-				{interim, [{'Default', [{answer, 'RADIUS-Acct'}]}]},
-				{stop, [{'Default', [{answer, 'RADIUS-Acct'}]}]}
-			       ]}
-		 ]}
-	       ]}
-	     ]}
-	   ],
+            {ergw_aaa,
+             [
+              {handlers,
+               [{ergw_aaa_static,
+                 [{'NAS-Identifier',        <<"NAS-Identifier">>},
+                  {'Acct-Interim-Interval', 600}
+                 ]}
+               ]},
+              {services,
+               [{'Default',
+                 [{handler, 'ergw_aaa_static'},
+                  {answers,
+                   #{'RADIUS-Auth' =>
+                         #{'Result-Code' => 2001,
+                           'TLS-Pre-Shared-Key' => <<"MySecret">>},
+                     'RADIUS-Acct' =>
+                         #{'Result-Code' => 2001}
+                    }
+                  }
+                 ]}
+               ]},
+              {apps,
+               [{default,
+                 [{session, ['Default']},
+                  {procedures, [{authenticate, [{'Default', [{answer, 'RADIUS-Auth'}]}]},
+                                {authorize, []},
+                                {start, [{'Default', [{answer, 'RADIUS-Acct'}]}]},
+                                {interim, [{'Default', [{answer, 'RADIUS-Acct'}]}]},
+                                {stop, [{'Default', [{answer, 'RADIUS-Acct'}]}]}
+                               ]}
+                 ]}
+               ]}
+             ]}
+           ],
     [application:load(Name) || {Name, _} <- Apps],
     lists:flatten([setup_application(A) || A <- Apps]).
 

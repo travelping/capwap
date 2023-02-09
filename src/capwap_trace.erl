@@ -22,7 +22,7 @@
 
 %% gen_event callbacks
 -export([init/1, handle_event/2, handle_call/2,
-	 handle_info/2, terminate/2, code_change/3]).
+         handle_info/2, terminate/2, code_change/3]).
 
 -include_lib("kernel/include/logger.hrl").
 
@@ -43,20 +43,20 @@ add_handler(File) ->
 start_tracer() ->
     ?LOG(debug, "TRACE: ~p", [application:get_env('trace-file')]),
     case application:get_env('trace-file') of
-	{ok, File} ->
-	    R = capwap_sup:start_tracer(File),
-	    ?LOG(debug, "TRACE: ~p", [R]),
-	    ok;
-	_ ->
-	    ok
+        {ok, File} ->
+            R = capwap_sup:start_tracer(File),
+            ?LOG(debug, "TRACE: ~p", [R]),
+            ok;
+        _ ->
+            ok
     end.
 
 trace(Src, Dest, Data) ->
     case whereis(?SERVER) of
-	Pid when is_pid(Pid) ->
-	    gen_event:notify(?SERVER, {trace, Src, Dest, Data});
-	_ ->
-	    ok
+        Pid when is_pid(Pid) ->
+            gen_event:notify(?SERVER, {trace, Src, Dest, Data});
+        _ ->
+            ok
     end.
 
 %%%===================================================================
@@ -66,23 +66,23 @@ trace(Src, Dest, Data) ->
 init([File]) ->
     ?LOG(debug, "Starting TRACE handler"),
     case filelib:ensure_dir(filename:dirname(File)) of
-	ok ->
-	    case file:open(File, [write, raw]) of
-		{ok, Io} ->
-		    Header = << (pcapng_shb())/binary, (pcapng_ifd(<<"CAPWAP">>))/binary >>,
-		    file:write(Io, Header),
-		    {ok, #state{file = Io}};
-		{error, _} = Other ->
-		    ?LOG(error, "Starting TRACE handler failed with ~p", [Other]),
-		    Other
-	    end;
-	{error, _} = Other ->
-	    ?LOG(error, "Starting TRACE handler failed with ~p", [Other]),
-	    Other
+        ok ->
+            case file:open(File, [write, raw]) of
+                {ok, Io} ->
+                    Header = << (pcapng_shb())/binary, (pcapng_ifd(<<"CAPWAP">>))/binary >>,
+                    file:write(Io, Header),
+                    {ok, #state{file = Io}};
+                {error, _} = Other ->
+                    ?LOG(error, "Starting TRACE handler failed with ~p", [Other]),
+                    Other
+            end;
+        {error, _} = Other ->
+            ?LOG(error, "Starting TRACE handler failed with ~p", [Other]),
+            Other
     end.
 
 handle_event({trace, {SrcIP = {_,_,_,_}, SrcPort}, {DstIP, DstPort}, Data},
-	     #state{file = Io} = State) ->
+             #state{file = Io} = State) ->
     Packet = make_udp(tuple_to_ip(SrcIP), tuple_to_ip(DstIP), SrcPort, DstPort, Data),
     Dump = format_pcapng(Packet),
     file:write(Io, Dump),

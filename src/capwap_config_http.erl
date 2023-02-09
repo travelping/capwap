@@ -18,7 +18,7 @@
 %%-behaviour(capwap_config_provider).
 
 -export([wtp_init_config/2, wtp_config/1,
-	 wtp_radio_config/3]).
+         wtp_radio_config/3]).
 -ifdef(TEST).
 -export([transform_values/1]).
 -endif.
@@ -54,7 +54,7 @@ request(Path, Opts) ->
     end.
 
 validate_config(#{type := <<"wtp-config">>,
-		  version := <<"1.0">>}) ->
+                  version := <<"1.0">>}) ->
     true;
 validate_config(_) ->
     false.
@@ -71,8 +71,8 @@ encode_cipher_suite(Suite) ->
 transform_values(Values) ->
     maps:fold(
       fun(K0, V0, M) ->
-	      {K1, V1} = transform_value(K0, V0),
-	      maps:put(K1, V1, M)
+              {K1, V1} = transform_value(K0, V0),
+              maps:put(K1, V1, M)
       end, #{}, Values).
 
 transform_value(radio_type, V) ->
@@ -108,10 +108,10 @@ transform_value(akm_suites, V) ->
     {akm_suites, [akm_suite(S) || S <- V]};
 transform_value(radio, Radios) ->
     {radios, [capwap_config:'#frommap-wtp_radio'(
-		transform_values(Radio)) || Radio <- Radios ]};
+                transform_values(Radio)) || Radio <- Radios ]};
 transform_value(wlans, WLANs) ->
     {wlans, [capwap_config:'#frommap-wtp_wlan_config'(
-	       transform_values(WLAN)) || WLAN <- WLANs ]};
+               transform_values(WLAN)) || WLAN <- WLANs ]};
 transform_value(rsn, RSN) ->
     {rsn, capwap_config:'#frommap-wtp_wlan_rsn'(transform_values(RSN))};
 

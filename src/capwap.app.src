@@ -1,21 +1,21 @@
 {application, capwap, [
-    {description, "CAPWAP AC Server"},
-    {vsn, semver},
-    {registered, []},
-    {applications, [
-	kernel,
-	stdlib,
-	crypto,
-	dtlsex,
-	pcapng,
-	ssl,
-	regine,
-	exometer_core,
-	ergw_aaa,
-	cowboy,
-	pbkdf2,
-	hackney,
-	jsx
-    ]},
-    {mod, { capwap_app, []}}
-]}.
+                       {description, "CAPWAP AC Server"},
+                       {vsn, semver},
+                       {registered, []},
+                       {applications, [
+                                       kernel,
+                                       stdlib,
+                                       crypto,
+                                       dtlsex,
+                                       pcapng,
+                                       ssl,
+                                       regine,
+                                       exometer_core,
+                                       ergw_aaa,
+                                       cowboy,
+                                       pbkdf2,
+                                       hackney,
+                                       jsx
+                                      ]},
+                       {mod, { capwap_app, []}}
+                      ]}.

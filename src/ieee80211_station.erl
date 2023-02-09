@@ -21,14 +21,14 @@
 
 %% API
 -export([start_link/3, handle_ieee80211_frame/2, handle_ieee802_3_frame/3,
-	 take_over/3, detach/1, delete/1, start_gtk_rekey/4]).
+         take_over/3, detach/1, delete/1, start_gtk_rekey/4]).
 
 %% For testing
 -export([frame_type/1, frame_type/2]).
 
 %% gen_statem callbacks
 -export([callback_mode/0, init/1, handle_event/4,
-	 terminate/3, code_change/4]).
+         terminate/3, code_change/4]).
 
 -include_lib("kernel/include/logger.hrl").
 -include("capwap_debug.hrl").
@@ -50,40 +50,40 @@
 -define(REFUSED, 1).
 
 -record(data, {
-	  ac,
-	  ac_monitor,
-	  aaa_session,
-	  data_path,
-	  data_channel_address,
-	  wtp_id,
-	  wtp_session_id,
-	  ssid,
-	  mac,
-	  mac_mode,
-	  tunnel_mode,
-	  out_action,
-	  aid,
-	  capabilities,
+               ac,
+               ac_monitor,
+               aaa_session,
+               data_path,
+               data_channel_address,
+               wtp_id,
+               wtp_session_id,
+               ssid,
+               mac,
+               mac_mode,
+               tunnel_mode,
+               out_action,
+               aid,
+               capabilities,
 
-	  radio_mac,
-	  response_ies,
-	  wpa_config,
-	  gtk,
-	  igtk,
+               radio_mac,
+               response_ies,
+               wpa_config,
+               gtk,
+               igtk,
 
-	  eapol_state,
-	  eapol_retransmit,
-	  eapol_timer,
-	  cipher_state,
+               eapol_state,
+               eapol_retransmit,
+               eapol_timer,
+               cipher_state,
 
-	  rekey_running,
-	  rekey_pending,
-	  rekey_control,
+               rekey_running,
+               rekey_pending,
+               rekey_control,
 
-	  rekey_tref,
+               rekey_tref,
 
-	  timers = #{}
-	 }).
+               timers = #{}
+              }).
 
 -record(auth_frame, {algo, seq_no, status, params}).
 
@@ -99,8 +99,8 @@ start_link(AC, ClientMAC, StationCfg) ->
     gen_statem:start_link(?MODULE, [AC, ClientMAC, StationCfg], [{debug, ?DEBUG_OPTS}]).
 
 handle_ieee80211_frame(AC, <<FrameControl:2/bytes,
-			      _Duration:16, DA:6/bytes, SA:6/bytes, BSS:6/bytes,
-			      _SequenceControl:16/little-integer, FrameRest/binary>>) ->
+                             _Duration:16, DA:6/bytes, SA:6/bytes, BSS:6/bytes,
+                             _SequenceControl:16/little-integer, FrameRest/binary>>) ->
     %% FragmentNumber = SequenceControl band 16#0f,
     %% SequenceNumber = SequenceControl bsr 4,
 
@@ -123,10 +123,10 @@ take_over(Pid, AC, StationCfg) ->
 
 detach(ClientMAC) ->
     case capwap_station_reg:lookup(ClientMAC) of
-	{ok, Pid} ->
-	    gen_statem:call(Pid, detach);
-	_ ->
-	    not_found
+        {ok, Pid} ->
+            gen_statem:call(Pid, detach);
+        _ ->
+            not_found
     end.
 
 delete(Pid) when is_pid(Pid) ->
@@ -150,8 +150,8 @@ init([AC, ClientMAC, StationCfg = #station_config{bss = RadioMAC}]) ->
     ACMonitor = erlang:monitor(process, AC),
 
     Data = Data0#data{ac = AC,
-		      ac_monitor = ACMonitor,
-		      mac = ClientMAC},
+                      ac_monitor = ACMonitor,
+                      mac = ClientMAC},
     {ok, initial_state(Data), Data}.
 
 %%
@@ -162,31 +162,31 @@ init([AC, ClientMAC, StationCfg = #station_config{bss = RadioMAC}]) ->
 %% Data 1
 %%
 handle_event(cast, Event = {'Authentication', DA, SA, BSS, 0, 0, Frame}, init_auth,
-	     Data = #data{radio_mac = BSS}) ->
+             Data = #data{radio_mac = BSS}) ->
     ?LOG(debug, "in INIT_AUTH got Authentication Request: ~p", [Event]),
     AuthFrame = decode_auth_frame(Frame),
     case AuthFrame of
-	#auth_frame{algo   = ?OPEN_SYSTEM,
-		    status = ?SUCCESS} ->
-	    %% send Auth OK
-	    wtp_send_80211(gen_auth_ok(DA, SA, BSS, Frame), Data),
-	    {next_state, init_assoc, Data, ?IDLE_TIMEOUT};
-	_ ->
-	    %% send Auth Fail
-	    wtp_send_80211(gen_auth_fail(DA, SA, BSS, Frame), Data),
-	    {keep_state_and_data, [?IDLE_TIMEOUT]}
+        #auth_frame{algo   = ?OPEN_SYSTEM,
+                    status = ?SUCCESS} ->
+            %% send Auth OK
+            wtp_send_80211(gen_auth_ok(DA, SA, BSS, Frame), Data),
+            {next_state, init_assoc, Data, ?IDLE_TIMEOUT};
+        _ ->
+            %% send Auth Fail
+            wtp_send_80211(gen_auth_fail(DA, SA, BSS, Frame), Data),
+            {keep_state_and_data, [?IDLE_TIMEOUT]}
     end;
 
 %%
 %% Data 2
 %%
 handle_event(cast, Event = {'Authentication', _DA, _SA, BSS, 0, 0, _Frame}, init_assoc,
-	   #data{radio_mac = BSS, mac_mode = local_mac}) ->
+             #data{radio_mac = BSS, mac_mode = local_mac}) ->
     ?LOG(debug, "in INIT_ASSOC Local-MAC Mode got Authentication Request: ~p", [Event]),
     {keep_state_and_data, [?IDLE_TIMEOUT]};
 
 handle_event(cast, Event = {FrameType, _DA, _SA, BSS, 0, 0, Frame}, init_assoc,
-	   Data0 = #data{radio_mac = BSS, mac_mode = MacMode})
+             Data0 = #data{radio_mac = BSS, mac_mode = MacMode})
   when MacMode == local_mac andalso
        (FrameType == 'Association Request' orelse FrameType == 'Reassociation Request') ->
     ?LOG(debug, "in INIT_ASSOC Local-MAC Mode got Association Request: ~p", [Event]),
@@ -210,24 +210,24 @@ handle_event(cast, Event = {FrameType, _DA, _SA, BSS, 0, 0, Frame}, init_assoc,
     {next_state, connected, Data, ?IDLE_TIMEOUT};
 
 handle_event(cast, Event = {'Authentication', _DA, _SA, BSS, 0, 0, _Frame}, init_assoc,
-	   Data = #data{radio_mac = BSS}) ->
+             Data = #data{radio_mac = BSS}) ->
     ?LOG(debug, "in INIT_ASSOC got Authentication Request: ~p", [Event]),
     %% fall-back to init_auth....
     {next_state, init_auth, Data, [postpone]};
 
 handle_event(cast, Event = {'Deauthentication', _DA, _SA, BSS, 0, 0, _Frame}, init_assoc,
-	     Data = #data{radio_mac = BSS}) ->
+             Data = #data{radio_mac = BSS}) ->
     ?LOG(debug, "in INIT_ASSOC got Deauthentication: ~p", [Event]),
     {next_state, initial_state(Data), Data, ?SHUTDOWN_TIMEOUT};
 
 handle_event(cast, Event = {FrameType, DA, SA, BSS, 0, 0, ReqFrame}, init_assoc,
-	   #data{radio_mac = BSS,
-		  response_ies = ResponseIEs0,
-		  wpa_config = #wpa_config{
-				  rsn = #wtp_wlan_rsn{
-					   version = RSNversion,
-					   management_frame_protection = MFP}}
-		 } = Data0)
+             #data{radio_mac = BSS,
+                   response_ies = ResponseIEs0,
+                   wpa_config = #wpa_config{
+                                   rsn = #wtp_wlan_rsn{
+                                            version = RSNversion,
+                                            management_frame_protection = MFP}}
+                  } = Data0)
   when (FrameType == 'Association Request' orelse FrameType == 'Reassociation Request') ->
     ?LOG(debug, "in INIT_ASSOC got Association Request: ~p", [Event]),
 
@@ -247,17 +247,17 @@ handle_event(cast, Event = {FrameType, DA, SA, BSS, 0, 0, ReqFrame}, init_assoc,
 
     IEs = build_ies(ResponseIEs),
     MgmtFrame = <<16#01:16/integer-little, 0:16/integer-little,
-		  (Data3#data.aid):16/integer-little, IEs/binary>>,
+                  (Data3#data.aid):16/integer-little, IEs/binary>>,
 
     {Type, SubType} = frame_type('Association Response'),
     FrameControl = <<SubType:4, Type:2, 0:2, 0:6, 0:1, 0:1>>,
     Duration = 0,
     SequenceControl = 0,
     Frame = <<FrameControl/binary,
-	      Duration:16/integer-little,
-	      SA:6/bytes, DA:6/bytes, BSS:6/bytes,
-	      SequenceControl:16,
-	      MgmtFrame/binary>>,
+              Duration:16/integer-little,
+              SA:6/bytes, DA:6/bytes, BSS:6/bytes,
+              SequenceControl:16,
+              MgmtFrame/binary>>,
     wtp_send_80211(Frame, Data3),
 
     Data = wtp_add_station(Data3),
@@ -268,21 +268,21 @@ handle_event(cast, Event = {FrameType, DA, SA, BSS, 0, 0, ReqFrame}, init_assoc,
 %% Data 3
 %%
 handle_event(cast, Event = {'Disassociation', _DA, _SA, BSS, 0, 0, _Frame}, init_start,
-	   Data = #data{radio_mac = BSS}) ->
+             Data = #data{radio_mac = BSS}) ->
     ?LOG(debug, "in INIT_START got Disassociation: ~p", [Event]),
     wtp_del_station(Data),
     aaa_disassociation(Data),
     {next_state, init_assoc, Data, ?SHUTDOWN_TIMEOUT};
 
 handle_event(cast, Event = {'Deauthentication', _DA, _SA, BSS, 0, 0, _Frame}, init_start,
-	     Data = #data{radio_mac = BSS}) ->
+             Data = #data{radio_mac = BSS}) ->
     ?LOG(debug, "in INIT_START got Deauthentication: ~p", [Event]),
     wtp_del_station(Data),
     aaa_disassociation(Data),
     {next_state, initial_state(Data), Data, ?SHUTDOWN_TIMEOUT};
 
 handle_event(cast, Event = {'Null', _DA, _SA, BSS, 0, 1, <<>>}, init_start,
-	   Data0 = #data{radio_mac = BSS}) ->
+             Data0 = #data{radio_mac = BSS}) ->
     ?LOG(debug, "in INIT_START got Null: ~p", [Event]),
     Data = wtp_add_station(Data0),
     {next_state, connected, Data, ?IDLE_TIMEOUT};
@@ -299,7 +299,7 @@ handle_event(cast, {'802.3', Data}, connected, _Data) ->
     {keep_state_and_data, [?IDLE_TIMEOUT]};
 
 handle_event(cast, Event = {FrameType, _DA, _SA, BSS, 0, 0, Frame}, connected,
-	  Data0 = #data{radio_mac = BSS, mac_mode = MacMode})
+             Data0 = #data{radio_mac = BSS, mac_mode = MacMode})
   when MacMode == local_mac andalso
        (FrameType == 'Association Request' orelse FrameType == 'Reassociation Request') ->
     ?LOG(debug, "in CONNECTED Local-MAC Mode got Association Request: ~p", [Event]),
@@ -323,117 +323,117 @@ handle_event(cast, Event = {FrameType, _DA, _SA, BSS, 0, 0, Frame}, connected,
     {keep_state, Data, [?IDLE_TIMEOUT]};
 
 handle_event(cast, Event = {'Disassociation', _DA, _SA, BSS, 0, 0, _Frame}, connected,
-	  Data = #data{radio_mac = BSS}) ->
+             Data = #data{radio_mac = BSS}) ->
     ?LOG(debug, "in CONNECTED got Disassociation: ~p", [Event]),
     wtp_del_station(Data),
     aaa_disassociation(Data),
     {next_state, init_assoc, Data, ?SHUTDOWN_TIMEOUT};
 
 handle_event(cast, Event = {'Deauthentication', _DA, _SA, BSS, 0, 0, _Frame}, connected,
-	     Data = #data{radio_mac = BSS}) ->
+             Data = #data{radio_mac = BSS}) ->
     ?LOG(debug, "in CONNECTED got Deauthentication: ~p", [Event]),
     wtp_del_station(Data),
     aaa_disassociation(Data),
     {next_state, initial_state(Data), Data, ?SHUTDOWN_TIMEOUT};
 
 handle_event(cast, {'EAPOL', _DA, _SA, BSS, AuthData}, connected,
-	  Data0 = #data{radio_mac = BSS, rekey_running = ptk}) ->
+             Data0 = #data{radio_mac = BSS, rekey_running = ptk}) ->
     Data = rsna_4way_handshake(eapol:decode(AuthData), Data0),
     {keep_state, Data, [?IDLE_TIMEOUT]};
 
 handle_event(cast, {'EAPOL', _DA, _SA, BSS, AuthData}, connected,
-	  Data0 = #data{radio_mac = BSS, rekey_running = gtk}) ->
+             Data0 = #data{radio_mac = BSS, rekey_running = gtk}) ->
     Data = rsna_2way_handshake(eapol:decode(AuthData), Data0),
     {keep_state, Data, [?IDLE_TIMEOUT]};
 
 handle_event(cast, {'EAPOL', _DA, _SA, BSS, EAPData}, connected,
-	  Data0 = #data{radio_mac = BSS, eapol_state = {request, _}}) ->
+             Data0 = #data{radio_mac = BSS, eapol_state = {request, _}}) ->
     Data = eap_handshake(eapol:decode(EAPData), Data0),
     {keep_state, Data, [?IDLE_TIMEOUT]};
 
 handle_event(cast, {'FT', DA, SA, BSS, _Action, STA, TargetAP, ReqBody} = Event,
-	     connected, Data = #data{cipher_state = #ccmp{akm_algo = AKM}})
+             connected, Data = #data{cipher_state = #ccmp{akm_algo = AKM}})
   when AKM == 'FT-802.1x'; AKM == 'FT-PSK' ->
     ?LOG(info, "in CONNECTED got FT over-the-DS: ~p", [Event]),
     ListIE = [ {Id, Value} || <<Id:8, Len:8, Value:Len/bytes>> <= ReqBody ],
     ?LOG(info, "in CONNECTED got FT over-the-DS: ~p", [ListIE]),
 
     case capwap_wtp_reg:lookup(TargetAP) of
-	{ok, Pid} ->
-	    %%
-	    %% IEEE 802.11-2012, 12.8.2 FT authentication sequence: contents of first message
-	    %%
-	    %% FTO→Target AP:
-	    %%   FT Request (FTO address, TargetAP address, RSNE[PMKR0Name], MDE, FTE[SNonce, R0KH-ID])
+        {ok, Pid} ->
+            %%
+            %% IEEE 802.11-2012, 12.8.2 FT authentication sequence: contents of first message
+            %%
+            %% FTO→Target AP:
+            %%   FT Request (FTO address, TargetAP address, RSNE[PMKR0Name], MDE, FTE[SNonce, R0KH-ID])
 
-	    ?LOG(info, "in CONNECTED got FT over-the-DS to: ~p", [Pid]),
-	    StaCfg = capwap_ac:get_station_config(Pid, TargetAP),
-	    ?LOG(info, "in CONNECTED got FT over-the-DS to: ~p", [StaCfg]),
+            ?LOG(info, "in CONNECTED got FT over-the-DS to: ~p", [Pid]),
+            StaCfg = capwap_ac:get_station_config(Pid, TargetAP),
+            ?LOG(info, "in CONNECTED got FT over-the-DS to: ~p", [StaCfg]),
 
-	    RSNE = proplists:get_value(?WLAN_EID_RSN, ListIE),
-	    <<RSNVersion:16/little, RSNData/binary>> = RSNE,
-	    RSN = decode_rsne(group_cipher_suite, RSNData, #wtp_wlan_rsn{version = RSNVersion}),
+            RSNE = proplists:get_value(?WLAN_EID_RSN, ListIE),
+            <<RSNVersion:16/little, RSNData/binary>> = RSNE,
+            RSN = decode_rsne(group_cipher_suite, RSNData, #wtp_wlan_rsn{version = RSNVersion}),
 
-	    MDomain = proplists:get_value(?WLAN_EID_MOBILITY_DOMAIN, ListIE),
-	    FTE = proplists:get_value(?WLAN_EID_FAST_BSS_TRANSITION, ListIE),
-	    FT = decode_fte(FTE),
+            MDomain = proplists:get_value(?WLAN_EID_MOBILITY_DOMAIN, ListIE),
+            FTE = proplists:get_value(?WLAN_EID_FAST_BSS_TRANSITION, ListIE),
+            FT = decode_fte(FTE),
 
-	    ?LOG(info, "in CONNECTED got FT over-the-DS: ~p", [RSN]),
-	    ?LOG(info, "in CONNECTED got FT over-the-DS: ~p", [FT]),
+            ?LOG(info, "in CONNECTED got FT over-the-DS: ~p", [RSN]),
+            ?LOG(info, "in CONNECTED got FT over-the-DS: ~p", [FT]),
 
-	    %%
-	    %% IEEE 802.11-2012, 12.8.3 FT authentication sequence: contents of second message
-	    %%
-	    %% Target AP→FTO:
-	    %%  FT Response (FTO address, TargetAP address, Status, RSNE[PMKR0Name], MDE, FTE[ANonce, SNonce, R1KH-ID, R0KH-ID])
+            %%
+            %% IEEE 802.11-2012, 12.8.3 FT authentication sequence: contents of second message
+            %%
+            %% Target AP→FTO:
+            %%  FT Response (FTO address, TargetAP address, Status, RSNE[PMKR0Name], MDE, FTE[ANonce, SNonce, R1KH-ID, R0KH-ID])
 
-	    %% Target AP Beacon RSN with PMKID List set to what the Sta requested
-	    #station_config{wpa_config = #wpa_config{rsn = DestRSN}} = StaCfg,
-	    ?LOG(info, "Target RSN0: ~p", [DestRSN]),
+            %% Target AP Beacon RSN with PMKID List set to what the Sta requested
+            #station_config{wpa_config = #wpa_config{rsn = DestRSN}} = StaCfg,
+            ?LOG(info, "Target RSN0: ~p", [DestRSN]),
 
-	    DestMDomain = MDomain,   %% TODO: Should be Target AP MDomain...
+            DestMDomain = MDomain,   %% TODO: Should be Target AP MDomain...
 
-	    ANonce = crypto:strong_rand_bytes(32),
-	    DestFTE = #fte{anonce = ANonce,
-			   snonce = FT#fte.snonce,
-			   r0kh = FT#fte.r0kh,
-			   r1kh = StaCfg#station_config.bss},
+            ANonce = crypto:strong_rand_bytes(32),
+            DestFTE = #fte{anonce = ANonce,
+                           snonce = FT#fte.snonce,
+                           r0kh = FT#fte.r0kh,
+                           r1kh = StaCfg#station_config.bss},
 
-	    ?LOG(info, "Target RSN: ~p", [DestRSN]),
-	    ?LOG(info, "Target MDomain: ~p", [DestMDomain]),
-	    ?LOG(info, "Target FTE: ~p", [DestFTE]),
+            ?LOG(info, "Target RSN: ~p", [DestRSN]),
+            ?LOG(info, "Target MDomain: ~p", [DestMDomain]),
+            ?LOG(info, "Target FTE: ~p", [DestFTE]),
 
-	    %% TODO: check the MFP logic.....
-	    DestRSNie = capwap_ac:rsn_ie(DestRSN, RSN#wtp_wlan_rsn.pmk_ids,
-					 DestRSN#wtp_wlan_rsn.management_frame_protection),
-	    ?LOG(info, "Target RSNie: ~p", [pbkdf2:to_hex(DestRSNie)]),
+            %% TODO: check the MFP logic.....
+            DestRSNie = capwap_ac:rsn_ie(DestRSN, RSN#wtp_wlan_rsn.pmk_ids,
+                                         DestRSN#wtp_wlan_rsn.management_frame_protection),
+            ?LOG(info, "Target RSNie: ~p", [pbkdf2:to_hex(DestRSNie)]),
 
-	    DestMDomainIE = capwap_ac:ieee_802_11_ie(?WLAN_EID_MOBILITY_DOMAIN, MDomain),
-	    ?LOG(info, "Target MDomainIE: ~p", [pbkdf2:to_hex(DestMDomainIE)]),
+            DestMDomainIE = capwap_ac:ieee_802_11_ie(?WLAN_EID_MOBILITY_DOMAIN, MDomain),
+            ?LOG(info, "Target MDomainIE: ~p", [pbkdf2:to_hex(DestMDomainIE)]),
 
-	    DestFTie = ft_ie(DestFTE),
-	    ?LOG(info, "Target FTie: ~p", [pbkdf2:to_hex(DestFTie)]),
+            DestFTie = ft_ie(DestFTE),
+            ?LOG(info, "Target FTie: ~p", [pbkdf2:to_hex(DestFTie)]),
 
-	    Action = 2,    %% Response
-	    Status = 0,
-	    RespBody = <<DestRSNie/binary, DestMDomainIE/binary, DestFTie/binary>>,
-	    ActionFrame = <<?WLAN_ACTION_FT, Action:8, STA:6/bytes, TargetAP:6/bytes,
-			    Status:16/little, RespBody/binary>>,
+            Action = 2,    %% Response
+            Status = 0,
+            RespBody = <<DestRSNie/binary, DestMDomainIE/binary, DestFTie/binary>>,
+            ActionFrame = <<?WLAN_ACTION_FT, Action:8, STA:6/bytes, TargetAP:6/bytes,
+                            Status:16/little, RespBody/binary>>,
 
-	    {Type, SubType} = frame_type('Action'),
-	    FrameControl = <<SubType:4, Type:2, 0:2, 0:6, 0:1, 0:1>>,
-	    Duration = 0,
-	    SequenceControl = 0,
-	    Frame = <<FrameControl/binary,
-		      Duration:16/integer-little,
-		      SA:6/bytes, DA:6/bytes, BSS:6/bytes,
-		      SequenceControl:16,
-		      ActionFrame/binary>>,
-	    wtp_send_80211(Frame, Data),
+            {Type, SubType} = frame_type('Action'),
+            FrameControl = <<SubType:4, Type:2, 0:2, 0:6, 0:1, 0:1>>,
+            Duration = 0,
+            SequenceControl = 0,
+            Frame = <<FrameControl/binary,
+                      Duration:16/integer-little,
+                      SA:6/bytes, DA:6/bytes, BSS:6/bytes,
+                      SequenceControl:16,
+                      ActionFrame/binary>>,
+            wtp_send_80211(Frame, Data),
 
-	    ok;
-	_ ->
-	    ?LOG(error, "in CONNECTED got FT over-the-DS external Target AP")
+            ok;
+        _ ->
+            ?LOG(error, "in CONNECTED got FT over-the-DS external Target AP")
     end,
     {keep_state, Data, [?IDLE_TIMEOUT]};
 
@@ -443,14 +443,14 @@ handle_event(info, {rekey, Type}, connected, Data0) ->
     {keep_state, Data, [?IDLE_TIMEOUT]};
 
 handle_event(info, Event = {eapol_retransmit, {packet, EAPData}}, connected,
-	  Data0 = #data{eapol_retransmit = TxCnt})
+             Data0 = #data{eapol_retransmit = TxCnt})
   when TxCnt < 4 ->
     ?LOG(warning, "in CONNECTED got EAPOL retransmit: ~p", [Event]),
     Data = send_eapol_packet(EAPData, Data0),
     {keep_state, Data, [?IDLE_TIMEOUT]};
 
 handle_event(info, Event = {eapol_retransmit, {key, Flags, KeyData}}, connected,
-	  Data0 = #data{eapol_retransmit = TxCnt})
+             Data0 = #data{eapol_retransmit = TxCnt})
   when TxCnt < 4 ->
     ?LOG(warning, "in CONNECTED got EAPOL retransmit: ~p", [Event]),
     Data = send_eapol_key(Flags, KeyData, Data0),
@@ -463,14 +463,14 @@ handle_event(info, Event = {eapol_retransmit, _Msg}, connected, Data) ->
     {next_state, initial_state(Data), Data, ?SHUTDOWN_TIMEOUT};
 
 handle_event(cast, {start_gtk_rekey, RekeyCtl, GTKnew, IGTKnew}, connected,
-	  #data{gtk = GTK, igtk = IGTK} = Data)
+             #data{gtk = GTK, igtk = IGTK} = Data)
   when GTKnew#ieee80211_key.index == GTK#ieee80211_key.index andalso
        IGTKnew#ieee80211_key.index == IGTK#ieee80211_key.index ->
     capwap_ac_gtk_rekey:gtk_rekey_done(RekeyCtl, self()),
     {keep_state, Data, [?IDLE_TIMEOUT]};
 
 handle_event(cast, Event = {start_gtk_rekey, RekeyCtl, GTKnew, IGTKnew}, connected,
-	  #data{gtk = GTK, igtk = IGTK} = Data0)
+             #data{gtk = GTK, igtk = IGTK} = Data0)
   when GTKnew#ieee80211_key.index /= GTK#ieee80211_key.index orelse
        IGTKnew#ieee80211_key.index /= IGTK#ieee80211_key.index ->
     ?LOG(debug, "in CONNECTED got Group rekey: ~p", [Event]),
@@ -478,19 +478,19 @@ handle_event(cast, Event = {start_gtk_rekey, RekeyCtl, GTKnew, IGTKnew}, connect
     {keep_state, Data, [?IDLE_TIMEOUT]};
 
 handle_event({call, From}, {take_over, AC, StationCfg =
-				#station_config{
-				   bss = RadioMAC}} = Event,
-	     State, #data{ac = OldAC, ac_monitor = OldACMonitor,
-			  data_path = _OldDataPath,
-			  radio_mac = OldRadioMAC, mac = ClientMAC} = Data0) ->
+                                #station_config{
+                                   bss = RadioMAC}} = Event,
+             State, #data{ac = OldAC, ac_monitor = OldACMonitor,
+                          data_path = _OldDataPath,
+                          radio_mac = OldRadioMAC, mac = ClientMAC} = Data0) ->
     ?LOG(debug, "in ~p got TAKE-OVER: ~p", [State, Event]),
     ?LOG(debug, "Takeover station ~p as ~w", [{OldAC, OldRadioMAC, ClientMAC}, self()]),
     ?LOG(debug, "Register station ~p as ~w", [{AC, RadioMAC, ClientMAC}, self()]),
 
     if State =:= connected ->
-	    aaa_disassociation(Data0);
+            aaa_disassociation(Data0);
        true ->
-	    ok
+            ok
     end,
 
     wtp_del_station(Data0),
@@ -535,10 +535,10 @@ handle_event(Type, Event, State, _Data) ->
 
 terminate(_Reason, State, Data = #data{ac = AC, mac = MAC}) ->
     if State == connected ->
-	    wtp_del_station(Data),
-	    aaa_disassociation(Data);
+            wtp_del_station(Data),
+            aaa_disassociation(Data);
        true ->
-	    ok
+            ok
     end,
     capwap_ac:station_detaching(AC),
     ?LOG(warning, "Station ~s terminated in State ~w", [capwap_tools:format_eui(MAC), State]),
@@ -552,61 +552,61 @@ code_change(_OldVsn, State, Data, _Extra) ->
 %%%===================================================================
 init_from_cfg(StationCfg) ->
     update_from_cfg(StationCfg,
-		    #data{capabilities = #sta_cap{},
-			  rekey_running = false,
-			  rekey_pending = []}).
+                    #data{capabilities = #sta_cap{},
+                          rekey_running = false,
+                          rekey_pending = []}).
 
 convert_ies_from_bss(IEs) ->
     lists:foldl(fun({IE = <<Id:8, _/binary>>, Flags}, Acc) ->
-			case proplists:get_bool(probe_response, Flags) of
-			    true -> [{Id, IE} | Acc];
-			    _    -> Acc
-			end
-		end, [], IEs).
+                        case proplists:get_bool(probe_response, Flags) of
+                            true -> [{Id, IE} | Acc];
+                            _    -> Acc
+                        end
+                end, [], IEs).
 
 build_ies(IEs) ->
     << <<IE/binary>> || {_Id, IE} <- lists:keysort(1, IEs) >>.
 
 update_from_cfg(#station_config{data_path = DataPath,
-				wtp_data_channel_address = WTPDataChannelAddress,
-				wtp_id = WtpId,
-				wtp_session_id = SessionId,
-				mac_mode = MacMode,
-				tunnel_mode = TunnelMode,
-				bss = BSS,
-				bss_ies = IEs,
-				wpa_config = WpaConfig,
-				gtk = GTK,
-				igtk = IGTK
-			       }, Data) ->
+                                wtp_data_channel_address = WTPDataChannelAddress,
+                                wtp_id = WtpId,
+                                wtp_session_id = SessionId,
+                                mac_mode = MacMode,
+                                tunnel_mode = TunnelMode,
+                                bss = BSS,
+                                bss_ies = IEs,
+                                wpa_config = WpaConfig,
+                                gtk = GTK,
+                                igtk = IGTK
+                               }, Data) ->
     Data#data{data_path = DataPath,
-		data_channel_address = WTPDataChannelAddress,
-		wtp_id = WtpId,
-		wtp_session_id = SessionId,
-		mac_mode = MacMode,
-		tunnel_mode = TunnelMode,
-		radio_mac = BSS,
-		response_ies = convert_ies_from_bss(IEs),
-		wpa_config = WpaConfig,
-		gtk = GTK,
-		igtk = IGTK
-	       }.
+              data_channel_address = WTPDataChannelAddress,
+              wtp_id = WtpId,
+              wtp_session_id = SessionId,
+              mac_mode = MacMode,
+              tunnel_mode = TunnelMode,
+              radio_mac = BSS,
+              response_ies = convert_ies_from_bss(IEs),
+              wpa_config = WpaConfig,
+              gtk = GTK,
+              igtk = IGTK
+             }.
 
 with_station(AC, BSS, StationMAC, Fun) ->
     ?LOG(debug, "search Station ~p", [{AC, StationMAC}]),
     case capwap_station_reg:lookup(AC, BSS, StationMAC) of
-	not_found ->
-	    ?LOG(debug, "Station not found"),
-	    {error, not_found};
+        not_found ->
+            ?LOG(debug, "Station not found"),
+            {error, not_found};
 
-	{ok, Station} ->
-	    ?LOG(debug, "found Station as ~p", [Station]),
-	    Fun(Station)
+        {ok, Station} ->
+            ?LOG(debug, "found Station as ~p", [Station]),
+            Fun(Station)
     end.
 
 gen_auth_ok(DA, SA, BSS, _InFrame) ->
     Frame = encode_auth_frame(#auth_frame{algo   = ?OPEN_SYSTEM, seq_no = 2,
-					  status = ?SUCCESS, params = <<>>}),
+                                          status = ?SUCCESS, params = <<>>}),
 
     {Type, SubType} = frame_type('Authentication'),
     FrameControl = <<SubType:4, Type:2, 0:2, 0:6, 0:1, 0:1>>,
@@ -620,7 +620,7 @@ gen_auth_ok(DA, SA, BSS, _InFrame) ->
 
 gen_auth_fail(DA, SA, BSS, _InFrame) ->
     Frame = encode_auth_frame(#auth_frame{algo   = ?OPEN_SYSTEM, seq_no = 2,
-					  status = ?REFUSED, params = <<>>}),
+                                          status = ?REFUSED, params = <<>>}),
 
     {Type, SubType} = frame_type('Authentication'),
     FrameControl = <<SubType:4, Type:2, 0:2, 0:6, 0:1, 0:1>>,
@@ -634,9 +634,9 @@ gen_auth_fail(DA, SA, BSS, _InFrame) ->
 
 station_from_mgmt_frame(DA, SA, BSS) ->
     case BSS of
-	DA -> SA;
-	SA -> DA;
-	_  -> undefined
+        DA -> SA;
+        SA -> DA;
+        _  -> undefined
     end.
 
 ieee80211_request(AC, FrameType, DA, SA, BSS, FromDS, ToDS, Frame)
@@ -659,18 +659,18 @@ ieee80211_request(AC, FrameType, DA, SA, BSS, FromDS, ToDS, Frame)
        FrameType == 'Null' ->
     ?LOG(debug, "search Station ~p", [{AC, SA}]),
     Found = case capwap_station_reg:lookup(AC, BSS, SA) of
-		not_found ->
-		    ?LOG(debug, "not found"),
-		    capwap_ac:new_station(AC, BSS, SA);
-		Ok = {ok, Station0} ->
-		    ?LOG(debug, "found as ~p", [Station0]),
-		    Ok
-	    end,
+                not_found ->
+                    ?LOG(debug, "not found"),
+                    capwap_ac:new_station(AC, BSS, SA);
+                Ok = {ok, Station0} ->
+                    ?LOG(debug, "found as ~p", [Station0]),
+                    Ok
+            end,
     case Found of
-	{ok, Station} ->
-	    gen_statem:cast(Station, {FrameType, DA, SA, BSS, FromDS, ToDS, Frame});
-	Other ->
-	    Other
+        {ok, Station} ->
+            gen_statem:cast(Station, {FrameType, DA, SA, BSS, FromDS, ToDS, Frame});
+        Other ->
+            Other
     end;
 
 ieee80211_request(_AC, FrameType, _DA, _SA, _BSS, _FromDS, _ToDS, _Frame)
@@ -678,19 +678,19 @@ ieee80211_request(_AC, FrameType, _DA, _SA, _BSS, _FromDS, _ToDS, _Frame)
     ok;
 
 ieee80211_request(AC, 'QoS Data', DA, SA, BSS, _FromDS = 0, _ToDS = 1,
-		  _Frame = <<_QoS:16, ?LLC_DSAP_SNAP, ?LLC_SSAP_SNAP,
-			    ?LLC_CNTL_SNAP, ?SNAP_ORG_ETHERNET,
-			    ?ETH_P_PAE:16, AuthData/binary>>) ->
+                  _Frame = <<_QoS:16, ?LLC_DSAP_SNAP, ?LLC_SSAP_SNAP,
+                             ?LLC_CNTL_SNAP, ?SNAP_ORG_ETHERNET,
+                             ?ETH_P_PAE:16, AuthData/binary>>) ->
     with_station(AC, BSS, SA, gen_statem:cast(_, {'EAPOL', DA, SA, BSS, AuthData})),
     ok;
 ieee80211_request(AC, 'Data', DA, SA, BSS, _FromDS = 0, _ToDS = 1,
-		  _Frame = <<?LLC_DSAP_SNAP, ?LLC_SSAP_SNAP,
-			    ?LLC_CNTL_SNAP, ?SNAP_ORG_ETHERNET,
-			    ?ETH_P_PAE:16, AuthData/binary>>) ->
+                  _Frame = <<?LLC_DSAP_SNAP, ?LLC_SSAP_SNAP,
+                             ?LLC_CNTL_SNAP, ?SNAP_ORG_ETHERNET,
+                             ?ETH_P_PAE:16, AuthData/binary>>) ->
     with_station(AC, BSS, SA, gen_statem:cast(_, {'EAPOL', DA, SA, BSS, AuthData})),
     ok;
 ieee80211_request(AC, 'Action', DA, SA, BSS, _FromDS = 0, _ToDS = 0,
-		  _Frame = <<?WLAN_ACTION_FT, Action:8, STA:6/bytes, TargetAP:6/bytes, Body/binary>>) ->
+                  _Frame = <<?WLAN_ACTION_FT, Action:8, STA:6/bytes, TargetAP:6/bytes, Body/binary>>) ->
     with_station(AC, BSS, SA, gen_statem:cast(_, {'FT', DA, SA, BSS, Action, STA, TargetAP, Body})),
     ok;
 ieee80211_request(_AC, FrameType, DA, SA, BSS, FromDS, ToDS, Frame) ->
@@ -699,16 +699,16 @@ ieee80211_request(_AC, FrameType, DA, SA, BSS, FromDS, ToDS, Frame) ->
 
 %% partially en/decode Authentication Frames
 decode_auth_frame(<<Algo:16/little-integer, SeqNo:16/little-integer,
-		    Status:16/little-integer, Params/binary>>) ->
+                    Status:16/little-integer, Params/binary>>) ->
     #auth_frame{algo   = Algo,
-		seq_no = SeqNo,
-		status = Status,
-		params = Params};
+                seq_no = SeqNo,
+                status = Status,
+                params = Params};
 decode_auth_frame(_) ->
     invalid.
 
 encode_auth_frame(#auth_frame{algo   = Algo, seq_no = SeqNo,
-			      status = Status, params = Params}) ->
+                              status = Status, params = Params}) ->
     <<Algo:16/little-integer, SeqNo:16/little-integer,
       Status:16/little-integer, Params/binary>>.
 
@@ -736,13 +736,13 @@ update_sta_from_mgmt_frame_ies(IEs, #data{aid = AID, capabilities = Cap0} = Data
 
     ?LOG(debug, "New Station Caps: ~p", [Data#data.capabilities]),
     case Data#data.capabilities of
-	#sta_cap{rsn = #wtp_wlan_rsn{} = RSN} ->
-	    ?LOG(info, "STA: ~p, Ciphers: Group ~p, PairWise: ~p, AKM: ~p, Caps: ~w, Mgmt: ~p",
-		       [capwap_tools:format_eui(Data#data.mac),
-			RSN#wtp_wlan_rsn.group_cipher_suite, RSN#wtp_wlan_rsn.cipher_suites,
-			RSN#wtp_wlan_rsn.akm_suites, RSN#wtp_wlan_rsn.capabilities,
-			RSN#wtp_wlan_rsn.group_mgmt_cipher_suite]);
-	_ -> nothing
+        #sta_cap{rsn = #wtp_wlan_rsn{} = RSN} ->
+            ?LOG(info, "STA: ~p, Ciphers: Group ~p, PairWise: ~p, AKM: ~p, Caps: ~w, Mgmt: ~p",
+                 [capwap_tools:format_eui(Data#data.mac),
+                  RSN#wtp_wlan_rsn.group_cipher_suite, RSN#wtp_wlan_rsn.cipher_suites,
+                  RSN#wtp_wlan_rsn.akm_suites, RSN#wtp_wlan_rsn.capabilities,
+                  RSN#wtp_wlan_rsn.group_mgmt_cipher_suite]);
+        _ -> nothing
     end,
     Data.
 
@@ -752,25 +752,25 @@ smps2atom(2) -> reserved;
 smps2atom(3) -> disabled.
 
 update_sta_from_mgmt_frame_ie(IE = {?WLAN_EID_HT_CAP, HtCap},
-				  #data{capabilities = Cap} = Data) ->
+                              #data{capabilities = Cap} = Data) ->
     ?LOG(debug, "Mgmt IE HT CAP: ~p", [IE]),
     <<CapInfo:2/bytes, AMPDU_ParamsInfo:8/bits, MCSinfo:16/bytes,
       ExtHtCapInfo:2/bytes, TxBFinfo:4/bytes, ASelCap:8/bits>> = HtCap,
     ?LOG(debug, "CapInfo: ~p, AMPDU: ~p, MCS: ~p, ExtHt: ~p, TXBf: ~p, ASEL: ~p",
-		[CapInfo, AMPDU_ParamsInfo, MCSinfo, ExtHtCapInfo, TxBFinfo, ASelCap]),
+         [CapInfo, AMPDU_ParamsInfo, MCSinfo, ExtHtCapInfo, TxBFinfo, ASelCap]),
     <<_TxSTBC:1, SGI40Mhz:1, SGI20Mhz:1, _GFPreamble:1, SMPS:2, _Only20Mhz:1, _LDPC:1,
       _TXOP:1, _FortyMHzIntol:1, _PSMPSup:1, _DSSSMode:1, _MaxAMSDULen:1, BAckDelay:1, _RxSTBC:2>>
-	= CapInfo,
+        = CapInfo,
     <<_:3, AMPDU_Density:3, AMPDU_Factor:2>> = AMPDU_ParamsInfo,
     <<RxMask:10/bytes, RxHighest:16/integer-little, _TxParms:8, _:3/bytes>> = MCSinfo,
 
     Data#data{
       capabilities =
-	  Cap#sta_cap{sgi_20mhz = (SGI20Mhz == 1), sgi_40mhz = (SGI40Mhz == 1),
-		      smps = smps2atom(SMPS), back_delay = (BAckDelay == 1),
-		      ampdu_density = AMPDU_Density, ampdu_factor = AMPDU_Factor,
-		      rx_mask = RxMask, rx_highest = RxHighest
-		     }};
+          Cap#sta_cap{sgi_20mhz = (SGI20Mhz == 1), sgi_40mhz = (SGI40Mhz == 1),
+                      smps = smps2atom(SMPS), back_delay = (BAckDelay == 1),
+                      ampdu_density = AMPDU_Density, ampdu_factor = AMPDU_Factor,
+                      rx_mask = RxMask, rx_highest = RxHighest
+                     }};
 
 %% Vendor Specific:
 %%  OUI:  00-50-F2 - Microsoft
@@ -778,23 +778,23 @@ update_sta_from_mgmt_frame_ie(IE = {?WLAN_EID_HT_CAP, HtCap},
 %%  WME Subtype: 0 - IE
 %%  WME Version: 1
 update_sta_from_mgmt_frame_ie(IE = {?WLAN_EID_VENDOR_SPECIFIC,
-				    <<16#00, 16#50, 16#F2, 2, 0, 1, _/binary>>},
-				  #data{capabilities = Cap} = Data) ->
+                                    <<16#00, 16#50, 16#F2, 2, 0, 1, _/binary>>},
+                              #data{capabilities = Cap} = Data) ->
     ?LOG(debug, "Mgmt IE WMM: ~p", [IE]),
     Data#data{
       capabilities =
-	  Cap#sta_cap{wmm = true}};
+          Cap#sta_cap{wmm = true}};
 
 update_sta_from_mgmt_frame_ie(IE = {?WLAN_EID_RSN, <<RSNVersion:16/little, RSNData/binary>> = RSNE},
-			      #data{capabilities = Cap} = Data) ->
+                              #data{capabilities = Cap} = Data) ->
     ?LOG(debug, "Mgmt IE RSN: ~p", [IE]),
     RSN = decode_rsne(group_cipher_suite, RSNData, #wtp_wlan_rsn{version = RSNVersion}),
     Data#data{
       capabilities =
-	  Cap#sta_cap{last_rsne = RSNE, rsn = RSN}};
+          Cap#sta_cap{last_rsne = RSNE, rsn = RSN}};
 
 update_sta_from_mgmt_frame_ie(_IE = {?WLAN_EID_SSID, SSID},
-			      #data{} = Data) ->
+                              #data{} = Data) ->
     Data#data{ssid = SSID };
 
 
@@ -810,13 +810,13 @@ decode_rsne(pairwise_cipher_suite, <<Count:16/little, Rest/binary>>, RSN) ->
     Length = Count * 4,
     <<Suites:Length/bytes, Next/binary>> = Rest,
     decode_rsne(auth_key_management, Next,
-		RSN#wtp_wlan_rsn{cipher_suites = [ Id || <<Id:4/bytes>> <= Suites ]});
+                RSN#wtp_wlan_rsn{cipher_suites = [ Id || <<Id:4/bytes>> <= Suites ]});
 decode_rsne(auth_key_management, <<Count:16/little, Rest/binary>>, RSN) ->
     Length = Count * 4,
     <<Suites:Length/bytes, Next/binary>> = Rest,
     decode_rsne(rsn_capabilities, Next,
-		RSN#wtp_wlan_rsn{akm_suites =
-				     [ capwap_packet:decode_akm_suite(Id) || <<Id:32>> <= Suites ]});
+                RSN#wtp_wlan_rsn{akm_suites =
+                                     [ capwap_packet:decode_akm_suite(Id) || <<Id:32>> <= Suites ]});
 decode_rsne(rsn_capabilities, <<RSNCaps:16/little, Next/binary>>, RSN) ->
     decode_rsne(pmkid, Next, RSN#wtp_wlan_rsn{capabilities = RSNCaps});
 decode_rsne(pmkid, <<0:16/little, Next/binary>>, RSN) ->
@@ -830,7 +830,7 @@ decode_rsne(group_management_cipher, <<GroupMgmtCipherSuite:32>>, RSN)
     RSN#wtp_wlan_rsn{group_mgmt_cipher_suite = capwap_packet:decode_cipher_suite(GroupMgmtCipherSuite)};
 decode_rsne(group_management_cipher, <<GroupMgmtCipherSuite:32>>, RSN) ->
     ?LOG(error, "STA send a GroupMgmtCipher but DID NOT indicate MFP capabilities: ~p, ~4.16.0b",
-		[capwap_packet:decode_cipher_suite(GroupMgmtCipherSuite), RSN#wtp_wlan_rsn.capabilities]),
+         [capwap_packet:decode_cipher_suite(GroupMgmtCipherSuite), RSN#wtp_wlan_rsn.capabilities]),
     RSN.
 
 ft_ie_mic(#fte{mic = undefined}) ->
@@ -849,31 +849,31 @@ ft_ie_opt(_Id, _Opt) ->
     [].
 
 ft_ie(#fte{anonce = ANonce, snonce = SNonce,
-	   r0kh = R0KH, r1kh = R1KH,
-	   gtk = GTK, igtk = IGTK} = FTE) ->
+           r0kh = R0KH, r1kh = R1KH,
+           gtk = GTK, igtk = IGTK} = FTE) ->
     {Count, MIC} = ft_ie_mic(FTE),
     IE = [0, Count, MIC, ft_ie_nonce(ANonce), ft_ie_nonce(SNonce),
-	  [ft_ie_opt(I, O) || {I, O} <- [{1, R1KH}, {2, GTK}, {3, R0KH}, {4, IGTK}]]],
+          [ft_ie_opt(I, O) || {I, O} <- [{1, R1KH}, {2, GTK}, {3, R0KH}, {4, IGTK}]]],
     capwap_ac:ieee_802_11_ie(?WLAN_EID_FAST_BSS_TRANSITION, iolist_to_binary(IE)).
 
 ft_ie(R0KH, R1KH) ->
-%% Page 1312
-%% The (Re)Association Response frame from the AP shall contain an MDE, with contents as presented in
-%% Beacon and Probe Response frames. The FTE shall include the key holder identities of the AP, the R0KH-ID
-%% and R1KH-ID, set to the values of dot11FTR0KeyHolderID and dot11FTR1KeyHolderID, respectively. The
-%% FTE shall have a MIC element count of zero (i.e., no MIC present) and have ANonce, SNonce, and MIC
-%% fields set to 0.
+    %% Page 1312
+    %% The (Re)Association Response frame from the AP shall contain an MDE, with contents as presented in
+    %% Beacon and Probe Response frames. The FTE shall include the key holder identities of the AP, the R0KH-ID
+    %% and R1KH-ID, set to the values of dot11FTR0KeyHolderID and dot11FTR1KeyHolderID, respectively. The
+    %% FTE shall have a MIC element count of zero (i.e., no MIC present) and have ANonce, SNonce, and MIC
+    %% fields set to 0.
     R1KHie = <<1:8, (size(R1KH)):8, R1KH/binary>>,
     R0KHie = <<3:8, (size(R0KH)):8, R0KH/binary>>,
     capwap_ac:ieee_802_11_ie(?WLAN_EID_FAST_BSS_TRANSITION, <<0:8, 0:8, 0:(16 * 8), 0:(32 * 8), 0:(32 * 8),
-							      R1KHie/binary, R0KHie/binary>>).
+                                                              R1KHie/binary, R0KHie/binary>>).
 encode_fte(R0KH, R1KH) ->
     {?WLAN_EID_FAST_BSS_TRANSITION, ft_ie(R0KH, R1KH)}.
 
 decode_fte(<<_:8, _Count:8, MIC:16/bytes, ANonce:32/bytes, SNonce:32/bytes, Opt/binary>>) ->
     FT = #fte{mic = MIC,
-	      anonce = ANonce,
-	      snonce = SNonce},
+              anonce = ANonce,
+              snonce = SNonce},
     OptList = [ {Id, Value} || <<Id:8, Len:8, Value:Len/bytes>> <= Opt ],
     lists:foldl(fun decode_fte_opt/2, FT, OptList).
 
@@ -907,53 +907,53 @@ tunnel_medium({_,_,_,_,_,_,_,_}) ->
 
 add_tunnel_info({Address, _Port}, SessionData) ->
     SessionData#{'Tunnel-Type' => 'CAPWAP',
-		 'Tunnel-Medium-Type' => tunnel_medium(Address),
-		 'Tunnel-Client-Endpoint' => ip2str(Address)}.
+                 'Tunnel-Medium-Type' => tunnel_medium(Address),
+                 'Tunnel-Client-Endpoint' => ip2str(Address)}.
 
 add_ac_location(#data{ac = AC}, SessionData) ->
     try capwap_ac:get_info(AC) of
-	{ok, #{last_gps_pos := {GPSTimestamp, Latitude, Longitude, Altitude, Hdop}}} ->
-	    SessionData#{'CAPWAP-GPS-Timestamp' => GPSTimestamp,
-			 'CAPWAP-GPS-Latitude' => Latitude,
-			 'CAPWAP-GPS-Longitude' => Longitude,
-			 'CAPWAP-GPS-Altitude' => Altitude,
-			 'CAPWAP-GPS-Hdop' => Hdop};
-	_O ->
-	    ?LOG(debug, "Location Info: ~p", [_O]),
-	    SessionData
+        {ok, #{last_gps_pos := {GPSTimestamp, Latitude, Longitude, Altitude, Hdop}}} ->
+            SessionData#{'CAPWAP-GPS-Timestamp' => GPSTimestamp,
+                         'CAPWAP-GPS-Latitude' => Latitude,
+                         'CAPWAP-GPS-Longitude' => Longitude,
+                         'CAPWAP-GPS-Altitude' => Altitude,
+                         'CAPWAP-GPS-Hdop' => Hdop};
+        _O ->
+            ?LOG(debug, "Location Info: ~p", [_O]),
+            SessionData
     catch
-	Class:Error:ST ->
-	    ?LOG(debug, "location info failure: ~p:~p with ~0p", [Class, Error, ST]),
-	    SessionData
-	end.
+        Class:Error:ST ->
+            ?LOG(debug, "location info failure: ~p:~p with ~0p", [Class, Error, ST]),
+            SessionData
+    end.
 
 add_wlan_info(#data{capabilities =
-			#sta_cap{
-			   rsn = #wtp_wlan_rsn{
-				    cipher_suites = [Pairwise|_],
-				    group_cipher_suite = GroupCipher,
-				    group_mgmt_cipher_suite = GroupMgmtCipher,
-				    akm_suites = [AKM]
-				   }}},
-	      SessionData) ->
+                        #sta_cap{
+                           rsn = #wtp_wlan_rsn{
+                                    cipher_suites = [Pairwise|_],
+                                    group_cipher_suite = GroupCipher,
+                                    group_mgmt_cipher_suite = GroupMgmtCipher,
+                                    akm_suites = [AKM]
+                                   }}},
+              SessionData) ->
     SessionData#{'WLAN-Authentication-Mode' => secured,
-		 'WLAN-Pairwise-Cipher' => capwap_packet:decode_cipher_suite(Pairwise),
-		 'WLAN-Group-Cipher' => capwap_packet:decode_cipher_suite(GroupCipher),
-		 'WLAN-AKM-Suite' => AKM,
-		 'WLAN-Group-Mgmt-Cipher' => capwap_packet:decode_cipher_suite(GroupMgmtCipher)
-		};
+                 'WLAN-Pairwise-Cipher' => capwap_packet:decode_cipher_suite(Pairwise),
+                 'WLAN-Group-Cipher' => capwap_packet:decode_cipher_suite(GroupCipher),
+                 'WLAN-AKM-Suite' => AKM,
+                 'WLAN-Group-Mgmt-Cipher' => capwap_packet:decode_cipher_suite(GroupMgmtCipher)
+                };
 add_wlan_info(_, SessionData) ->
     SessionData#{'WLAN-Authentication-Mode' => open}.
 
 wtp_add_station(#data{ac = AC, radio_mac = BSS, mac = MAC, capabilities = Caps,
-		       wpa_config = #wpa_config{privacy = Privacy},
-		       cipher_state = CipherData} = Data) ->
+                      wpa_config = #wpa_config{privacy = Privacy},
+                      cipher_state = CipherData} = Data) ->
     if Privacy ->
-	    capwap_ac:add_station(AC, BSS, MAC, Caps, {true, false, CipherData}),
-	    init_eapol(Data);
+            capwap_ac:add_station(AC, BSS, MAC, Caps, {true, false, CipherData}),
+            init_eapol(Data);
        true ->
-	    capwap_ac:add_station(AC, BSS, MAC, Caps, {false, false, undefined}),
-	    Data
+            capwap_ac:add_station(AC, BSS, MAC, Caps, {false, false, undefined}),
+            Data
     end.
 
 wtp_del_station(#data{ac = AC, radio_mac = BSS, mac = MAC}) ->
@@ -970,32 +970,32 @@ accounting_update(#data{mac = MAC}) ->
       'InOctets'   => RcvdBytes, 'OutOctets'  => SendBytes}.
 
 aaa_association(Data0 = #data{mac = MAC, data_channel_address = WTPDataChannelAddress,
-				wtp_id = WtpId, wtp_session_id = WtpSessionId,
-				radio_mac = BSSID, ssid = SSID, ac = AC}) ->
+                              wtp_id = WtpId, wtp_session_id = WtpSessionId,
+                              radio_mac = BSSID, ssid = SSID, ac = AC}) ->
     MACStr = iolist_to_binary(capwap_tools:format_eui(MAC)),
     BSSIDStr = iolist_to_binary(capwap_tools:format_eui(BSSID)),
     SessionData0 =
-	#{'AAA-Application-Id' => capwap_station,
-	  'Service-Type' => 'TP-CAPWAP-STA',
-	  'Framed-Protocol' => 'TP-CAPWAP',
-	  'MAC' => MAC,
-	  'Username' => MACStr,
-	  'Calling-Station-Id' => MACStr,
-	  'Location-Id' => WtpId,
-	  'BSSID' => BSSIDStr,
-	  'SSID' => SSID,
-	  'CAPWAP-Session-Id' => <<WtpSessionId:128>>
-	 },
+        #{'AAA-Application-Id' => capwap_station,
+          'Service-Type' => 'TP-CAPWAP-STA',
+          'Framed-Protocol' => 'TP-CAPWAP',
+          'MAC' => MAC,
+          'Username' => MACStr,
+          'Calling-Station-Id' => MACStr,
+          'Location-Id' => WtpId,
+          'BSSID' => BSSIDStr,
+          'SSID' => SSID,
+          'CAPWAP-Session-Id' => <<WtpSessionId:128>>
+         },
     SessionData1 = add_tunnel_info(WTPDataChannelAddress, SessionData0),
     SessionData2 = add_wlan_info(Data0, SessionData1),
     SessionData3 = add_ac_location(Data0, SessionData2),
     {ok, Session} = ergw_aaa_session_sup:new_session(self(), to_session(SessionData3)),
     ?LOG(info, #{obj => session, ev => new, mac => MAC, session => Session,
-		 opts => to_session(SessionData3), data => Data0}),
+                 opts => to_session(SessionData3), data => Data0}),
     Now = erlang:monotonic_time(),
     SOpts = #{now => Now},
     {ok, _SessionOpts, AuthSEvs} =
-	ergw_aaa_session:invoke(Session, to_session(SessionData3), authenticate, [inc_session_id]),
+        ergw_aaa_session:invoke(Session, to_session(SessionData3), authenticate, [inc_session_id]),
     Data1 = handle_session_evs(AuthSEvs, Data0#data{aaa_session = Session}),
     ergw_aaa_session:invoke(Session, add_location(AC, #{}), start, SOpts),
     start_session_timers(Data1).
@@ -1111,18 +1111,18 @@ pad_length(Width, Length) ->
 %%
 pad_to(Width, Binary) ->
     case pad_length(Width, size(Binary)) of
-	0 -> Binary;
-	N -> <<Binary/binary, 0:(N*8)>>
+        0 -> Binary;
+        N -> <<Binary/binary, 0:(N*8)>>
     end.
 
 cancel_timer(Ref) ->
     case erlang:cancel_timer(Ref) of
-	false ->
-	    receive {timeout, Ref, _} -> 0
-	    after 0 -> false
-	    end;
-	RemainingTime ->
-	    RemainingTime
+        false ->
+            receive {timeout, Ref, _} -> 0
+            after 0 -> false
+            end;
+        RemainingTime ->
+            RemainingTime
     end.
 
 initial_state(#data{mac_mode = local_mac}) ->
@@ -1153,60 +1153,60 @@ send_eapol_packet(EAPData, Data = #data{eapol_retransmit = TxCnt}) ->
     start_eapol_timer({packet, EAPData}, Data#data{eapol_retransmit = TxCnt + 1}).
 
 send_eapol_key(Flags, KeyData,
-	       Data = #data{eapol_retransmit = TxCnt,
-			    cipher_state =
-				#ccmp{replay_counter = ReplayCounter} = CipherData0
-			   }) ->
+               Data = #data{eapol_retransmit = TxCnt,
+                            cipher_state =
+                                #ccmp{replay_counter = ReplayCounter} = CipherData0
+                           }) ->
     CipherData = CipherData0#ccmp{replay_counter = ReplayCounter + 1},
     KeyFrame = eapol:key(Flags, KeyData, CipherData),
     send_eapol(KeyFrame, Data),
     start_eapol_timer({key, Flags, KeyData},
-		      Data#data{eapol_retransmit = TxCnt + 1,
-				cipher_state = CipherData}).
+                      Data#data{eapol_retransmit = TxCnt + 1,
+                                cipher_state = CipherData}).
 
 init_eapol(#data{capabilities = #sta_cap{rsn = #wtp_wlan_rsn{akm_suites = [AKM]}},
-		  wpa_config = #wpa_config{ssid = SSID, secret = Secret}} = Data)
+                 wpa_config = #wpa_config{ssid = SSID, secret = Secret}} = Data)
   when AKM == 'PSK'; AKM == 'FT-PSK' ->
     {ok, PSK} = eapol:phrase2psk(Secret, SSID),
     ?LOG(debug, "PSK: ~s", [pbkdf2:to_hex(PSK)]),
     rsna_4way_handshake({init, PSK}, Data#data{rekey_running = ptk});
 
 init_eapol(#data{capabilities = #sta_cap{rsn = #wtp_wlan_rsn{akm_suites = [AKM]}},
-		  wpa_config = #wpa_config{ssid = SSID}} = Data)
+                 wpa_config = #wpa_config{ssid = SSID}} = Data)
   when AKM == '802.1x'; AKM == 'FT-802.1x' ->
     ReqData = <<0, "networkid=", SSID/binary, ",nasid=SCG4,portid=1">>,
     Id = 1,
     EAPData = eapol:request(Id, identity, ReqData),
     send_eapol_packet(EAPData, Data#data{rekey_running = 'WPA',
-					 eapol_state = {request, Id},
-					 eapol_retransmit = 0}).
+                                         eapol_state = {request, Id},
+                                         eapol_retransmit = 0}).
 
 eap_handshake({start, _HsData},
-	      #data{eapol_state = {request, _}} = Data0) ->
+              #data{eapol_state = {request, _}} = Data0) ->
     %% restart the handshake
     Data = stop_eapol_timer(Data0),
     init_eapol(Data);
 
 eap_handshake(HandShake = {response, Id, EAPData, Response},
-	      #data{eapol_state = {request, Id}} = Data0) ->
+              #data{eapol_state = {request, Id}} = Data0) ->
     ?LOG(debug, "EAP Handshake: ~p", [HandShake]),
     Data = stop_eapol_timer(Data0),
     Next =
-	case Response of
-	    {identity, Identity} ->
-		%% Start ctld Authentication....
-		Opts = [{'Username', Identity},
-			{'Authentication-Method', 'EAP'},
-			{'EAP-Data', EAPData}],
-		{authenticate, Opts};
+        case Response of
+            {identity, Identity} ->
+                %% Start ctld Authentication....
+                Opts = [{'Username', Identity},
+                        {'Authentication-Method', 'EAP'},
+                        {'EAP-Data', EAPData}],
+                {authenticate, Opts};
 
-	    _ ->
-		Opts = [{'EAP-Data', EAPData}],
-		{authenticate, Opts}
+            _ ->
+                Opts = [{'EAP-Data', EAPData}],
+                {authenticate, Opts}
 
-	    %% _ ->
-	    %%	{disassociation, []}
-	end,
+                %% _ ->
+                %%  {disassociation, []}
+        end,
     eap_handshake_next(Next, Data);
 
 eap_handshake(HandShake, Data0) ->
@@ -1218,45 +1218,45 @@ eap_handshake(HandShake, Data0) ->
 
 eap_handshake_next({authenticate, Opts}, #data{aaa_session = Session} = Data0) ->
     ?LOG(info, #{obj => session, ev => authenticate, session => Session,
-		 opts => to_session(Opts)}),
+                 opts => to_session(Opts)}),
     case ergw_aaa_session:invoke(Session, to_session(Opts), authenticate, [inc_session_id]) of
-	{ok, SessionOpts, AuthSEvs} ->
-	    ?LOG(info, #{obj => session, ev => authenticate, 'AuthResult' => success,
-			 session => SessionOpts, events => AuthSEvs}),
-	    Data1 = handle_session_evs(AuthSEvs, Data0),
-	    Data = start_session_timers(Data1),
+        {ok, SessionOpts, AuthSEvs} ->
+            ?LOG(info, #{obj => session, ev => authenticate, 'AuthResult' => success,
+                         session => SessionOpts, events => AuthSEvs}),
+            Data1 = handle_session_evs(AuthSEvs, Data0),
+            Data = start_session_timers(Data1),
 
-	    case SessionOpts of
-		#{'EAP-Data' := EAPData} ->
-		    send_eapol(eapol:packet(EAPData), Data);
-		_ ->
-		    ok
-	    end,
+            case SessionOpts of
+                #{'EAP-Data' := EAPData} ->
+                    send_eapol(eapol:packet(EAPData), Data);
+                _ ->
+                    ok
+            end,
 
-	    MSK = << (maps:get('MS-MPPE-Recv-Key', SessionOpts, <<>>))/binary,
-		     (maps:get('MS-MPPE-Send-Key', SessionOpts, <<>>))/binary>>,
-	    ?LOG(debug, "MSK: ~s", [capwap_tools:hexdump(MSK)]),
-	    rsna_4way_handshake({init, MSK}, Data);
+            MSK = << (maps:get('MS-MPPE-Recv-Key', SessionOpts, <<>>))/binary,
+                     (maps:get('MS-MPPE-Send-Key', SessionOpts, <<>>))/binary>>,
+            ?LOG(debug, "MSK: ~s", [capwap_tools:hexdump(MSK)]),
+            rsna_4way_handshake({init, MSK}, Data);
 
-	{challenge, #{'EAP-Data' := EAPData} = SessionOpts, _} ->
-	    ?LOG(info, #{obj => session, ev => authenticate, 'AuthResult' => challenge,
-			 session => SessionOpts, challenge => EAPData}),
+        {challenge, #{'EAP-Data' := EAPData} = SessionOpts, _} ->
+            ?LOG(info, #{obj => session, ev => authenticate, 'AuthResult' => challenge,
+                         session => SessionOpts, challenge => EAPData}),
 
-	    <<_Code:8, Id:8, _/binary>> = EAPData,
-	    send_eapol_packet(EAPData, Data0#data{eapol_state = {request, Id}});
+            <<_Code:8, Id:8, _/binary>> = EAPData,
+            send_eapol_packet(EAPData, Data0#data{eapol_state = {request, Id}});
 
-	Other ->
-	    ?LOG(info, #{obj => session, ev => authenticate, 'AuthResult' => Other}),
+        Other ->
+            ?LOG(info, #{obj => session, ev => authenticate, 'AuthResult' => Other}),
 
-	    case ergw_aaa_session:get(Session, 'EAP-Data') of
-		{ok, EAPData} ->
-		    send_eapol_packet(EAPData, Data0);
-		_ ->
-		    ok
-	    end,
-	    wtp_del_station(Data0),
-	    aaa_disassociation(Data0),
-	    Data0#data{eapol_state = undefined}
+            case ergw_aaa_session:get(Session, 'EAP-Data') of
+                {ok, EAPData} ->
+                    send_eapol_packet(EAPData, Data0);
+                _ ->
+                    ok
+            end,
+            wtp_del_station(Data0),
+            aaa_disassociation(Data0),
+            Data0#data{eapol_state = undefined}
     end;
 
 eap_handshake_next({disassociation, _}, Data) ->
@@ -1274,69 +1274,69 @@ encode_igtk_ie(#ieee80211_key{index = Index, key = Key}) ->
       16#00, 16#0F, 16#AC, ?IGTK_KDE:8,
       (Index + 4):16/little-integer, 0:48, Key/binary>>.
 
-mic_for_akm('802.1x')			-> 'HMAC-SHA1-128';
-mic_for_akm('PSK')			-> 'HMAC-SHA1-128';
-mic_for_akm('FT-802.1x')		-> 'AES-128-CMAC';
-mic_for_akm('FT-PSK')			-> 'AES-128-CMAC';
-mic_for_akm('802.1x-SHA256')		-> 'AES-128-CMAC';
-mic_for_akm('PSK-SHA256')		-> 'AES-128-CMAC';
-mic_for_akm('802.1x-Suite-B')		-> 'HMAC-SHA256';
-mic_for_akm('802.1x-Suite-B-192')	-> 'HMAC-SHA384';
-mic_for_akm('FT-802.1x-SHA384')		-> 'HMAC-SHA384';
-mic_for_akm(X)				-> X.
+mic_for_akm('802.1x')                   -> 'HMAC-SHA1-128';
+mic_for_akm('PSK')                      -> 'HMAC-SHA1-128';
+mic_for_akm('FT-802.1x')                -> 'AES-128-CMAC';
+mic_for_akm('FT-PSK')                   -> 'AES-128-CMAC';
+mic_for_akm('802.1x-SHA256')            -> 'AES-128-CMAC';
+mic_for_akm('PSK-SHA256')               -> 'AES-128-CMAC';
+mic_for_akm('802.1x-Suite-B')           -> 'HMAC-SHA256';
+mic_for_akm('802.1x-Suite-B-192')       -> 'HMAC-SHA384';
+mic_for_akm('FT-802.1x-SHA384')         -> 'HMAC-SHA384';
+mic_for_akm(X)                          -> X.
 
 rsna_4way_handshake({init, MSK}, #data{capabilities =
-					    #sta_cap{
-					       rsn = #wtp_wlan_rsn{
-							akm_suites = [AKM],
-							group_mgmt_cipher_suite = GroupMgmtCipherSuite}}}
-		    = Data) ->
+                                           #sta_cap{
+                                              rsn = #wtp_wlan_rsn{
+                                                       akm_suites = [AKM],
+                                                       group_mgmt_cipher_suite = GroupMgmtCipherSuite}}}
+                    = Data) ->
 
     %% IEEE 802.11-2012, Sect. 11.6.1.3
     <<PMK:32/bytes, _/binary>> = MSK,
 
     ANonce = crypto:strong_rand_bytes(32),
     CipherData = #ccmp{akm_algo = AKM,
-			mic_algo = mic_for_akm(AKM),
-			group_mgmt_cipher_suite = GroupMgmtCipherSuite,
-			replay_counter = 0,
-			master_session_key = MSK,
-			pre_master_key = PMK,
-			nonce = ANonce},
+                       mic_algo = mic_for_akm(AKM),
+                       group_mgmt_cipher_suite = GroupMgmtCipherSuite,
+                       replay_counter = 0,
+                       master_session_key = MSK,
+                       pre_master_key = PMK,
+                       nonce = ANonce},
     send_eapol_key([pairwise, ack], <<>>,
-		   Data#data{eapol_state = init,
-			     eapol_retransmit = 0,
-			     rekey_running = ptk,
-			     cipher_state = CipherData});
+                   Data#data{eapol_state = init,
+                             eapol_retransmit = 0,
+                             rekey_running = ptk,
+                             cipher_state = CipherData});
 
 rsna_4way_handshake(rekey, Data = #data{eapol_state = installed,
-					  cipher_state = CipherData0}) ->
+                                        cipher_state = CipherData0}) ->
     ANonce = crypto:strong_rand_bytes(32),
     CipherData = CipherData0#ccmp{nonce = ANonce},
     send_eapol_key([pairwise, ack], <<>>,
-		   Data#data{eapol_state = init,
-			     eapol_retransmit = 0,
-			     cipher_state = CipherData});
+                   Data#data{eapol_state = init,
+                             eapol_retransmit = 0,
+                             cipher_state = CipherData});
 
 rsna_4way_handshake({key, _Flags, MICAlgo, ReplayCounter, SNonce, KeyData, MICData},
-		    Data0 = #data{radio_mac = BSS, mac = StationMAC,
-				    wpa_config = #wpa_config{
-						    ssid = SSID,
-						    mobility_domain = MDomain,
-						    rsn = #wtp_wlan_rsn{
-							     management_frame_protection = MFP} = RSN},
-				    gtk = GTK,
-				    igtk = IGTK,
-				    eapol_state = init,
-				    cipher_state =
-					#ccmp{
-					   akm_algo = AKM,
-					   mic_algo = MICAlgo,
-					   group_mgmt_cipher_suite = GroupMgmtCipherSuite,
-					   replay_counter = ReplayCounter,
-					   master_session_key = MSK,
-					   pre_master_key = PMK,
-					   nonce = ANonce} = CipherData0})
+                    Data0 = #data{radio_mac = BSS, mac = StationMAC,
+                                  wpa_config = #wpa_config{
+                                                  ssid = SSID,
+                                                  mobility_domain = MDomain,
+                                                  rsn = #wtp_wlan_rsn{
+                                                           management_frame_protection = MFP} = RSN},
+                                  gtk = GTK,
+                                  igtk = IGTK,
+                                  eapol_state = init,
+                                  cipher_state =
+                                      #ccmp{
+                                         akm_algo = AKM,
+                                         mic_algo = MICAlgo,
+                                         group_mgmt_cipher_suite = GroupMgmtCipherSuite,
+                                         replay_counter = ReplayCounter,
+                                         master_session_key = MSK,
+                                         pre_master_key = PMK,
+                                         nonce = ANonce} = CipherData0})
   when AKM == 'FT-802.1x'; AKM == 'FT-PSK' ->
     %%
     %% Expected Msg: S1KH→R1KH: EAPOL-Key(0, 1, 0, 0, P, 0, 0, SNonce, MIC, RSNE[PMKR1Name], MDE, FTE)
@@ -1384,73 +1384,73 @@ rsna_4way_handshake({key, _Flags, MICAlgo, ReplayCounter, SNonce, KeyData, MICDa
     %%
     R0KH = <<"scg4.tpip.net">>,
     {KCK, KEK, TK, _PMKR0Name, PMKR1Name} =
-	eapol:ft_msk2ptk(MSK, SNonce, ANonce, BSS, StationMAC,
-			 SSID, MDomain, R0KH, BSS, StationMAC, StationMAC),
+        eapol:ft_msk2ptk(MSK, SNonce, ANonce, BSS, StationMAC,
+                         SSID, MDomain, R0KH, BSS, StationMAC, StationMAC),
     CipherData = CipherData0#ccmp{rsn = RSN, kck = KCK, kek = KEK, tk = TK},
 
     case eapol:validate_mic(CipherData, MICData) of
-	ok ->
-	    ?LOG(debug, "rsna_4way_handshake 2 of 4: ok"),
-	    %% R1KH→S1KH: EAPOL-Key(1, 1, 1, 1, P, 0, 0, ANonce, MIC, RSNE[PMKR1Name], MDE,
-	    %%                      GTK[N], IGTK[M], FTE, TIE[ReassociationDeadline],
-	    %%                      TIE[KeyLifetime])
+        ok ->
+            ?LOG(debug, "rsna_4way_handshake 2 of 4: ok"),
+            %% R1KH→S1KH: EAPOL-Key(1, 1, 1, 1, P, 0, 0, ANonce, MIC, RSNE[PMKR1Name], MDE,
+            %%                      GTK[N], IGTK[M], FTE, TIE[ReassociationDeadline],
+            %%                      TIE[KeyLifetime])
 
-	    RSNIE = capwap_ac:rsn_ie(RSN, [PMKR1Name], MFP == required),
-	    MDE = capwap_ac:ieee_802_11_ie(?WLAN_EID_MOBILITY_DOMAIN, <<MDomain:16, 1>>),
-	    Tx = 0,
-	    GTKIE = encode_gtk_ie(Tx, GTK),
-	    IGTKIE = case GroupMgmtCipherSuite of
-			 'AES-CMAC' ->
-			     encode_igtk_ie(IGTK);
-			 _ ->
-			     <<>>
-		     end,
-	    FTE = ft_ie(R0KH, BSS),
+            RSNIE = capwap_ac:rsn_ie(RSN, [PMKR1Name], MFP == required),
+            MDE = capwap_ac:ieee_802_11_ie(?WLAN_EID_MOBILITY_DOMAIN, <<MDomain:16, 1>>),
+            Tx = 0,
+            GTKIE = encode_gtk_ie(Tx, GTK),
+            IGTKIE = case GroupMgmtCipherSuite of
+                         'AES-CMAC' ->
+                             encode_igtk_ie(IGTK);
+                         _ ->
+                             <<>>
+                     end,
+            FTE = ft_ie(R0KH, BSS),
 
-	    %% TODO: possibly....
-	    %%
-	    %% IEEE 802.11 says ReassociationDeadline and KeyLifetime should be
-	    %% present, but it seems to work without....
-	    %%
-	    %% TIEReassociationDeadLine = ti_ie(1, ReassociationDeadline),
-	    %% TIEKeyLifetime = ti_ie(2, KeyLifetime),
+            %% TODO: possibly....
+            %%
+            %% IEEE 802.11 says ReassociationDeadline and KeyLifetime should be
+            %% present, but it seems to work without....
+            %%
+            %% TIEReassociationDeadLine = ti_ie(1, ReassociationDeadline),
+            %% TIEKeyLifetime = ti_ie(2, KeyLifetime),
 
-	    TxKeyData = pad_key_data(<<RSNIE/binary, MDE/binary, GTKIE/binary,
-				       IGTKIE/binary, FTE/binary>>),
-				     %% TIEReassociationDeadLine/binary,
-				     %% TIEKeyLifetime/binary>>),
-	    ?LOG(debug, "TxKeyData: ~p", [pbkdf2:to_hex(TxKeyData)]),
-	    EncTxKeyData = eapol:aes_key_wrap(KEK, TxKeyData),
-	    ?LOG(debug, "EncTxKeyData: ~p", [pbkdf2:to_hex(EncTxKeyData)]),
+            TxKeyData = pad_key_data(<<RSNIE/binary, MDE/binary, GTKIE/binary,
+                                       IGTKIE/binary, FTE/binary>>),
+            %% TIEReassociationDeadLine/binary,
+            %% TIEKeyLifetime/binary>>),
+            ?LOG(debug, "TxKeyData: ~p", [pbkdf2:to_hex(TxKeyData)]),
+            EncTxKeyData = eapol:aes_key_wrap(KEK, TxKeyData),
+            ?LOG(debug, "EncTxKeyData: ~p", [pbkdf2:to_hex(EncTxKeyData)]),
 
-	    send_eapol_key([pairwise, install, ack, mic, secure, enc], EncTxKeyData,
-			   Data#data{eapol_state = install,
-				     eapol_retransmit = 0,
-				     cipher_state = CipherData});
+            send_eapol_key([pairwise, install, ack, mic, secure, enc], EncTxKeyData,
+                           Data#data{eapol_state = install,
+                                     eapol_retransmit = 0,
+                                     cipher_state = CipherData});
 
-	Other ->
-	    ?LOG(debug, "rsna_4way_handshake FT 2 of 4: ~p", [Other]),
-	    %% silently discard, see above
-	    Data
+        Other ->
+            ?LOG(debug, "rsna_4way_handshake FT 2 of 4: ~p", [Other]),
+            %% silently discard, see above
+            Data
     end;
 
 rsna_4way_handshake({key, _Flags, MICAlgo, ReplayCounter, SNonce, KeyData, MICData},
-		    Data0 = #data{radio_mac = BSS, mac = StationMAC,
-				    capabilities = #sta_cap{last_rsne = LastRSNE},
-				    wpa_config = #wpa_config{
-						    rsn = #wtp_wlan_rsn{
-							     management_frame_protection = MFP} = RSN},
-				    gtk = GTK,
-				    igtk = IGTK,
-				    eapol_state = init,
-				    cipher_state =
-					#ccmp{
-					   akm_algo = AKM,
-					   mic_algo = MICAlgo,
-					   group_mgmt_cipher_suite = GroupMgmtCipherSuite,
-					   replay_counter = ReplayCounter,
-					   pre_master_key = PMK,
-					   nonce = ANonce} = CipherData0})
+                    Data0 = #data{radio_mac = BSS, mac = StationMAC,
+                                  capabilities = #sta_cap{last_rsne = LastRSNE},
+                                  wpa_config = #wpa_config{
+                                                  rsn = #wtp_wlan_rsn{
+                                                           management_frame_protection = MFP} = RSN},
+                                  gtk = GTK,
+                                  igtk = IGTK,
+                                  eapol_state = init,
+                                  cipher_state =
+                                      #ccmp{
+                                         akm_algo = AKM,
+                                         mic_algo = MICAlgo,
+                                         group_mgmt_cipher_suite = GroupMgmtCipherSuite,
+                                         replay_counter = ReplayCounter,
+                                         pre_master_key = PMK,
+                                         nonce = ANonce} = CipherData0})
   when AKM == '802.1x'; AKM == 'PSK' ->
     %% CipherSuite and ReplayCounter match...
     ?LOG(debug, "KeyData: ~p", [pbkdf2:to_hex(KeyData)]),
@@ -1489,47 +1489,47 @@ rsna_4way_handshake({key, _Flags, MICAlgo, ReplayCounter, SNonce, KeyData, MICDa
     CipherData = CipherData0#ccmp{rsn = RSN, kck = KCK, kek = KEK, tk = TK},
 
     case {eapol:validate_mic(CipherData, MICData), KeyData} of
-	{ok, <<?WLAN_EID_RSN, RSNLen:8, LastRSNE:RSNLen/bytes, _/binary>>} ->
-	    ?LOG(debug, "rsna_4way_handshake 2 of 4: ok"),
-	    RSNIE = capwap_ac:rsn_ie(RSN, MFP == required),
-	    Tx = 0,
-	    GTKIE = encode_gtk_ie(Tx, GTK),
-	    IGTKIE = case GroupMgmtCipherSuite of
-			 'AES-CMAC' ->
-			     encode_igtk_ie(IGTK);
-			 _ ->
-			     <<>>
-		     end,
-	    TxKeyData = pad_key_data(<<RSNIE/binary, GTKIE/binary, IGTKIE/binary>>),
-	    ?LOG(debug, "TxKeyData: ~p", [pbkdf2:to_hex(TxKeyData)]),
-	    EncTxKeyData = eapol:aes_key_wrap(KEK, TxKeyData),
-	    ?LOG(debug, "EncTxKeyData: ~p", [pbkdf2:to_hex(EncTxKeyData)]),
+        {ok, <<?WLAN_EID_RSN, RSNLen:8, LastRSNE:RSNLen/bytes, _/binary>>} ->
+            ?LOG(debug, "rsna_4way_handshake 2 of 4: ok"),
+            RSNIE = capwap_ac:rsn_ie(RSN, MFP == required),
+            Tx = 0,
+            GTKIE = encode_gtk_ie(Tx, GTK),
+            IGTKIE = case GroupMgmtCipherSuite of
+                         'AES-CMAC' ->
+                             encode_igtk_ie(IGTK);
+                         _ ->
+                             <<>>
+                     end,
+            TxKeyData = pad_key_data(<<RSNIE/binary, GTKIE/binary, IGTKIE/binary>>),
+            ?LOG(debug, "TxKeyData: ~p", [pbkdf2:to_hex(TxKeyData)]),
+            EncTxKeyData = eapol:aes_key_wrap(KEK, TxKeyData),
+            ?LOG(debug, "EncTxKeyData: ~p", [pbkdf2:to_hex(EncTxKeyData)]),
 
-	    send_eapol_key([pairwise, install, ack, mic, secure, enc], EncTxKeyData,
-			   Data#data{eapol_state = install,
-				     eapol_retransmit = 0,
-				     cipher_state = CipherData});
+            send_eapol_key([pairwise, install, ack, mic, secure, enc], EncTxKeyData,
+                           Data#data{eapol_state = install,
+                                     eapol_retransmit = 0,
+                                     cipher_state = CipherData});
 
-	{ok, _} ->
-	    %% MIC is ok, but RSNE does not match
-	    ?LOG(debug, "rsna_4way_handshake 2 of 4: MIC ok, RSNE don't match (~p != ~p)",
-		       [pbkdf2:to_hex(KeyData), pbkdf2:to_hex(LastRSNE)]),
-	    wtp_del_station(Data),
-	    aaa_disassociation(Data),
-	    Data#data{eapol_state = undefined, cipher_state = undefined};
+        {ok, _} ->
+            %% MIC is ok, but RSNE does not match
+            ?LOG(debug, "rsna_4way_handshake 2 of 4: MIC ok, RSNE don't match (~p != ~p)",
+                 [pbkdf2:to_hex(KeyData), pbkdf2:to_hex(LastRSNE)]),
+            wtp_del_station(Data),
+            aaa_disassociation(Data),
+            Data#data{eapol_state = undefined, cipher_state = undefined};
 
-	Other ->
-	    ?LOG(debug, "rsna_4way_handshake 2 of 4: ~p", [Other]),
-	    %% silently discard, see above
-	    Data
+        Other ->
+            ?LOG(debug, "rsna_4way_handshake 2 of 4: ~p", [Other]),
+            %% silently discard, see above
+            Data
     end;
 
 rsna_4way_handshake({key, _Flags, _CipherSuite, ReplayCounter, _SNonce, _KeyData, MICData},
-		    Data0 = #data{ac = AC, radio_mac = BSS, mac = StationMAC, capabilities = Caps,
-				    eapol_state = install,
-				    cipher_state =
-					#ccmp{
-					   replay_counter = ReplayCounter} = CipherData}) ->
+                    Data0 = #data{ac = AC, radio_mac = BSS, mac = StationMAC, capabilities = Caps,
+                                  eapol_state = install,
+                                  cipher_state =
+                                      #ccmp{
+                                         replay_counter = ReplayCounter} = CipherData}) ->
     Data = stop_eapol_timer(Data0),
 
     %%
@@ -1549,15 +1549,15 @@ rsna_4way_handshake({key, _Flags, _CipherSuite, ReplayCounter, _SNonce, _KeyData
     %%
 
     case eapol:validate_mic(CipherData, MICData) of
-	ok ->
-	    ?LOG(debug, "rsna_4way_handshake 4 of 4: ok"),
-	    capwap_ac:add_station(AC, BSS, StationMAC, Caps, {false, true, CipherData}),
-	    rekey_done(ptk, Data#data{eapol_state = installed});
+        ok ->
+            ?LOG(debug, "rsna_4way_handshake 4 of 4: ok"),
+            capwap_ac:add_station(AC, BSS, StationMAC, Caps, {false, true, CipherData}),
+            rekey_done(ptk, Data#data{eapol_state = installed});
 
-	Other ->
-	    ?LOG(debug, "rsna_4way_handshake 4 of 4: ~p", [Other]),
-	    %% silently discard, see above
-	    Data
+        Other ->
+            ?LOG(debug, "rsna_4way_handshake 4 of 4: ~p", [Other]),
+            %% silently discard, see above
+            Data
     end;
 
 rsna_4way_handshake(Frame, Data) ->
@@ -1566,49 +1566,49 @@ rsna_4way_handshake(Frame, Data) ->
     Data.
 
 rsna_2way_handshake(rekey, Data = #data{eapol_state = installed,
-					  cipher_state = #ccmp{
-							    group_mgmt_cipher_suite = GroupMgmtCipherSuite,
-							    kek = KEK},
-					  gtk = GTK, igtk = IGTK}) ->
+                                        cipher_state = #ccmp{
+                                                          group_mgmt_cipher_suite = GroupMgmtCipherSuite,
+                                                          kek = KEK},
+                                        gtk = GTK, igtk = IGTK}) ->
     %% EAPOL-Key(1,1,1,0,G,0,Key RSC,0, MIC,GTK[N],IGTK[M])
 
     Tx = 0,
     GTKIE = encode_gtk_ie(Tx, GTK),
     IGTKIE = case GroupMgmtCipherSuite of
-		 'AES-CMAC' ->
-		     encode_igtk_ie(IGTK);
-		 _ ->
-		     <<>>
-	     end,
+                 'AES-CMAC' ->
+                     encode_igtk_ie(IGTK);
+                 _ ->
+                     <<>>
+             end,
     TxKeyData = pad_key_data(<<GTKIE/binary, IGTKIE/binary>>),
     EncTxKeyData = eapol:aes_key_wrap(KEK, TxKeyData),
     ?LOG(debug, "TxKeyData: ~p", [pbkdf2:to_hex(TxKeyData)]),
     ?LOG(debug, "EncTxKeyData: ~p", [pbkdf2:to_hex(EncTxKeyData)]),
 
     send_eapol_key([group, ack, mic, secure, enc], EncTxKeyData,
-		   Data#data{eapol_state = install,
-			     eapol_retransmit = 0});
+                   Data#data{eapol_state = install,
+                             eapol_retransmit = 0});
 
 rsna_2way_handshake({key, _Flags, _MICAlgo, ReplayCounter, _SNonce, _KeyData, MICData},
-		    Data0 = #data{eapol_state = install,
-				    rekey_control = RekeyCtl,
-				    cipher_state =
-					#ccmp{
-					   replay_counter = ReplayCounter} = CipherData}) ->
+                    Data0 = #data{eapol_state = install,
+                                  rekey_control = RekeyCtl,
+                                  cipher_state =
+                                      #ccmp{
+                                         replay_counter = ReplayCounter} = CipherData}) ->
     %% EAPOL-Key(1,1,0,0,G,0,0,0,MIC,0)
     Data = stop_eapol_timer(Data0),
     capwap_ac_gtk_rekey:gtk_rekey_done(RekeyCtl, self()),
 
     case eapol:validate_mic(CipherData, MICData) of
-	ok ->
-	    ?LOG(debug, "rsna_2way_handshake 2 of 2: ok"),
-	    rekey_done(gtk, Data#data{eapol_state = installed});
+        ok ->
+            ?LOG(debug, "rsna_2way_handshake 2 of 2: ok"),
+            rekey_done(gtk, Data#data{eapol_state = installed});
 
-	Other ->
-	    ?LOG(debug, "rsna_2way_handshake 2 of 2: ~p", [Other]),
-	    wtp_del_station(Data),
-	    aaa_disassociation(Data),
-	    Data#data{eapol_state = undefined, cipher_state = undefined}
+        Other ->
+            ?LOG(debug, "rsna_2way_handshake 2 of 2: ~p", [Other]),
+            wtp_del_station(Data),
+            aaa_disassociation(Data),
+            Data#data{eapol_state = undefined, cipher_state = undefined}
     end;
 
 rsna_2way_handshake(Frame, Data) ->
@@ -1623,7 +1623,7 @@ pad_key_data(KD) ->
     KD.
 
 rekey_timer_start(ptk, #data{wpa_config = #wpa_config{peer_rekey = Interval},
-			      rekey_tref = undefined} = Data)
+                             rekey_tref = undefined} = Data)
   when is_integer(Interval) andalso Interval > 0 ->
     ?LOG(debug, "Starting rekey for PTK in ~w", [Interval]),
     TRef = erlang:send_after(Interval * 1000, self(), {rekey, ptk}),
@@ -1644,10 +1644,10 @@ rekey_timer_start(Data) ->
 rekey_done(_Type, Data0) ->
     Data = rekey_timer_start(Data0#data{rekey_running = false}),
     case Data#data.rekey_pending of
-	[Next | Pending] ->
-	    rekey_init(Next, Data#data{rekey_pending = Pending});
-	_ ->
-	    Data#data{rekey_pending = []}
+        [Next | Pending] ->
+            rekey_init(Next, Data#data{rekey_pending = Pending});
+        _ ->
+            Data#data{rekey_pending = []}
     end.
 
 rekey_init(ptk, Data) ->
@@ -1674,15 +1674,15 @@ handle_session_evs([H|T], Data) ->
 
 update_timer_svc_def(Service, Definition, Map) ->
     maps:update_with(Service,
-		     fun({_, TRef}) -> {Definition, TRef} end,
-		     {Definition, undefined}, Map).
+                     fun({_, TRef}) -> {Definition, TRef} end,
+                     {Definition, undefined}, Map).
 
 update_timer(Level, Service, Definition, Timers) ->
     maps:update_with(Level, update_timer_svc_def(Service, Definition, _),
-		     #{Service => {Definition, undefined}}, Timers).
+                     #{Service => {Definition, undefined}}, Timers).
 
 handle_session_ev({set, {Service, {Type, Level, Interval, Opts}}},
-		  #data{timers = Timers} = Data) ->
+                  #data{timers = Timers} = Data) ->
     Definition = {Type, Interval, Opts},
     Data#data{timers = update_timer(Level, Service, Definition, Timers)};
 handle_session_ev(_Other, Data) ->
@@ -1690,7 +1690,7 @@ handle_session_ev(_Other, Data) ->
 
 start_session_timers(#data{timers = Timers} = Data) ->
     Data#data{timers =
-		  maps:fold(fun start_session_timers/3, Timers, Timers)}.
+                  maps:fold(fun start_session_timers/3, Timers, Timers)}.
 
 start_session_timers('IP-CAN' = K, V, M) ->
     M#{K => maps:fold(fun start_session_timer/3, V, V)};
@@ -1709,55 +1709,55 @@ start_session_timer(K, {{_, TimeOut, _} = Type, TRef}, M) ->
 handle_session_timer(TRef, {accounting, Level, _} = Ev, #data{timers = Timers0} = Data)
   when is_map_key(Level, Timers0) ->
     case maps:take(Level, Timers0) of
-	{#{Ev := {Timer, TRef}}, Timers} ->
-	    handle_session_timer_ev(Ev, Timer, Data#data{timers = Timers});
-	_ ->
-	    keep_state_and_data
+        {#{Ev := {Timer, TRef}}, Timers} ->
+            handle_session_timer_ev(Ev, Timer, Data#data{timers = Timers});
+        _ ->
+            keep_state_and_data
     end;
 handle_session_timer(_TRef, _Ev, _Data) ->
     keep_state_and_data.
 
 handle_session_timer_ev({_, Level, _} = Ev, {Interval, _, _Opts} = Timer,
-			#data{aaa_session = Session, timers = Timers, ac = AC} = Data0) ->
+                        #data{aaa_session = Session, timers = Timers, ac = AC} = Data0) ->
     SOpts0 = accounting_update(Data0),
     SOpts = add_location(AC, add_ac_location(Data0, SOpts0)),
     ergw_aaa_session:invoke(Session, SOpts, interim, #{async => true}),
 
     Data =
-	case Interval of
-	    periodic ->
-		M = maps:get(Level, Timers, #{}),
-		Data0#data{
-		  timers = Timers#{Level => start_session_timer(Ev, {Timer, undefined}, M)}};
-	    _ ->
-		Data0
-	end,
+        case Interval of
+            periodic ->
+                M = maps:get(Level, Timers, #{}),
+                Data0#data{
+                  timers = Timers#{Level => start_session_timer(Ev, {Timer, undefined}, M)}};
+            _ ->
+                Data0
+        end,
     {keep_state, Data}.
 
-% FIXME Atoms are allowed for test cases. Test cases should, however,
-% use DTLS and not plain UDP.
+                                                % FIXME Atoms are allowed for test cases. Test cases should, however,
+                                                % use DTLS and not plain UDP.
 add_location(AC, Map) when is_pid(AC) ->
     ?LOG(debug, "Getting location through: ~p", [AC]),
     try capwap_ac:get_info(AC) of
-	{ok, #{id := Name}} ->
-	    BinName = case Name of _ when is_binary(Name) -> Name;
-				   _ when is_atom(Name) -> atom_to_binary(Name, utf8);
-				   _ -> <<"undefined">> end,
-	    ?LOG(debug, "Getting location for name: ~p", [{Name, BinName}]),
-	    SessionAttr = 'IM-LI-Location',
-	    case capwap_loc_provider:get_loc(BinName, false) of
-		{location, LatVal, LongVal} ->
-		    ?LOG(debug, "Successful location: ~p", [{LatVal, LongVal}]),
-		    Map#{SessionAttr => iolist_to_binary(io_lib:format("Lat:~s;Lon:~s", [LatVal, LongVal]))};
-		{error, Cause} ->
-		    ?LOG(warning, "Error retrieving location: ~p", [Cause]),
-		    Map
-	    end
+        {ok, #{id := Name}} ->
+            BinName = case Name of _ when is_binary(Name) -> Name;
+                          _ when is_atom(Name) -> atom_to_binary(Name, utf8);
+                          _ -> <<"undefined">> end,
+            ?LOG(debug, "Getting location for name: ~p", [{Name, BinName}]),
+            SessionAttr = 'IM-LI-Location',
+            case capwap_loc_provider:get_loc(BinName, false) of
+                {location, LatVal, LongVal} ->
+                    ?LOG(debug, "Successful location: ~p", [{LatVal, LongVal}]),
+                    Map#{SessionAttr => iolist_to_binary(io_lib:format("Lat:~s;Lon:~s", [LatVal, LongVal]))};
+                {error, Cause} ->
+                    ?LOG(warning, "Error retrieving location: ~p", [Cause]),
+                    Map
+            end
     catch
-	Class:Error:ST ->
-	    ?LOG(warning, "Getting location failed: ~p:~p with ~0p", [Class, Error, ST]),
-	    Map
-	end;
+        Class:Error:ST ->
+            ?LOG(warning, "Getting location failed: ~p:~p with ~0p", [Class, Error, ST]),
+            Map
+    end;
 add_location(AC, Map) ->
     ?LOG(notice, "AC provided is not a pid, avoiding location retrieval: ~p", [AC]),
     Map.

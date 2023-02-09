@@ -14,32 +14,32 @@
 %% along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 -record(sta_cap, {
-	  aid = 16#C001      :: integer(),
-	  wmm = false        :: boolean(),
-	  sgi_20mhz = 0      :: boolean(),
-	  sgi_40mhz = 0      :: boolean(),
-	  smps = disabled    :: atom(),
-	  back_delay = false :: boolean(),
-	  ampdu_density = 0  :: integer(),
-	  ampdu_factor = 0   :: integer(),
-	  rx_mask = <<0,0,0,0,0,0,0,0,0,0>> :: binary(),
-	  rx_highest = 0     :: integer(),
+                  aid = 16#C001      :: integer(),
+                  wmm = false        :: boolean(),
+                  sgi_20mhz = 0      :: boolean(),
+                  sgi_40mhz = 0      :: boolean(),
+                  smps = disabled    :: atom(),
+                  back_delay = false :: boolean(),
+                  ampdu_density = 0  :: integer(),
+                  ampdu_factor = 0   :: integer(),
+                  rx_mask = <<0,0,0,0,0,0,0,0,0,0>> :: binary(),
+                  rx_highest = 0     :: integer(),
 
-	  last_rsne          :: undefined | binary(),
-	  rsn                :: undefiend | #wtp_wlan_rsn{}
-	 }).
+                  last_rsne          :: undefined | binary(),
+                  rsn                :: undefiend | #wtp_wlan_rsn{}
+                 }).
 
 -record(station_config, {
-	  data_path,
-	  wtp_data_channel_address,
-	  wtp_id,
-	  wtp_session_id,
-	  mac_mode,
-	  tunnel_mode,
+                         data_path,
+                         wtp_data_channel_address,
+                         wtp_id,
+                         wtp_session_id,
+                         mac_mode,
+                         tunnel_mode,
 
-	  bss,
-	  bss_ies,
-	  wpa_config,
-	  gtk,
-	  igtk
-}).
+                         bss,
+                         bss_ies,
+                         wpa_config,
+                         gtk,
+                         igtk
+                        }).

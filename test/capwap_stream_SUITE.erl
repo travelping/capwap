@@ -26,8 +26,8 @@ init_per_suite(Config) ->
 end_per_suite(_Config) ->
     ok.
 
-% --------------------------------------------------------------------------------------------------
-% -- test cases
+                                                % --------------------------------------------------------------------------------------------------
+                                                % -- test cases
 
 reassemble(_Config) ->
     Cases = [{iolist_to_binary(X), perms(l2frags(X))} || X <- perms(parts(5))],
@@ -48,19 +48,19 @@ run_case_permutations(Result, [Head|Tail]) ->
 run_permutation(Result, Perm) ->
     S0 = capwap_stream:init(1500),
     try lists:foldl(fun(X, {_, S}) -> capwap_stream:add(X, S) end, {[], S0}, Perm) of
-	{{_, Result}, _} -> ok;
-	V -> ct:fail("MISMATCH(~s:~b)~nCase: ~p~nExpected: ~p~nActual: ~p~n",
-		     [?FILE, ?LINE, Perm, Result, V]),
-	     error(badmatch)
+        {{_, Result}, _} -> ok;
+        V -> ct:fail("MISMATCH(~s:~b)~nCase: ~p~nExpected: ~p~nActual: ~p~n",
+                     [?FILE, ?LINE, Perm, Result, V]),
+             error(badmatch)
     catch
-	Class:Error:Stack ->
-	    io:format("ERROR(~s:~b)~nCase: ~p~nExpected: ~p~nError: ~p:~p at ~p~n",
-		    [?FILE, ?LINE, Perm, Result, Class, Error, Stack]),
-	    error(Error)
+        Class:Error:Stack ->
+            io:format("ERROR(~s:~b)~nCase: ~p~nExpected: ~p~nError: ~p:~p at ~p~n",
+                      [?FILE, ?LINE, Perm, Result, Class, Error, Stack]),
+            error(Error)
     end.
 
-% --------------------------------------------------------------------------------------------------
-% -- helper
+                                                % --------------------------------------------------------------------------------------------------
+                                                % -- helper
 
 parts(N) ->
     parts(N, []).

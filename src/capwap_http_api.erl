@@ -17,7 +17,7 @@
 
 -export([start_link/0]).
 
--define(DEFAULT_PORT,	8000).
+-define(DEFAULT_PORT,   8000).
 -define(DEFAULT_IP,     {127, 0, 0, 1}).
 -define(ACCEPTORS_NUM,  100).
 
@@ -28,27 +28,27 @@ start_link() ->
     INet = get_inet(IP),
     AcceptorsNum = proplists:get_value(acceptors_num, HttpConfig, ?ACCEPTORS_NUM),
     Dispatch = cowboy_router:compile([
-		{'_', [
-            {"/metrics",        capwap_http_api_handler, []},
-            {"/metrics/[...]",  capwap_http_api_handler, []},
-            {"/api/v1/version", capwap_http_api_handler, []},
+                                      {'_', [
+                                             {"/metrics",        capwap_http_api_handler, []},
+                                             {"/metrics/[...]",  capwap_http_api_handler, []},
+                                             {"/api/v1/version", capwap_http_api_handler, []},
 
-            {"/api/v1/wtp",                           capwap_http_api_handler, []},
-            {"/api/v1/wtp/:id",                       capwap_http_api_handler, []},
-            {"/api/v1/wtp/:id/update/:link/:hash",    capwap_http_api_handler, []},
-            {"/api/v1/wtp/:id/set-ssid/:ssid[/:rid]", capwap_http_api_handler, []},
-            {"/api/v1/wtp/:id/stop-radio/:rid",       capwap_http_api_handler, []},
+                                             {"/api/v1/wtp",                           capwap_http_api_handler, []},
+                                             {"/api/v1/wtp/:id",                       capwap_http_api_handler, []},
+                                             {"/api/v1/wtp/:id/update/:link/:hash",    capwap_http_api_handler, []},
+                                             {"/api/v1/wtp/:id/set-ssid/:ssid[/:rid]", capwap_http_api_handler, []},
+                                             {"/api/v1/wtp/:id/stop-radio/:rid",       capwap_http_api_handler, []},
 
-            {"/api/v1/station",     capwap_http_api_handler, []},
-            {"/api/v1/station/:id", capwap_http_api_handler, []},
+                                             {"/api/v1/station",     capwap_http_api_handler, []},
+                                             {"/api/v1/station/:id", capwap_http_api_handler, []},
 
-            {"/api/v1/dp/wtp-list", capwap_http_api_handler, []},
-            {"/api/v1/dp/stats",    capwap_http_api_handler, []},
+                                             {"/api/v1/dp/wtp-list", capwap_http_api_handler, []},
+                                             {"/api/v1/dp/stats",    capwap_http_api_handler, []},
 
-            {"/api/v1/spec/ui",       capwap_swagger_ui_handler, []},
-            {"/api/v1/spec/ui/[...]", cowboy_static, {priv_dir, capwap, "static"}}
-		]}
-	]),
+                                             {"/api/v1/spec/ui",       capwap_swagger_ui_handler, []},
+                                             {"/api/v1/spec/ui/[...]", cowboy_static, {priv_dir, capwap, "static"}}
+                                            ]}
+                                     ]),
     TransOpts = #{num_acceptors => AcceptorsNum, socket_opts => [{port, Port}, {ip, IP}, INet]},
     ProtoOpts = #{env => #{dispatch => Dispatch}},
     cowboy:start_clear(capwap_http_api, TransOpts, ProtoOpts).
