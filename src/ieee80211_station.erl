@@ -406,13 +406,13 @@ handle_event(cast, {'FT', DA, SA, BSS, _Action, STA, TargetAP, ReqBody} = Event,
 	    %% TODO: check the MFP logic.....
 	    DestRSNie = capwap_ac:rsn_ie(DestRSN, RSN#wtp_wlan_rsn.pmk_ids,
 					 DestRSN#wtp_wlan_rsn.management_frame_protection),
-	    ?LOG(info, "Target RSNie: ~p", [pbkdf2:to_hex(DestRSNie)]),
+	    ?LOG(info, "Target RSNie: ~p", [binary:encode_hex(DestRSNie)]),
 
 	    DestMDomainIE = capwap_ac:ieee_802_11_ie(?WLAN_EID_MOBILITY_DOMAIN, MDomain),
-	    ?LOG(info, "Target MDomainIE: ~p", [pbkdf2:to_hex(DestMDomainIE)]),
+	    ?LOG(info, "Target MDomainIE: ~p", [binary:encode_hex(DestMDomainIE)]),
 
 	    DestFTie = ft_ie(DestFTE),
-	    ?LOG(info, "Target FTie: ~p", [pbkdf2:to_hex(DestFTie)]),
+	    ?LOG(info, "Target FTie: ~p", [binary:encode_hex(DestFTie)]),
 
 	    Action = 2,    %% Response
 	    Status = 0,
@@ -1167,8 +1167,8 @@ send_eapol_key(Flags, KeyData,
 init_eapol(#data{capabilities = #sta_cap{rsn = #wtp_wlan_rsn{akm_suites = [AKM]}},
 		  wpa_config = #wpa_config{ssid = SSID, secret = Secret}} = Data)
   when AKM == 'PSK'; AKM == 'FT-PSK' ->
-    {ok, PSK} = eapol:phrase2psk(Secret, SSID),
-    ?LOG(debug, "PSK: ~s", [pbkdf2:to_hex(PSK)]),
+    PSK = eapol:phrase2psk(Secret, SSID),
+    ?LOG(debug, "PSK: ~s", [binary:encode_hex(PSK)]),
     rsna_4way_handshake({init, PSK}, Data#data{rekey_running = ptk});
 
 init_eapol(#data{capabilities = #sta_cap{rsn = #wtp_wlan_rsn{akm_suites = [AKM]}},
@@ -1343,12 +1343,12 @@ rsna_4way_handshake({key, _Flags, MICAlgo, ReplayCounter, SNonce, KeyData, MICDa
     %%
 
     %% CipherSuite and ReplayCounter match...
-    ?LOG(debug, "KeyData: ~p", [pbkdf2:to_hex(KeyData)]),
-    ?LOG(debug, "PMK: ~p", [pbkdf2:to_hex(PMK)]),
-    ?LOG(debug, "BSS: ~p", [pbkdf2:to_hex(BSS)]),
-    ?LOG(debug, "StationMAC: ~p", [pbkdf2:to_hex(StationMAC)]),
-    ?LOG(debug, "ANonce: ~p", [pbkdf2:to_hex(ANonce)]),
-    ?LOG(debug, "SNonce: ~p", [pbkdf2:to_hex(SNonce)]),
+    ?LOG(debug, "KeyData: ~p", [binary:encode_hex(KeyData)]),
+    ?LOG(debug, "PMK: ~p", [binary:encode_hex(PMK)]),
+    ?LOG(debug, "BSS: ~p", [binary:encode_hex(BSS)]),
+    ?LOG(debug, "StationMAC: ~p", [binary:encode_hex(StationMAC)]),
+    ?LOG(debug, "ANonce: ~p", [binary:encode_hex(ANonce)]),
+    ?LOG(debug, "SNonce: ~p", [binary:encode_hex(SNonce)]),
     ?LOG(debug, "CipherData: ~p", [CipherData0]),
     Data = stop_eapol_timer(Data0),
 
@@ -1419,9 +1419,9 @@ rsna_4way_handshake({key, _Flags, MICAlgo, ReplayCounter, SNonce, KeyData, MICDa
 				       IGTKIE/binary, FTE/binary>>),
 				     %% TIEReassociationDeadLine/binary,
 				     %% TIEKeyLifetime/binary>>),
-	    ?LOG(debug, "TxKeyData: ~p", [pbkdf2:to_hex(TxKeyData)]),
+	    ?LOG(debug, "TxKeyData: ~p", [binary:encode_hex(TxKeyData)]),
 	    EncTxKeyData = eapol:aes_key_wrap(KEK, TxKeyData),
-	    ?LOG(debug, "EncTxKeyData: ~p", [pbkdf2:to_hex(EncTxKeyData)]),
+	    ?LOG(debug, "EncTxKeyData: ~p", [binary:encode_hex(EncTxKeyData)]),
 
 	    send_eapol_key([pairwise, install, ack, mic, secure, enc], EncTxKeyData,
 			   Data#data{eapol_state = install,
@@ -1453,12 +1453,12 @@ rsna_4way_handshake({key, _Flags, MICAlgo, ReplayCounter, SNonce, KeyData, MICDa
 					   nonce = ANonce} = CipherData0})
   when AKM == '802.1x'; AKM == 'PSK' ->
     %% CipherSuite and ReplayCounter match...
-    ?LOG(debug, "KeyData: ~p", [pbkdf2:to_hex(KeyData)]),
-    ?LOG(debug, "PMK: ~p", [pbkdf2:to_hex(PMK)]),
-    ?LOG(debug, "BSS: ~p", [pbkdf2:to_hex(BSS)]),
-    ?LOG(debug, "StationMAC: ~p", [pbkdf2:to_hex(StationMAC)]),
-    ?LOG(debug, "ANonce: ~p", [pbkdf2:to_hex(ANonce)]),
-    ?LOG(debug, "SNonce: ~p", [pbkdf2:to_hex(SNonce)]),
+    ?LOG(debug, "KeyData: ~p", [binary:encode_hex(KeyData)]),
+    ?LOG(debug, "PMK: ~p", [binary:encode_hex(PMK)]),
+    ?LOG(debug, "BSS: ~p", [binary:encode_hex(BSS)]),
+    ?LOG(debug, "StationMAC: ~p", [binary:encode_hex(StationMAC)]),
+    ?LOG(debug, "ANonce: ~p", [binary:encode_hex(ANonce)]),
+    ?LOG(debug, "SNonce: ~p", [binary:encode_hex(SNonce)]),
     ?LOG(debug, "CipherData: ~p", [CipherData0]),
     Data = stop_eapol_timer(Data0),
 
@@ -1482,9 +1482,9 @@ rsna_4way_handshake({key, _Flags, MICAlgo, ReplayCounter, SNonce, KeyData, MICDa
     %%
 
     {KCK, KEK, TK} = eapol:pmk2ptk(PMK, BSS, StationMAC, ANonce, SNonce, 384),
-    ?LOG(debug, "KCK: ~p", [pbkdf2:to_hex(KCK)]),
-    ?LOG(debug, "KEK: ~p", [pbkdf2:to_hex(KEK)]),
-    ?LOG(debug, "TK: ~p", [pbkdf2:to_hex(TK)]),
+    ?LOG(debug, "KCK: ~p", [binary:encode_hex(KCK)]),
+    ?LOG(debug, "KEK: ~p", [binary:encode_hex(KEK)]),
+    ?LOG(debug, "TK: ~p", [binary:encode_hex(TK)]),
 
     CipherData = CipherData0#ccmp{rsn = RSN, kck = KCK, kek = KEK, tk = TK},
 
@@ -1501,9 +1501,9 @@ rsna_4way_handshake({key, _Flags, MICAlgo, ReplayCounter, SNonce, KeyData, MICDa
 			     <<>>
 		     end,
 	    TxKeyData = pad_key_data(<<RSNIE/binary, GTKIE/binary, IGTKIE/binary>>),
-	    ?LOG(debug, "TxKeyData: ~p", [pbkdf2:to_hex(TxKeyData)]),
+	    ?LOG(debug, "TxKeyData: ~p", [binary:encode_hex(TxKeyData)]),
 	    EncTxKeyData = eapol:aes_key_wrap(KEK, TxKeyData),
-	    ?LOG(debug, "EncTxKeyData: ~p", [pbkdf2:to_hex(EncTxKeyData)]),
+	    ?LOG(debug, "EncTxKeyData: ~p", [binary:encode_hex(EncTxKeyData)]),
 
 	    send_eapol_key([pairwise, install, ack, mic, secure, enc], EncTxKeyData,
 			   Data#data{eapol_state = install,
@@ -1513,7 +1513,7 @@ rsna_4way_handshake({key, _Flags, MICAlgo, ReplayCounter, SNonce, KeyData, MICDa
 	{ok, _} ->
 	    %% MIC is ok, but RSNE does not match
 	    ?LOG(debug, "rsna_4way_handshake 2 of 4: MIC ok, RSNE don't match (~p != ~p)",
-		       [pbkdf2:to_hex(KeyData), pbkdf2:to_hex(LastRSNE)]),
+		       [binary:encode_hex(KeyData), binary:encode_hex(LastRSNE)]),
 	    wtp_del_station(Data),
 	    aaa_disassociation(Data),
 	    Data#data{eapol_state = undefined, cipher_state = undefined};
@@ -1582,8 +1582,8 @@ rsna_2way_handshake(rekey, Data = #data{eapol_state = installed,
 	     end,
     TxKeyData = pad_key_data(<<GTKIE/binary, IGTKIE/binary>>),
     EncTxKeyData = eapol:aes_key_wrap(KEK, TxKeyData),
-    ?LOG(debug, "TxKeyData: ~p", [pbkdf2:to_hex(TxKeyData)]),
-    ?LOG(debug, "EncTxKeyData: ~p", [pbkdf2:to_hex(EncTxKeyData)]),
+    ?LOG(debug, "TxKeyData: ~p", [binary:encode_hex(TxKeyData)]),
+    ?LOG(debug, "EncTxKeyData: ~p", [binary:encode_hex(EncTxKeyData)]),
 
     send_eapol_key([group, ack, mic, secure, enc], EncTxKeyData,
 		   Data#data{eapol_state = install,
